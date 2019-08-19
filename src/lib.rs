@@ -12,11 +12,11 @@ extern crate quickcheck;
 #[macro_use(quickcheck)]
 extern crate quickcheck_macros;
 
-mod bit;
-mod num;
-mod poly;
-mod bignat;
-mod lazy;
+pub mod bit;
+pub mod num;
+pub mod poly;
+pub mod bignat;
+pub mod lazy;
 
 use ff::{PrimeField, PrimeFieldRepr};
 use num_bigint::BigUint;
