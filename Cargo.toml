@@ -1,0 +1,19 @@
+[package]
+name = "bellman-bignat"
+version = "0.1.0"
+
+[dependencies]
+rand = "0.4.5"
+hex = "0.3.2"
+time = "0.1"
+num-bigint = "0.2"
+num-traits = "0.2"
+
+ff = { package = "ff_ce", version = "0.6.0", features = ["derive"] }
+pairing = { package = "pairing_ce", version = "0.17.0" }
+bellman = { package = "bellman_ce", version = "0.3.0" }
+sapling-crypto = { package = "sapling-crypto_ce", version = "0.0.5" }
+
+[dev-dependencies]
+quickcheck = "0.8"
+quickcheck_macros = "0.8"
