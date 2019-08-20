@@ -17,6 +17,7 @@ pub mod num;
 pub mod poly;
 pub mod bignat;
 pub mod lazy;
+pub mod acc;
 
 use ff::{PrimeField, PrimeFieldRepr};
 use num_bigint::BigUint;

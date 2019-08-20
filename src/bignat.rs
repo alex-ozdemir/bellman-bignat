@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use bellman::{ConstraintSystem, LinearCombination, SynthesisError};
 use ff::{Field, PrimeField};
 use num_bigint::BigUint;
@@ -38,15 +37,15 @@ fn nat_to_limbs<'a, F: PrimeField>(nat: &BigUint, limb_width: usize, n_limbs: us
 #[derive(Clone)]
 pub struct BigNat<E: Engine> {
     /// The linear combinations which constrain the value of each limb of the number
-    limbs: Vec<LinearCombination<E>>,
+    pub limbs: Vec<LinearCombination<E>>,
     /// The witness values for each limb (filled at witness-time)
-    limb_values: Option<Vec<E::Fr>>,
+    pub limb_values: Option<Vec<E::Fr>>,
     /// The value of the whole number (filled at witness-time)
-    value: Option<BigUint>,
+    pub value: Option<BigUint>,
     /// A circuit-time bound on the maximum value in all limbs
-    max_word: BigUint,
+    pub max_word: BigUint,
     /// The number of bits in each limb (`2 ** limb_width` is the base)
-    limb_width: usize,
+    pub limb_width: usize,
 }
 
 impl<E: Engine> From<BigNat<E>> for Polynomial<E> {
