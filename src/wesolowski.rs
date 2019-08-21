@@ -50,11 +50,11 @@ pub fn base_to_product_naive<'a, I: Iterator<Item = &'a BigUint>>(
 /// \exists q s.t. q^l \times base^r = result
 pub fn proof_of_exp<E: Engine, CS: ConstraintSystem<E>>(
     mut cs: CS,
-    base: BigNat<E>,
-    modulus: BigNat<E>,
-    power_factors: Vec<BigNat<E>>,
-    challenge: BigNat<E>,
-    result: BigNat<E>,
+    base: &BigNat<E>,
+    modulus: &BigNat<E>,
+    power_factors: Vec<&BigNat<E>>,
+    challenge: &BigNat<E>,
+    result: &BigNat<E>,
 ) -> Result<(), SynthesisError> {
     if base.limb_width != modulus.limb_width
         || base.limb_width != result.limb_width
@@ -103,6 +103,8 @@ pub fn proof_of_exp<E: Engine, CS: ConstraintSystem<E>>(
     let left = ql.mult_mod(cs.namespace(|| "Q^l b^r"), &br, &modulus)?.1;
     left.equal(cs.namespace(|| "Q^l b^r == res"), &result)
 }
+
+
 
 #[cfg(test)]
 mod tests {
@@ -326,7 +328,7 @@ mod tests {
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
-            proof_of_exp(cs.namespace(|| "proof of exp"), b, m, exps, l, res)
+            proof_of_exp(cs.namespace(|| "proof of exp"), &b, &m, exps.iter().collect(), &l, &res)
         }
     }
 

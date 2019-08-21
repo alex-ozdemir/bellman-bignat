@@ -17,7 +17,8 @@ pub mod num;
 pub mod poly;
 pub mod bignat;
 pub mod lazy;
-pub mod acc;
+pub mod wesolowski;
+pub mod rsa_set;
 
 use ff::{PrimeField, PrimeFieldRepr};
 use num_bigint::BigUint;
