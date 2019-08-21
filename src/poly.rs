@@ -166,6 +166,9 @@ mod tests {
         };
 
         circuit.synthesize(&mut cs).expect("synthesis failed");
+        dbg!(Fr::CAPACITY);
+        use sapling_crypto::poseidon::PoseidonHashParams;
+        dbg!(sapling_crypto::poseidon::bn256::Bn256PoseidonParams::new::<sapling_crypto::group_hash::Keccak256Hasher>().output_len());
 
         if let Some(token) = cs.which_is_unsatisfied() {
             eprintln!("Error: {} is unsatisfied", token);

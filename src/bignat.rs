@@ -1,8 +1,8 @@
-use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
-use sapling_crypto::bellman::pairing::Engine;
-use sapling_crypto::bellman::pairing::ff::{Field, PrimeField};
 use num_bigint::BigUint;
 use num_traits::{Pow, ToPrimitive};
+use sapling_crypto::bellman::pairing::ff::{Field, PrimeField};
+use sapling_crypto::bellman::pairing::Engine;
+use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
 
 use std::cmp::max;
 use std::rc::Rc;
@@ -15,7 +15,7 @@ use {f_to_nat, nat_to_f};
 
 /// Compute the natural number represented by an array of limbs.
 /// The limbs are assumed to be based the `limb_width` power of 2.
-fn limbs_to_nat<'a, F: PrimeField, I: Iterator<Item = &'a F>>(
+pub fn limbs_to_nat<'a, F: PrimeField, I: Iterator<Item = &'a F>>(
     limbs: I,
     limb_width: usize,
 ) -> BigUint {
@@ -27,7 +27,7 @@ fn limbs_to_nat<'a, F: PrimeField, I: Iterator<Item = &'a F>>(
 
 /// Compute the limbs encoding a natural number.
 /// The limbs are assumed to be based the `limb_width` power of 2.
-fn nat_to_limbs<'a, F: PrimeField>(nat: &BigUint, limb_width: usize, n_limbs: usize) -> Vec<F> {
+pub fn nat_to_limbs<'a, F: PrimeField>(nat: &BigUint, limb_width: usize, n_limbs: usize) -> Vec<F> {
     let mask = (BigUint::from(1usize) << limb_width) - 1usize;
     (0..n_limbs)
         .map(|limb_i| nat_to_f(&(&mask & (nat >> (limb_i * limb_width)))).unwrap())
@@ -111,6 +111,28 @@ impl<E: Engine> BigNat<E> {
                 .unwrap_or_else(|| Pow::pow(&BigUint::from(2usize), limb_width) - 1usize),
             limb_width,
         })
+    }
+
+    /// Creates a `BigNat` in the circuit from the given limbs.
+    pub fn from_limbs(limbs: Vec<Num<E>>, limb_width: usize) -> Self {
+        let limb_values = limbs
+            .iter()
+            .map(|n| n.value)
+            .collect::<Option<Vec<E::Fr>>>();
+        let value = limb_values
+            .as_ref()
+            .map(|values| limbs_to_nat(values.iter(), limb_width));
+        let max_word = (BigUint::from(1usize) << limb_width) - 1usize;
+        Self {
+            value,
+            limb_values,
+            limbs: limbs
+                .into_iter()
+                .map(|i| LinearCombination::zero() + &i.num)
+                .collect(),
+            max_word,
+            limb_width,
+        }
     }
 
     /// Allocates a `BigNat` in the circuit with `n_limbs` limbs of width `limb_width` each.
@@ -308,8 +330,8 @@ impl<E: Engine> BigNat<E> {
             .ceil()
             + 0.1) as usize;
         let limbs_per_group = (E::Fr::CAPACITY as usize - carry_bits) / self.limb_width;
-        let self_grouped = self.regroup(limbs_per_group);
-        let other_grouped = other.regroup(limbs_per_group);
+        let self_grouped = self.group_limbs(limbs_per_group);
+        let other_grouped = other.group_limbs(limbs_per_group);
         self_grouped.equal_when_carried(cs.namespace(|| "grouped"), &other_grouped)
     }
 
@@ -365,7 +387,7 @@ impl<E: Engine> BigNat<E> {
     }
 
     /// Combines limbs into groups.
-    pub fn regroup(&self, limbs_per_group: usize) -> BigNat<E> {
+    pub fn group_limbs(&self, limbs_per_group: usize) -> BigNat<E> {
         let n_groups = (self.limbs.len() - 1) / limbs_per_group + 1;
         let limb_values = self.limb_values.as_ref().map(|vs| {
             let mut values: Vec<E::Fr> =
@@ -454,8 +476,8 @@ impl<E: Engine> BigNat<E> {
         })
     }
 
-    /// NB: `exp` should have its bits *in reverse*. That is, the bit at index 0 is high order.
-    pub fn pow_mod_bin_rev<CS: ConstraintSystem<E>>(
+    // NB: `exp` should have its bits *in reverse*. That is, the bit at index 0 is high order.
+    fn pow_mod_bin_rev<CS: ConstraintSystem<E>>(
         &self,
         mut cs: CS,
         mut exp: Bitvector<E>,
@@ -510,9 +532,9 @@ impl<E: Engine> BigNat<E> {
 mod tests {
     use super::*;
 
-    use sapling_crypto::bellman::Circuit;
-    use sapling_crypto::bellman::pairing::bn256::Bn256;
     use quickcheck::TestResult;
+    use sapling_crypto::bellman::pairing::bn256::Bn256;
+    use sapling_crypto::bellman::Circuit;
     use sapling_crypto::circuit::test::TestConstraintSystem;
 
     use crate::usize_to_f;

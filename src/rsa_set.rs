@@ -1,12 +1,16 @@
 use num_bigint::BigUint;
-use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
+use sapling_crypto::bellman::pairing::ff::Field;
 use sapling_crypto::bellman::pairing::Engine;
+use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
+use sapling_crypto::circuit::num::AllocatedNum;
+use sapling_crypto::poseidon::{PoseidonEngine, PoseidonHashParams, QuinticSBox};
 
 use std::collections::BTreeSet;
 
 use bignat::BigNat;
+use num::Num;
 use wesolowski::proof_of_exp;
-use OptionExt;
+use {usize_to_f, OptionExt};
 
 pub struct CircuitRsaGroup<E: Engine> {
     pub g: BigNat<E>,
@@ -73,7 +77,7 @@ pub trait RsaSetBackend: Sized {
     }
 }
 
-/// An `RsaSet` which computes products from scratch each time.
+/// An `RsaSetBackend` which computes products from scratch each time.
 pub struct NaiveRsaSetBackend {
     group: RsaGroup,
     elements: BTreeSet<BigUint>,
@@ -200,12 +204,71 @@ impl<E: Engine, B: RsaSetBackend> RsaSet<E, B> {
     }
 }
 
+pub fn hash_to_rsa_element<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: ConstraintSystem<E>>(
+    mut cs: CS,
+    input: &[AllocatedNum<E>],
+    params: &E::Params,
+) -> Result<BigNat<E>, SynthesisError> {
+    if params.output_len() != 1 && params.security_level() != 126 {
+        return Err(SynthesisError::Unsatisfiable);
+    }
+    let inputs: Vec<Vec<AllocatedNum<E>>> = (0..4)
+        .map(|i| {
+            let mut v = input.to_vec();
+            v.push(AllocatedNum::alloc(
+                cs.namespace(|| format!("suffix {}", i)),
+                || Ok(usize_to_f(i)),
+            )?);
+            Ok(v)
+        })
+        .collect::<Result<Vec<_>, SynthesisError>>()?;
+    let hashes = inputs
+        .into_iter()
+        .enumerate()
+        .map(|(i, input)| {
+            sapling_crypto::circuit::poseidon_hash::poseidon_hash(
+                cs.namespace(|| format!("hash {}", i)),
+                &input,
+                &params,
+                // Unwrap is safe b/c we know there is 1 output.
+            )
+            .map(|mut h| h.pop().unwrap())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let bits = hashes
+        .into_iter()
+        .enumerate()
+        .map(|(i, n)| n.into_bits_le_strict(cs.namespace(|| format!("bitify {}", i))))
+        .collect::<Result<Vec<_>, _>>()?;
+    let all_bits: Vec<_> = bits
+        .into_iter()
+        .flat_map(|mut v| {
+            v.truncate(252);
+            v
+        })
+        .collect();
+    let nat = BigNat::from_limbs(
+        all_bits
+            .into_iter()
+            .map(|bit| {
+                let lc = bit.lc(CS::one(), E::Fr::one());
+                let val = bit
+                    .get_value()
+                    .map(|v| if v { E::Fr::one() } else { E::Fr::zero() });
+                Num::new(val, lc)
+            })
+            .collect(),
+        1,
+    );
+    Ok(nat.group_limbs(252))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use sapling_crypto::bellman::Circuit;
     use sapling_crypto::bellman::pairing::bn256::Bn256;
+    use sapling_crypto::bellman::Circuit;
     use sapling_crypto::circuit::test::TestConstraintSystem;
 
     use std::str::FromStr;
