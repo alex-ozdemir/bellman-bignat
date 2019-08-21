@@ -1,16 +1,17 @@
-use bellman::{ConstraintSystem, LinearCombination, SynthesisError};
-use ff::{Field, PrimeField};
+use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
+use sapling_crypto::bellman::pairing::Engine;
+use sapling_crypto::bellman::pairing::ff::{Field, PrimeField};
 use num_bigint::BigUint;
 use num_traits::{Pow, ToPrimitive};
+
 use std::cmp::max;
 use std::rc::Rc;
 
-use crate::bit::{Bit, Bitvector};
-use crate::num::Num;
-use crate::pairing::Engine;
-use crate::poly::Polynomial;
-use crate::OptionExt;
-use crate::{f_to_nat, nat_to_f};
+use bit::{Bit, Bitvector};
+use num::Num;
+use poly::Polynomial;
+use OptionExt;
+use {f_to_nat, nat_to_f};
 
 /// Compute the natural number represented by an array of limbs.
 /// The limbs are assumed to be based the `limb_width` power of 2.
@@ -509,8 +510,8 @@ impl<E: Engine> BigNat<E> {
 mod tests {
     use super::*;
 
-    use bellman::Circuit;
-    use pairing::bn256::Bn256;
+    use sapling_crypto::bellman::Circuit;
+    use sapling_crypto::bellman::pairing::bn256::Bn256;
     use quickcheck::TestResult;
     use sapling_crypto::circuit::test::TestConstraintSystem;
 

@@ -1,7 +1,9 @@
-use bellman::{ConstraintSystem, LinearCombination, SynthesisError};
-use ff::{Field, PrimeField};
-use pairing::Engine;
+use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
+use sapling_crypto::bellman::pairing::Engine;
+use sapling_crypto::bellman::pairing::ff::{Field, PrimeField};
+
 use std::cmp::max;
+
 use OptionExt;
 
 pub struct Polynomial<E: Engine> {
@@ -112,7 +114,10 @@ impl<E: Engine> Polynomial<E> {
 
 #[cfg(test)]
 mod tests {
-    use bellman::Circuit;
+    use super::*;
+    use sapling_crypto::bellman::Circuit;
+    use sapling_crypto::bellman::pairing::bn256::{Bn256, Fr};
+    use sapling_crypto::circuit::test::TestConstraintSystem;
 
     pub struct PolynomialMultiplier<E: Engine> {
         pub a: Vec<E::Fr>,
@@ -144,10 +149,6 @@ mod tests {
             Ok(())
         }
     }
-
-    use super::*;
-    use pairing::bn256::{Bn256, Fr};
-    use sapling_crypto::circuit::test::TestConstraintSystem;
 
     #[test]
     fn test_circuit() {

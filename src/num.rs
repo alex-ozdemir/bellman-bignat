@@ -1,11 +1,10 @@
-use bellman::{ConstraintSystem, LinearCombination, SynthesisError};
-use ff::{Field, PrimeField, PrimeFieldRepr};
-use pairing::Engine;
-
-use bit::{Bit, Bitvector};
+use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
+use sapling_crypto::bellman::pairing::Engine;
+use sapling_crypto::bellman::pairing::ff::{Field, PrimeField, PrimeFieldRepr};
 
 use usize_to_f;
 
+use bit::{Bit, Bitvector};
 use OptionExt;
 
 pub struct Num<E: Engine> {

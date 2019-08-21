@@ -1,7 +1,7 @@
-use bellman::{ConstraintSystem, SynthesisError};
 use num_bigint::BigUint;
 use num_traits::One;
-use pairing::Engine;
+use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
+use sapling_crypto::bellman::pairing::Engine;
 
 use bignat::BigNat;
 use OptionExt;
@@ -110,8 +110,8 @@ pub fn proof_of_exp<E: Engine, CS: ConstraintSystem<E>>(
 mod tests {
     use super::*;
 
-    use bellman::Circuit;
-    use pairing::bn256::Bn256;
+    use sapling_crypto::bellman::Circuit;
+    use sapling_crypto::bellman::pairing::bn256::Bn256;
     use quickcheck::TestResult;
     use sapling_crypto::circuit::test::TestConstraintSystem;
 

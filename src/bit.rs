@@ -1,7 +1,7 @@
 // (mostly from franklin-crypto)
-use bellman::{ConstraintSystem, LinearCombination, SynthesisError};
-use ff::Field;
-use pairing::Engine;
+use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
+use sapling_crypto::bellman::pairing::Engine;
+use sapling_crypto::bellman::pairing::ff::Field;
 
 use OptionExt;
 

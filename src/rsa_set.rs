@@ -1,6 +1,6 @@
-use bellman::{ConstraintSystem, SynthesisError};
 use num_bigint::BigUint;
-use pairing::Engine;
+use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
+use sapling_crypto::bellman::pairing::Engine;
 
 use std::collections::BTreeSet;
 
@@ -204,8 +204,8 @@ impl<E: Engine, B: RsaSetBackend> RsaSet<E, B> {
 mod tests {
     use super::*;
 
-    use bellman::Circuit;
-    use pairing::bn256::Bn256;
+    use sapling_crypto::bellman::Circuit;
+    use sapling_crypto::bellman::pairing::bn256::Bn256;
     use sapling_crypto::circuit::test::TestConstraintSystem;
 
     use std::str::FromStr;

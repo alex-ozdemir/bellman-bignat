@@ -1,6 +1,3 @@
-extern crate bellman;
-extern crate ff;
-extern crate pairing;
 extern crate rand;
 extern crate sapling_crypto;
 extern crate num_bigint;
@@ -20,9 +17,9 @@ pub mod lazy;
 pub mod wesolowski;
 pub mod rsa_set;
 
-use ff::{PrimeField, PrimeFieldRepr};
+use sapling_crypto::bellman::pairing::ff::{PrimeField, PrimeFieldRepr};
 use num_bigint::BigUint;
-use bellman::SynthesisError;
+use sapling_crypto::bellman::SynthesisError;
 
 trait OptionExt<T> {
     fn grab(&self) -> Result<&T, SynthesisError>;
