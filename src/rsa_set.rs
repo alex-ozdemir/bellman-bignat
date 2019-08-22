@@ -2,6 +2,7 @@ use num_bigint::BigUint;
 use sapling_crypto::bellman::pairing::ff::Field;
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
+use sapling_crypto::circuit::boolean::Boolean;
 use sapling_crypto::circuit::num::AllocatedNum;
 use sapling_crypto::poseidon::{PoseidonEngine, PoseidonHashParams, QuinticSBox};
 
@@ -204,6 +205,49 @@ impl<E: Engine, B: RsaSetBackend> RsaSet<E, B> {
     }
 }
 
+pub mod helper {
+
+    use num_bigint::BigUint;
+    use num_traits::{One, Zero};
+    use sapling_crypto::poseidon::{
+        poseidon_hash, PoseidonEngine, PoseidonHashParams, QuinticSBox,
+    };
+    use {f_to_nat, usize_to_f};
+
+    pub fn hash_to_rsa_element<E: PoseidonEngine<SBox = QuinticSBox<E>>>(
+        inputs: &[E::Fr],
+        params: &E::Params,
+    ) -> BigUint {
+        assert_eq!(params.output_len(), 1);
+        assert_eq!(params.security_level(), 126);
+        let n_bits = params.security_level() as usize * 2;
+        let inputs: Vec<Vec<E::Fr>> = (0..4)
+            .map(|i| {
+                let mut v = inputs.to_vec();
+                v.push(usize_to_f(i));
+                v
+            })
+            .collect();
+        let hashes = inputs.into_iter().map(|i| {
+            let elem = poseidon_hash::<E>(params, &i).pop().unwrap();
+            let nat = f_to_nat(&elem) & ((BigUint::from(1usize) << n_bits) - 1usize);
+            nat
+        });
+        let desired_bits = 1024;
+        let current_bits: usize = n_bits * 4;
+        let needed_bits = desired_bits - current_bits;
+        assert!(needed_bits > 1);
+        let trailing_ones = needed_bits - 1;
+        let mut acc = BigUint::zero();
+        acc |= (BigUint::one() << trailing_ones) - 1usize;
+        for (i, hash) in hashes.into_iter().enumerate() {
+            acc |= hash << trailing_ones + i * n_bits;
+        }
+        acc |= BigUint::one() << (desired_bits - 1);
+        acc
+    }
+}
+
 pub fn hash_to_rsa_element<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: ConstraintSystem<E>>(
     mut cs: CS,
     input: &[AllocatedNum<E>],
@@ -212,6 +256,7 @@ pub fn hash_to_rsa_element<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: Constra
     if params.output_len() != 1 && params.security_level() != 126 {
         return Err(SynthesisError::Unsatisfiable);
     }
+    let n_bits = params.security_level() as usize * 2;
     let inputs: Vec<Vec<AllocatedNum<E>>> = (0..4)
         .map(|i| {
             let mut v = input.to_vec();
@@ -235,18 +280,27 @@ pub fn hash_to_rsa_element<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: Constra
             .map(|mut h| h.pop().unwrap())
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let bits = hashes
+    let bits: Vec<_> = hashes
         .into_iter()
         .enumerate()
         .map(|(i, n)| n.into_bits_le_strict(cs.namespace(|| format!("bitify {}", i))))
-        .collect::<Result<Vec<_>, _>>()?;
-    let all_bits: Vec<_> = bits
+        .collect::<Result<Vec<_>, _>>()?
         .into_iter()
-        .flat_map(|mut v| {
-            v.truncate(252);
+        .map(|mut v| {
+            v.truncate(n_bits);
             v
         })
         .collect();
+    let desired_bits = 1024;
+    let current_bits: usize = bits.iter().map(Vec::len).sum();
+    let needed_bits = desired_bits - current_bits;
+    if needed_bits < 2 {
+        return Err(SynthesisError::Unsatisfiable);
+    }
+    let mut all_bits = Vec::new();
+    all_bits.extend(std::iter::repeat(Boolean::Constant(true)).take(needed_bits - 1));
+    all_bits.extend(bits.into_iter().flat_map(|v| v));
+    all_bits.push(Boolean::Constant(true));
     let nat = BigNat::from_limbs(
         all_bits
             .into_iter()
@@ -260,7 +314,7 @@ pub fn hash_to_rsa_element<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: Constra
             .collect(),
         1,
     );
-    Ok(nat.group_limbs(252))
+    Ok(nat.group_limbs(32))
 }
 
 #[cfg(test)]
@@ -268,6 +322,7 @@ mod tests {
     use super::*;
 
     use sapling_crypto::bellman::pairing::bn256::Bn256;
+    use sapling_crypto::bellman::pairing::ff::PrimeField;
     use sapling_crypto::bellman::Circuit;
     use sapling_crypto::circuit::test::TestConstraintSystem;
 
@@ -404,122 +459,211 @@ mod tests {
 
     circuit_tests! {
         removal_init_empty: (
-            RsaRemoval {
-                inputs: Some(RsaRemovalInputs {
-                    g: "2",
-                    m: "143",
-                    initial_items: &[
+                                RsaRemoval {
+                                    inputs: Some(RsaRemovalInputs {
+                                        g: "2",
+                                        m: "143",
+                                        initial_items: &[
+                                        ],
+                                        removed_items: &[
+                                        ],
+                                        challenge: "223",
+                                        initial_digest: "2",
+                                        final_digest: "2",
+                                    }),
+                                    params: RsaRemovalParams {
+                                        limb_width: 4,
+                                        n_limbs_e: 2,
+                                        n_limbs_b: 2,
+                                    }
+                                } ,
+                                true
+                            ),
+                            removal_init_3_remove_3: (
+                                RsaRemoval {
+                                    inputs: Some(RsaRemovalInputs {
+                                        g: "2",
+                                        m: "143",
+                                        initial_items: &[
+                                            "3",
+                                        ],
+                                        removed_items: &[
+                                            "3",
+                                        ],
+                                        challenge: "223",
+                                        initial_digest: "8",
+                                        final_digest: "2",
+                                    }),
+                                    params: RsaRemovalParams {
+                                        limb_width: 4,
+                                        n_limbs_e: 2,
+                                        n_limbs_b: 2,
+                                    }
+                                } ,
+                                true
+                                    ),
+                                    removal_init_3_remove_3_wrong: (
+                                        RsaRemoval {
+                                            inputs: Some(RsaRemovalInputs {
+                                                g: "2",
+                                                m: "143",
+                                                initial_items: &[
+                                                    "3",
+                                                ],
+                                                removed_items: &[
+                                                    "3",
+                                                ],
+                                                challenge: "223",
+                                                initial_digest: "8",
+                                                final_digest: "3",
+                                            }),
+                                            params: RsaRemovalParams {
+                                                limb_width: 4,
+                                                n_limbs_e: 2,
+                                                n_limbs_b: 2,
+                                            }
+                                        } ,
+                                        false
+                                            ),
+                                            removal_init_3_5_7_remove_3: (
+                                                RsaRemoval {
+                                                    inputs: Some(RsaRemovalInputs {
+                                                        g: "2",
+                                                        m: "143",
+                                                        initial_items: &[
+                                                            "3",
+                                                            "5",
+                                                            "7",
+                                                        ],
+                                                        removed_items: &[
+                                                            "3",
+                                                        ],
+                                                        challenge: "223",
+                                                        initial_digest: "109",
+                                                        final_digest: "98",
+                                                    }),
+                                                    params: RsaRemovalParams {
+                                                        limb_width: 4,
+                                                        n_limbs_e: 2,
+                                                        n_limbs_b: 2,
+                                                    }
+                                                } ,
+                                                true
+                                                    ),
+                                                    removal_init_3_5_7_remove_3_5: (
+                                                        RsaRemoval {
+                                                            inputs: Some(RsaRemovalInputs {
+                                                                g: "2",
+                                                                m: "143",
+                                                                initial_items: &[
+                                                                    "3",
+                                                                    "5",
+                                                                    "7",
+                                                                ],
+                                                                removed_items: &[
+                                                                    "3",
+                                                                    "5",
+                                                                ],
+                                                                challenge: "223",
+                                                                initial_digest: "109",
+                                                                final_digest: "128",
+                                                            }),
+                                                            params: RsaRemovalParams {
+                                                                limb_width: 4,
+                                                                n_limbs_e: 2,
+                                                                n_limbs_b: 2,
+                                                            }
+                                                        } ,
+                                                        true
+                                                            ),
+    }
+
+    #[derive(Debug)]
+    pub struct RsaHashInputs<'a> {
+        pub inputs: &'a [&'a str],
+    }
+
+    #[derive(Debug)]
+    pub struct RsaHashParams<E: PoseidonEngine<SBox = QuinticSBox<E>>> {
+        pub hash: E::Params,
+    }
+
+    pub struct RsaHash<'a, E: PoseidonEngine<SBox = QuinticSBox<E>>> {
+        inputs: Option<RsaHashInputs<'a>>,
+        params: RsaHashParams<E>,
+    }
+
+    impl<'a, E: PoseidonEngine<SBox = QuinticSBox<E>>> Circuit<E> for RsaHash<'a, E> {
+        fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
+            let input_values: Vec<E::Fr> = self
+                .inputs
+                .grab()?
+                .inputs
+                .iter()
+                .map(|s| E::Fr::from_str(s).unwrap())
+                .collect();
+
+            let expected_ouput =
+                super::helper::hash_to_rsa_element::<E>(&input_values, &self.params.hash);
+            let allocated_expected_output =
+                BigNat::alloc_from_nat(cs.namespace(|| "output"), || Ok(expected_ouput), 32, 32)?;
+            let allocated_inputs: Vec<AllocatedNum<E>> = input_values
+                .into_iter()
+                .enumerate()
+                .map(|(i, value)| {
+                    AllocatedNum::alloc(cs.namespace(|| format!("input {}", i)), || Ok(value))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let hash = super::hash_to_rsa_element(
+                cs.namespace(|| "hash"),
+                &allocated_inputs,
+                &self.params.hash,
+            )?;
+            assert_eq!(hash.limbs.len() * hash.limb_width, 1024);
+            hash.equal(cs.namespace(|| "eq"), &allocated_expected_output)?;
+            Ok(())
+        }
+    }
+
+    use sapling_crypto::group_hash::Keccak256Hasher;
+    use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
+
+    circuit_tests! {
+        hash_one: (RsaHash {
+            inputs: Some(
+                RsaHashInputs {
+                    inputs: &[
+                        "1",
                     ],
-                    removed_items: &[
-                    ],
-                    challenge: "223",
-                    initial_digest: "2",
-                    final_digest: "2",
-                }),
-                params: RsaRemovalParams {
-                    limb_width: 4,
-                    n_limbs_e: 2,
-                    n_limbs_b: 2,
                 }
-            } ,
-            true
-        ),
-        removal_init_3_remove_3: (
-            RsaRemoval {
-                inputs: Some(RsaRemovalInputs {
-                    g: "2",
-                    m: "143",
-                    initial_items: &[
-                        "3",
+            ),
+            params: RsaHashParams {
+                hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+            }
+        }, true),
+        hash_ten: (RsaHash {
+            inputs: Some(
+                RsaHashInputs {
+                    inputs: &[
+                        "1", "2", "3", "4", "5", "6", "7", "8", "9", "10",
                     ],
-                    removed_items: &[
-                        "3",
-                    ],
-                    challenge: "223",
-                    initial_digest: "8",
-                    final_digest: "2",
-                }),
-                params: RsaRemovalParams {
-                    limb_width: 4,
-                    n_limbs_e: 2,
-                    n_limbs_b: 2,
                 }
-            } ,
-            true
-        ),
-        removal_init_3_remove_3_wrong: (
-            RsaRemoval {
-                inputs: Some(RsaRemovalInputs {
-                    g: "2",
-                    m: "143",
-                    initial_items: &[
-                        "3",
+            ),
+            params: RsaHashParams {
+                hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+            }
+        }, true),
+        hash_ten_bit_flip: (RsaHash {
+            inputs: Some(
+                RsaHashInputs {
+                    inputs: &[
+                        "1", "2", "3", "4", "5", "6", "7", "8", "9", "9",
                     ],
-                    removed_items: &[
-                        "3",
-                    ],
-                    challenge: "223",
-                    initial_digest: "8",
-                    final_digest: "3",
-                }),
-                params: RsaRemovalParams {
-                    limb_width: 4,
-                    n_limbs_e: 2,
-                    n_limbs_b: 2,
                 }
-            } ,
-            false
-        ),
-        removal_init_3_5_7_remove_3: (
-            RsaRemoval {
-                inputs: Some(RsaRemovalInputs {
-                    g: "2",
-                    m: "143",
-                    initial_items: &[
-                        "3",
-                        "5",
-                        "7",
-                    ],
-                    removed_items: &[
-                        "3",
-                    ],
-                    challenge: "223",
-                    initial_digest: "109",
-                    final_digest: "98",
-                }),
-                params: RsaRemovalParams {
-                    limb_width: 4,
-                    n_limbs_e: 2,
-                    n_limbs_b: 2,
-                }
-            } ,
-            true
-        ),
-        removal_init_3_5_7_remove_3_5: (
-            RsaRemoval {
-                inputs: Some(RsaRemovalInputs {
-                    g: "2",
-                    m: "143",
-                    initial_items: &[
-                        "3",
-                        "5",
-                        "7",
-                    ],
-                    removed_items: &[
-                        "3",
-                        "5",
-                    ],
-                    challenge: "223",
-                    initial_digest: "109",
-                    final_digest: "128",
-                }),
-                params: RsaRemovalParams {
-                    limb_width: 4,
-                    n_limbs_e: 2,
-                    n_limbs_b: 2,
-                }
-            } ,
-            true
-        ),
+            ),
+            params: RsaHashParams {
+                hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+            }
+        }, true),
     }
 }

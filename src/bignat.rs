@@ -419,7 +419,7 @@ impl<E: Engine> BigNat<E> {
             .sum::<BigUint>()
             * &self.max_word;
         BigNat {
-            limb_width: self.limb_width,
+            limb_width: self.limb_width * limbs_per_group,
             limbs,
             limb_values,
             value: self.value.clone(),
