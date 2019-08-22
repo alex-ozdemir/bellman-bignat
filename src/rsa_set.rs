@@ -220,24 +220,28 @@ pub mod helper {
     ) -> BigUint {
         assert_eq!(params.output_len(), 1);
         assert_eq!(params.security_level(), 126);
+
+        // First we hash the inputs.
+        let hash = poseidon_hash::<E>(params, inputs).pop().unwrap();
+
+        // Then we add 4 different suffixes and hash each
         let n_bits = params.security_level() as usize * 2;
-        let inputs: Vec<Vec<E::Fr>> = (0..4)
-            .map(|i| {
-                let mut v = inputs.to_vec();
-                v.push(usize_to_f(i));
-                v
-            })
-            .collect();
-        let hashes = inputs.into_iter().map(|i| {
-            let elem = poseidon_hash::<E>(params, &i).pop().unwrap();
+        let hashes = (0..4).map(|i| {
+            let elem = poseidon_hash::<E>(params, &[hash, usize_to_f(i)])
+                .pop()
+                .unwrap();
             let nat = f_to_nat(&elem) & ((BigUint::from(1usize) << n_bits) - 1usize);
             nat
         });
+
+        // We compute some parameters
         let desired_bits = 1024;
         let current_bits: usize = n_bits * 4;
         let needed_bits = desired_bits - current_bits;
         assert!(needed_bits > 1);
         let trailing_ones = needed_bits - 1;
+
+        // Now we assemble the 1024b number. Notice the ORs are all disjoint.
         let mut acc = BigUint::zero();
         acc |= (BigUint::one() << trailing_ones) - 1usize;
         for (i, hash) in hashes.into_iter().enumerate() {
@@ -257,20 +261,25 @@ pub fn hash_to_rsa_element<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: Constra
         return Err(SynthesisError::Unsatisfiable);
     }
     let n_bits = params.security_level() as usize * 2;
-    let inputs: Vec<Vec<AllocatedNum<E>>> = (0..4)
+
+    // First we hash the inputs
+    let hash = sapling_crypto::circuit::poseidon_hash::poseidon_hash(
+        cs.namespace(|| "inputs"),
+        &input,
+        params,
+    )?
+    .pop()
+    .unwrap();
+
+    // Now we hash four suffixes
+    let hashes = (0..4)
         .map(|i| {
-            let mut v = input.to_vec();
-            v.push(AllocatedNum::alloc(
-                cs.namespace(|| format!("suffix {}", i)),
-                || Ok(usize_to_f(i)),
-            )?);
-            Ok(v)
-        })
-        .collect::<Result<Vec<_>, SynthesisError>>()?;
-    let hashes = inputs
-        .into_iter()
-        .enumerate()
-        .map(|(i, input)| {
+            let input = [
+                hash.clone(),
+                AllocatedNum::alloc(cs.namespace(|| format!("suffix {}", i)), || {
+                    Ok(usize_to_f(i))
+                })?,
+            ];
             sapling_crypto::circuit::poseidon_hash::poseidon_hash(
                 cs.namespace(|| format!("hash {}", i)),
                 &input,
@@ -280,6 +289,7 @@ pub fn hash_to_rsa_element<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: Constra
             .map(|mut h| h.pop().unwrap())
         })
         .collect::<Result<Vec<_>, _>>()?;
+
     let bits: Vec<_> = hashes
         .into_iter()
         .enumerate()
