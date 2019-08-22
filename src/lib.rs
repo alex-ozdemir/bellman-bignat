@@ -16,6 +16,7 @@ pub mod bignat;
 pub mod lazy;
 pub mod wesolowski;
 pub mod rsa_set;
+pub mod hash;
 
 use sapling_crypto::bellman::pairing::ff::{PrimeField, PrimeFieldRepr};
 use num_bigint::BigUint;
