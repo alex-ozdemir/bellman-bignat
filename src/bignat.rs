@@ -534,34 +534,13 @@ impl<E: Engine> BigNat<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_helpers::*;
 
     use quickcheck::TestResult;
-    use sapling_crypto::bellman::pairing::bn256::Bn256;
-    use sapling_crypto::bellman::Circuit;
-    use sapling_crypto::circuit::test::TestConstraintSystem;
 
     use crate::usize_to_f;
     use std::str::FromStr;
 
-    macro_rules! circuit_tests {
-        ($($name:ident: $value:expr,)*) => {
-            $(
-                #[test]
-                fn $name() {
-                    let (circuit, is_sat) = $value;
-                    let mut cs = TestConstraintSystem::<Bn256>::new();
-
-                    circuit.synthesize(&mut cs).expect("synthesis failed");
-                    println!(concat!("Constaints in {}: {}"), stringify!($name), cs.num_constraints());
-                    if is_sat && !cs.is_satisfied() {
-                        println!("UNSAT: {:#?}", cs.which_is_unsatisfied())
-                    }
-
-                    assert_eq!(cs.is_satisfied(), is_sat);
-                }
-            )*
-        }
-    }
 
     pub struct CarrierInputs {
         pub a: Vec<usize>,

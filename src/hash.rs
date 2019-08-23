@@ -11,7 +11,7 @@ use usize_to_f;
 pub mod helper {
 
     use num_bigint::BigUint;
-    use num_traits::{One, Zero};
+    use num_traits::One;
     use sapling_crypto::poseidon::{
         poseidon_hash, PoseidonEngine, PoseidonHashParams, QuinticSBox,
     };
@@ -19,37 +19,34 @@ pub mod helper {
 
     pub fn hash_to_rsa_element<E: PoseidonEngine<SBox = QuinticSBox<E>>>(
         inputs: &[E::Fr],
+        desired_bits: usize,
         params: &E::Params,
     ) -> BigUint {
         assert_eq!(params.output_len(), 1);
         assert_eq!(params.security_level(), 126);
 
+        let bits_per_hash = params.security_level() as usize * 2;
+        let bits_from_hash = desired_bits - 2;
+        let n_hashes = (bits_from_hash - 1) / bits_per_hash + 1;
+
         // First we hash the inputs.
         let hash = poseidon_hash::<E>(params, inputs).pop().unwrap();
 
         // Then we add 4 different suffixes and hash each
-        let n_bits = params.security_level() as usize * 2;
-        let hashes = (0..4).map(|i| {
-            let elem = poseidon_hash::<E>(params, &[hash, usize_to_f(i)])
-                .pop()
-                .unwrap();
-            let nat = f_to_nat(&elem) & ((BigUint::from(1usize) << n_bits) - 1usize);
-            nat
-        });
-
-        // We compute some parameters
-        let desired_bits = 1024;
-        let current_bits: usize = n_bits * 4;
-        let needed_bits = desired_bits - current_bits;
-        assert!(needed_bits > 1);
-        let trailing_ones = needed_bits - 1;
+        let hashes: BigUint = (0..n_hashes)
+            .map(|i| {
+                let elem = poseidon_hash::<E>(params, &[hash, usize_to_f(i)])
+                    .pop()
+                    .unwrap();
+                let mut nat = f_to_nat(&elem) & ((BigUint::from(1usize) << bits_per_hash) - 1usize);
+                nat <<= bits_per_hash * i;
+                nat
+            })
+            .sum();
 
         // Now we assemble the 1024b number. Notice the ORs are all disjoint.
-        let mut acc = BigUint::zero();
-        acc |= (BigUint::one() << trailing_ones) - 1usize;
-        for (i, hash) in hashes.into_iter().enumerate() {
-            acc |= hash << trailing_ones + i * n_bits;
-        }
+        let mut acc = BigUint::one();
+        acc |= (hashes & ((BigUint::one() << bits_from_hash) - 1usize)) << 1;
         acc |= BigUint::one() << (desired_bits - 1);
         acc
     }
@@ -58,12 +55,16 @@ pub mod helper {
 pub fn hash_to_rsa_element<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: ConstraintSystem<E>>(
     mut cs: CS,
     input: &[AllocatedNum<E>],
+    limb_width: usize,
+    desired_bits: usize,
     params: &E::Params,
 ) -> Result<BigNat<E>, SynthesisError> {
     if params.output_len() != 1 && params.security_level() != 126 {
         return Err(SynthesisError::Unsatisfiable);
     }
-    let n_bits = params.security_level() as usize * 2;
+    let bits_per_hash = params.security_level() as usize * 2;
+    let bits_from_hash = desired_bits - 2;
+    let n_hashes = (bits_from_hash - 1) / bits_per_hash + 1;
 
     // First we hash the inputs
     let hash = sapling_crypto::circuit::poseidon_hash::poseidon_hash(
@@ -74,8 +75,8 @@ pub fn hash_to_rsa_element<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: Constra
     .pop()
     .unwrap();
 
-    // Now we hash four suffixes
-    let hashes = (0..4)
+    // Now we hash the suffixes
+    let hashes = (0..n_hashes)
         .map(|i| {
             let input = [
                 hash.clone(),
@@ -93,26 +94,23 @@ pub fn hash_to_rsa_element<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: Constra
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let bits: Vec<_> = hashes
+    let bits: Vec<Boolean> = hashes
         .into_iter()
         .enumerate()
-        .map(|(i, n)| n.into_bits_le_strict(cs.namespace(|| format!("bitify {}", i))))
+        .map(|(i, n)| {
+            n.into_bits_le_strict(cs.namespace(|| format!("bitify {}", i)))
+        })
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
-        .map(|mut v| {
-            v.truncate(n_bits);
+        .flat_map(|mut v| {
+            v.truncate(bits_per_hash);
             v
         })
         .collect();
-    let desired_bits = 1024;
-    let current_bits: usize = bits.iter().map(Vec::len).sum();
-    let needed_bits = desired_bits - current_bits;
-    if needed_bits < 2 {
-        return Err(SynthesisError::Unsatisfiable);
-    }
+
     let mut all_bits = Vec::new();
-    all_bits.extend(std::iter::repeat(Boolean::Constant(true)).take(needed_bits - 1));
-    all_bits.extend(bits.into_iter().flat_map(|v| v));
+    all_bits.push(Boolean::Constant(true));
+    all_bits.extend(bits.into_iter().take(bits_from_hash));
     all_bits.push(Boolean::Constant(true));
     let nat = BigNat::from_limbs(
         all_bits
@@ -127,38 +125,16 @@ pub fn hash_to_rsa_element<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: Constra
             .collect(),
         1,
     );
-    Ok(nat.group_limbs(32))
+    Ok(nat.group_limbs(limb_width))
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use sapling_crypto::bellman::pairing::bn256::Bn256;
-    use sapling_crypto::bellman::pairing::ff::PrimeField;
-    use sapling_crypto::bellman::Circuit;
-    use sapling_crypto::circuit::test::TestConstraintSystem;
 
     use OptionExt;
 
-    macro_rules! circuit_tests {
-        ($($name:ident: $value:expr,)*) => {
-            $(
-                #[test]
-                fn $name() {
-                    let (circuit, is_sat) = $value;
-                    let mut cs = TestConstraintSystem::<Bn256>::new();
-
-                    circuit.synthesize(&mut cs).expect("synthesis failed");
-                    println!(concat!("Constaints in {}: {}"), stringify!($name), cs.num_constraints());
-                    if is_sat && !cs.is_satisfied() {
-                        println!("UNSAT: {:#?}", cs.which_is_unsatisfied())
-                    }
-
-                    assert_eq!(cs.is_satisfied(), is_sat);
-                }
-            )*
-        }
-    }
+    use test_helpers::*;
 
     #[derive(Debug)]
     pub struct RsaHashInputs<'a> {
@@ -167,6 +143,7 @@ mod test {
 
     #[derive(Debug)]
     pub struct RsaHashParams<E: PoseidonEngine<SBox = QuinticSBox<E>>> {
+        pub desired_bits: usize,
         pub hash: E::Params,
     }
 
@@ -185,10 +162,13 @@ mod test {
                 .map(|s| E::Fr::from_str(s).unwrap())
                 .collect();
 
-            let expected_ouput =
-                super::helper::hash_to_rsa_element::<E>(&input_values, &self.params.hash);
+            let expected_ouput = super::helper::hash_to_rsa_element::<E>(
+                &input_values,
+                self.params.desired_bits,
+                &self.params.hash,
+            );
             let allocated_expected_output =
-                BigNat::alloc_from_nat(cs.namespace(|| "output"), || Ok(expected_ouput), 32, 32)?;
+                BigNat::alloc_from_nat(cs.namespace(|| "output"), || Ok(expected_ouput), 32, self.params.desired_bits / 32)?;
             let allocated_inputs: Vec<AllocatedNum<E>> = input_values
                 .into_iter()
                 .enumerate()
@@ -199,9 +179,11 @@ mod test {
             let hash = super::hash_to_rsa_element(
                 cs.namespace(|| "hash"),
                 &allocated_inputs,
+                32,
+                self.params.desired_bits,
                 &self.params.hash,
             )?;
-            assert_eq!(hash.limbs.len() * hash.limb_width, 1024);
+            assert_eq!(hash.limbs.len() * hash.limb_width, self.params.desired_bits);
             hash.equal(cs.namespace(|| "eq"), &allocated_expected_output)?;
             Ok(())
         }
@@ -220,6 +202,7 @@ mod test {
                 }
             ),
             params: RsaHashParams {
+                desired_bits: 1024,
                 hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
             }
         }, true),
@@ -232,6 +215,7 @@ mod test {
                 }
             ),
             params: RsaHashParams {
+                desired_bits: 1024,
                 hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
             }
         }, true),
@@ -244,6 +228,20 @@ mod test {
                 }
             ),
             params: RsaHashParams {
+                desired_bits: 1024,
+                hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+            }
+        }, true),
+        hash_ten_2048: (RsaHash {
+            inputs: Some(
+                RsaHashInputs {
+                    inputs: &[
+                        "1", "2", "3", "4", "5", "6", "7", "8", "9", "10",
+                    ],
+                }
+            ),
+            params: RsaHashParams {
+                desired_bits: 2048,
                 hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
             }
         }, true),

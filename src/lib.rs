@@ -9,6 +9,35 @@ extern crate quickcheck;
 #[macro_use(quickcheck)]
 extern crate quickcheck_macros;
 
+#[cfg(test)]
+#[macro_use]
+mod test_helpers {
+    pub use sapling_crypto::bellman::pairing::bn256::Bn256;
+    pub use sapling_crypto::bellman::pairing::ff::PrimeField;
+    pub use sapling_crypto::circuit::test::TestConstraintSystem;
+    pub use sapling_crypto::bellman::Circuit;
+    macro_rules! circuit_tests {
+        ($($name:ident: $value:expr,)*) => {
+            $(
+                #[test]
+                fn $name() {
+                    let (circuit, is_sat) = $value;
+                    let mut cs = TestConstraintSystem::<Bn256>::new();
+
+                    circuit.synthesize(&mut cs).expect("synthesis failed");
+                    println!(concat!("Constaints in {}: {}"), stringify!($name), cs.num_constraints());
+                    if is_sat && !cs.is_satisfied() {
+                        println!("UNSAT: {:#?}", cs.which_is_unsatisfied())
+                    }
+
+                    assert_eq!(cs.is_satisfied(), is_sat);
+                }
+            )*
+        }
+    }
+
+}
+
 pub mod bit;
 pub mod num;
 pub mod poly;
@@ -17,6 +46,7 @@ pub mod lazy;
 pub mod wesolowski;
 pub mod rsa_set;
 pub mod hash;
+pub mod rollup;
 
 use sapling_crypto::bellman::pairing::ff::{PrimeField, PrimeFieldRepr};
 use num_bigint::BigUint;
@@ -50,4 +80,3 @@ fn nat_to_f<F: PrimeField>(n: &BigUint) -> Option<F> {
 fn usize_to_f<F: PrimeField>(n: usize) -> F {
     F::from_str(&format!("{}", n)).unwrap()
 }
-

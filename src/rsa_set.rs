@@ -44,6 +44,7 @@ impl<E: Engine> AllocatedRsaGroup<E> {
 }
 
 // TODO (aozdemir) mod out by the <-1> subgroup.
+#[derive(Clone, Debug)]
 pub struct RsaGroup {
     pub g: BigUint,
     pub m: BigUint,
@@ -54,7 +55,7 @@ pub struct RsaGroupParams {
     pub n_limbs: usize,
 }
 
-pub trait RsaSetBackend: Sized {
+pub trait RsaSetBackend: Sized + std::fmt::Debug {
     /// Create a new `RsaSet` which computes product mod `modulus`.
     fn new(group: RsaGroup) -> Self;
     /// Add `n` to the set, returning whether `n` is new to the set.
@@ -94,6 +95,16 @@ pub struct NaiveRsaSetBackend {
     elements: BTreeSet<BigUint>,
 }
 
+impl std::fmt::Debug for NaiveRsaSetBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        writeln!(f, "NaiveRsaSetBackend:")?;
+        for e in &self.elements {
+            writeln!(f, "\t{}", e)?;
+        }
+        Ok(())
+    }
+}
+
 impl RsaSetBackend for NaiveRsaSetBackend {
     fn new(group: RsaGroup) -> Self {
         Self {
@@ -130,7 +141,11 @@ pub struct RsaSet<E: Engine, B: RsaSetBackend> {
 }
 
 impl<E: Engine, B: RsaSetBackend> RsaSet<E, B> {
-    pub fn alloc<CS, F>(mut cs: CS, f: F, group: AllocatedRsaGroup<E>) -> Result<Self, SynthesisError>
+    pub fn alloc<CS, F>(
+        mut cs: CS,
+        f: F,
+        group: AllocatedRsaGroup<E>,
+    ) -> Result<Self, SynthesisError>
     where
         CS: ConstraintSystem<E>,
         F: FnOnce() -> Result<B, SynthesisError>,
@@ -145,8 +160,8 @@ impl<E: Engine, B: RsaSetBackend> RsaSet<E, B> {
                 value = Some(set);
                 digest
             },
-            group.g.limb_width,
-            group.g.limbs.len(),
+            group.m.limb_width,
+            dbg!(group.m.limbs.len()),
         )?;
         Ok(Self {
             value,
@@ -164,16 +179,30 @@ impl<E: Engine, B: RsaSetBackend> RsaSet<E, B> {
         let old_value = self.value;
         let value = || -> Result<B, SynthesisError> {
             let mut value = old_value.ok_or(SynthesisError::AssignmentMissing)?;
+            println!("{:#?}", value);
+            for i in items {
+                println!("\t{}", i.value.as_ref().unwrap());
+            }
             value.remove_all(
                 items
                     .iter()
                     .map(|i| i.value.grab())
                     .collect::<Result<Vec<_>, _>>()?,
             );
+            println!("{:#?}", value);
             Ok(value)
         };
         let new_set = Self::alloc(cs.namespace(|| "new"), value, self.group)?;
-        println!("New set allocated");
+        println!("New set allocated:");
+        println!(
+            "\tdig0: {:x}\n\tdig1: {:x}\n\titems{:#?}",
+            new_set.digest.value.as_ref().unwrap(),
+            self.digest.value.as_ref().unwrap(),
+            items
+                .iter()
+                .map(|i| i.value.as_ref().unwrap())
+                .collect::<Vec<_>>(),
+        );
         proof_of_exp(
             cs.namespace(|| "proof"),
             &new_set.digest,
@@ -218,32 +247,9 @@ impl<E: Engine, B: RsaSetBackend> RsaSet<E, B> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use sapling_crypto::bellman::pairing::bn256::Bn256;
-    use sapling_crypto::bellman::Circuit;
-    use sapling_crypto::circuit::test::TestConstraintSystem;
+    use test_helpers::*;
 
     use std::str::FromStr;
-
-    macro_rules! circuit_tests {
-        ($($name:ident: $value:expr,)*) => {
-            $(
-                #[test]
-                fn $name() {
-                    let (circuit, is_sat) = $value;
-                    let mut cs = TestConstraintSystem::<Bn256>::new();
-
-                    circuit.synthesize(&mut cs).expect("synthesis failed");
-                    println!(concat!("Constaints in {}: {}"), stringify!($name), cs.num_constraints());
-                    if is_sat && !cs.is_satisfied() {
-                        println!("UNSAT: {:#?}", cs.which_is_unsatisfied())
-                    }
-
-                    assert_eq!(cs.is_satisfied(), is_sat);
-                }
-            )*
-        }
-    }
 
     pub struct RsaRemovalInputs<'a> {
         pub g: &'a str,
@@ -341,11 +347,8 @@ mod tests {
                 .digest
                 .equal(cs.namespace(|| "initial_eq"), &initial_digest)?;
 
-            let final_set = initial_set.remove(
-                cs.namespace(|| "removal"),
-                &challenge,
-                removed_items_vec.iter().collect(),
-            )?;
+            let final_set =
+                initial_set.remove(cs.namespace(|| "removal"), &challenge, &removed_items_vec)?;
 
             final_set
                 .digest

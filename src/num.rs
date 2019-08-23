@@ -5,7 +5,6 @@ use sapling_crypto::bellman::pairing::ff::{Field, PrimeField, PrimeFieldRepr};
 use usize_to_f;
 
 use bit::{Bit, Bitvector};
-use OptionExt;
 
 pub struct Num<E: Engine> {
     pub num: LinearCombination<E>,
