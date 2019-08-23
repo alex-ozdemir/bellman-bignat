@@ -8,12 +8,27 @@ use bignat::BigNat;
 use wesolowski::proof_of_exp;
 use OptionExt;
 
-pub struct CircuitRsaGroup<E: Engine> {
+pub struct AllocatedRsaGroup<E: Engine> {
     pub g: BigNat<E>,
     pub m: BigNat<E>,
 }
 
-impl<E: Engine> CircuitRsaGroup<E> {
+impl<E: Engine> AllocatedRsaGroup<E> {
+    pub fn alloc<CS, G, M>(
+        mut cs: CS,
+        g: G,
+        m: M,
+        params: RsaGroupParams,
+    ) -> Result<Self, SynthesisError>
+    where
+        CS: ConstraintSystem<E>,
+        G: FnOnce() -> Result<BigUint, SynthesisError>,
+        M: FnOnce() -> Result<BigUint, SynthesisError>,
+    {
+        let g = BigNat::alloc_from_nat(cs.namespace(|| "g"), g, params.limb_width, params.n_limbs)?;
+        let m = BigNat::alloc_from_nat(cs.namespace(|| "m"), m, params.limb_width, params.n_limbs)?;
+        Ok(Self { g, m })
+    }
     pub fn new(g: BigNat<E>, m: BigNat<E>) -> Result<Self, SynthesisError> {
         if g.limb_width != m.limb_width || g.limbs.len() != m.limbs.len() {
             return Err(SynthesisError::Unsatisfiable);
@@ -111,11 +126,11 @@ impl RsaSetBackend for NaiveRsaSetBackend {
 pub struct RsaSet<E: Engine, B: RsaSetBackend> {
     pub value: Option<B>,
     pub digest: BigNat<E>,
-    pub group: CircuitRsaGroup<E>,
+    pub group: AllocatedRsaGroup<E>,
 }
 
 impl<E: Engine, B: RsaSetBackend> RsaSet<E, B> {
-    pub fn alloc<CS, F>(mut cs: CS, f: F, group: CircuitRsaGroup<E>) -> Result<Self, SynthesisError>
+    pub fn alloc<CS, F>(mut cs: CS, f: F, group: AllocatedRsaGroup<E>) -> Result<Self, SynthesisError>
     where
         CS: ConstraintSystem<E>,
         F: FnOnce() -> Result<B, SynthesisError>,
@@ -144,7 +159,7 @@ impl<E: Engine, B: RsaSetBackend> RsaSet<E, B> {
         self,
         mut cs: CS,
         challenge: &BigNat<E>,
-        items: Vec<&BigNat<E>>,
+        items: &[BigNat<E>],
     ) -> Result<Self, SynthesisError> {
         let old_value = self.value;
         let value = || -> Result<B, SynthesisError> {
@@ -152,18 +167,18 @@ impl<E: Engine, B: RsaSetBackend> RsaSet<E, B> {
             value.remove_all(
                 items
                     .iter()
-                    .copied()
                     .map(|i| i.value.grab())
                     .collect::<Result<Vec<_>, _>>()?,
             );
             Ok(value)
         };
         let new_set = Self::alloc(cs.namespace(|| "new"), value, self.group)?;
+        println!("New set allocated");
         proof_of_exp(
             cs.namespace(|| "proof"),
             &new_set.digest,
             &new_set.group.m,
-            items.into_iter().collect(),
+            items,
             challenge,
             &self.digest,
         )?;
@@ -174,7 +189,7 @@ impl<E: Engine, B: RsaSetBackend> RsaSet<E, B> {
         self,
         mut cs: CS,
         challenge: &BigNat<E>,
-        items: Vec<&BigNat<E>>,
+        items: &[BigNat<E>],
     ) -> Result<Self, SynthesisError> {
         let old_value = self.value;
         let value = || -> Result<B, SynthesisError> {
@@ -192,7 +207,7 @@ impl<E: Engine, B: RsaSetBackend> RsaSet<E, B> {
             cs.namespace(|| "proof"),
             &self.digest,
             &new_set.group.m,
-            items.into_iter().collect(),
+            items,
             challenge,
             &new_set.digest,
         )?;
@@ -275,7 +290,7 @@ mod tests {
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
-            let group = CircuitRsaGroup::new(g, m)?;
+            let group = AllocatedRsaGroup::new(g, m)?;
             let initial_items_vec: Vec<BigUint> = self
                 .inputs
                 .grab()?
@@ -459,5 +474,4 @@ mod tests {
                                                         true
                                                             ),
     }
-
 }

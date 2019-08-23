@@ -60,7 +60,7 @@ impl<E: Engine> Num<E> {
             .map(|bit_i| {
                 Bit::alloc(
                     cs.namespace(|| format!("bit{}", bit_i)),
-                    Some(values.grab()?[bit_i]),
+                    values.as_ref().map(|vs| vs[bit_i]),
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;

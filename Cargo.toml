@@ -14,3 +14,4 @@ sapling-crypto = { package = "sapling-crypto_ce", version = "0.1.0" }
 [dev-dependencies]
 quickcheck = "0.8"
 quickcheck_macros = "0.8"
+color-backtrace = { version = "0.2" }

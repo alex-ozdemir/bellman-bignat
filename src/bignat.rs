@@ -217,6 +217,7 @@ impl<E: Engine> BigNat<E> {
     ) -> Result<Bitvector<E>, SynthesisError> {
         let limb_values_split =
             (0..self.limbs.len()).map(|i| self.limb_values.as_ref().map(|vs| vs[i]));
+        println!("Split the limbs");
         let bitvectors: Vec<Bitvector<E>> = self
             .limbs
             .iter()
@@ -227,6 +228,7 @@ impl<E: Engine> BigNat<E> {
                     .fits_in_bits(cs.namespace(|| format!("subdecmop {}", i)), self.limb_width)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        println!("Got the BVs");
         let mut bits = Vec::new();
         let mut values = Vec::new();
         for bv in bitvectors {
@@ -524,6 +526,7 @@ impl<E: Engine> BigNat<E> {
         modulus: &Self,
     ) -> Result<BigNat<E>, SynthesisError> {
         let exp_bin_rev = exp.decompose(cs.namespace(|| "exp decomp"))?.reversed();
+        println!("exponent decomposed");
         self.pow_mod_bin_rev(cs.namespace(|| "binary exp"), exp_bin_rev, modulus)
     }
 }
