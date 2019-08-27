@@ -28,6 +28,12 @@ impl<E: Engine> Bitvector<E> {
         self.bits.reverse();
         self
     }
+    /// Keep only the first `n` bits.
+    pub fn truncate(mut self, n: usize) -> Self {
+        self.values.as_mut().map(|v| v.truncate(n));
+        self.bits.truncate(n);
+        self
+    }
 }
 
 impl<E: Engine> Bit<E> {

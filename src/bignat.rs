@@ -1,11 +1,12 @@
 use num_bigint::BigUint;
-use num_traits::{Pow, ToPrimitive};
+use num_traits::{Pow, ToPrimitive, One};
 use sapling_crypto::bellman::pairing::ff::{Field, PrimeField};
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
 
 use std::cmp::max;
 use std::rc::Rc;
+use std::borrow::Borrow;
 
 use bit::{Bit, Bitvector};
 use num::Num;
@@ -15,13 +16,13 @@ use {f_to_nat, nat_to_f};
 
 /// Compute the natural number represented by an array of limbs.
 /// The limbs are assumed to be based the `limb_width` power of 2.
-pub fn limbs_to_nat<'a, F: PrimeField, I: Iterator<Item = &'a F>>(
+pub fn limbs_to_nat<F: PrimeField, B: Borrow<F>, I: Iterator<Item = B>>(
     limbs: I,
     limb_width: usize,
 ) -> BigUint {
     limbs
         .enumerate()
-        .map(|(limb_i, limb)| (f_to_nat(limb) << (limb_i * limb_width)))
+        .map(|(limb_i, limb)| (f_to_nat(limb.borrow()) << (limb_i * limb_width)))
         .sum()
 }
 
@@ -86,7 +87,7 @@ impl<E: Engine> BigNat<E> {
                                 return Err(SynthesisError::Unsatisfiable);
                             }
                             if value.is_none() {
-                                value = Some(limbs_to_nat(vs.iter(), limb_width));
+                                value = Some(limbs_to_nat::<E::Fr,_,_>(vs.iter(), limb_width));
                             }
                             if limb_values.is_none() {
                                 limb_values = Some(vs.clone());
@@ -121,7 +122,7 @@ impl<E: Engine> BigNat<E> {
             .collect::<Option<Vec<E::Fr>>>();
         let value = limb_values
             .as_ref()
-            .map(|values| limbs_to_nat(values.iter(), limb_width));
+            .map(|values| limbs_to_nat::<E::Fr,_,_>(values.iter(), limb_width));
         let max_word = (BigUint::from(1usize) << limb_width) - 1usize;
         Self {
             value,
@@ -189,6 +190,25 @@ impl<E: Engine> BigNat<E> {
         })
     }
 
+    pub fn inputize<CS: ConstraintSystem<E>>(
+        &self,
+        mut cs: CS,
+    ) -> Result<(), SynthesisError> {
+        for (i, l) in self.limbs.iter().enumerate() {
+            let mut c = cs.namespace(|| format!("limb {}", i));
+            let v = c.alloc_input(
+                || "alloc",
+                || Ok(self.limb_values.as_ref().grab()?[i]))?;
+            c.enforce(
+                || "eq",
+                |lc| lc,
+                |lc| lc,
+                |lc| lc + v - l,
+            );
+        }
+        Ok(())
+    }
+
     /// Constrain `self` to be equal to `other`, assuming that they're both properly carried.
     pub fn equal<CS: ConstraintSystem<E>>(
         &self,
@@ -211,13 +231,12 @@ impl<E: Engine> BigNat<E> {
     }
 
     /// Break `self` up into a bit-vector.
-    fn decompose<CS: ConstraintSystem<E>>(
+    pub fn decompose<CS: ConstraintSystem<E>>(
         &self,
         mut cs: CS,
     ) -> Result<Bitvector<E>, SynthesisError> {
         let limb_values_split =
             (0..self.limbs.len()).map(|i| self.limb_values.as_ref().map(|vs| vs[i]));
-        println!("Split the limbs");
         let bitvectors: Vec<Bitvector<E>> = self
             .limbs
             .iter()
@@ -228,7 +247,6 @@ impl<E: Engine> BigNat<E> {
                     .fits_in_bits(cs.namespace(|| format!("subdecmop {}", i)), self.limb_width)
             })
             .collect::<Result<Vec<_>, _>>()?;
-        println!("Got the BVs");
         let mut bits = Vec::new();
         let mut values = Vec::new();
         for bv in bitvectors {
@@ -239,13 +257,38 @@ impl<E: Engine> BigNat<E> {
         Ok(Bitvector { bits, values })
     }
 
+    pub fn recompose<CS: ConstraintSystem<E>>(
+        &self,
+        bits: &Bitvector<E>,
+        limb_width: usize,
+        n_limbs: usize,
+    ) -> Result<Self, SynthesisError> {
+        if bits.bits.len() > limb_width * n_limbs || E::Fr::CAPACITY < limb_width as u32 {
+            return Err(SynthesisError::Unsatisfiable);
+        }
+        let value = bits.values.as_ref().map(|bit_values| limbs_to_nat::<E::Fr,_,_>(bit_values.iter().map(|b| if *b { E::Fr::one() } else { E::Fr::zero() }), 1));
+        let limb_values: Option<Vec<E::Fr>> = value.as_ref().map(|v| (1..n_limbs).map(|i| nat_to_f(&((v >> (i * limb_width)) & ((BigUint::one() << limb_width) - 1usize))).unwrap()).collect::<Vec<_>>());
+        let limbs = bits.bits.chunks(limb_width).map(|chunk| {
+            chunk.iter().enumerate().fold(LinearCombination::zero(), |lc, (i, b)| {
+                lc + (nat_to_f::<E::Fr>(&(BigUint::one() << i)).unwrap(), b)
+            })
+        }).collect();
+        Ok(Self {
+            value,
+            limb_values,
+            limbs,
+            limb_width,
+            max_word: (BigUint::one() << limb_width) - 1usize,
+        })
+    }
+
     pub fn from_poly(poly: Polynomial<E>, limb_width: usize, max_word: BigUint) -> Self {
         Self {
             limbs: poly.coefficients,
             value: poly
                 .values
                 .as_ref()
-                .map(|limb_values| limbs_to_nat(limb_values.iter(), limb_width)),
+                .map(|limb_values| limbs_to_nat::<E::Fr,_,_>(limb_values.iter(), limb_width)),
             max_word,
             limb_values: poly.values,
             limb_width,
@@ -355,12 +398,14 @@ impl<E: Engine> BigNat<E> {
             self.limb_width,
             quotient_limbs,
         )?;
+        quotient.decompose(cs.namespace(|| "quotient rangecheck"))?;
         let remainder = BigNat::alloc_from_nat(
             cs.namespace(|| "remainder"),
             || Ok(self.value.grab()? * other.value.grab()? % modulus.value.grab()?),
             self.limb_width,
             modulus.limbs.len(),
         )?;
+        remainder.decompose(cs.namespace(|| "remainder rangecheck"))?;
         let a_poly = Polynomial::from(self.clone());
         let b_poly = Polynomial::from(other.clone());
         let mod_poly = Polynomial::from(modulus.clone());
@@ -526,7 +571,6 @@ impl<E: Engine> BigNat<E> {
         modulus: &Self,
     ) -> Result<BigNat<E>, SynthesisError> {
         let exp_bin_rev = exp.decompose(cs.namespace(|| "exp decomp"))?.reversed();
-        println!("exponent decomposed");
         self.pow_mod_bin_rev(cs.namespace(|| "binary exp"), exp_bin_rev, modulus)
     }
 }
@@ -1170,22 +1214,22 @@ mod tests {
                 true
             ),
     // This is a production-sized test. On my machine it takes
-    // ~5GB and 30s.
-    //        pow_mod_16_to_255_2048x128: (
-    //            PowMod {
-    //                params: PowModParams {
-    //                    limb_width: 32,
-    //                    n_limbs_b: 64,
-    //                    n_limbs_e: 4,
-    //                },
-    //                inputs: Some(PowModInputs {
-    //                    b: "16",
-    //                    e: "254",
-    //                    m: "255",
-    //                    res: "1",
-    //                }),
-    //            },
-    //            true
-    //        ),
+    // ~5GB and 60s.
+            pow_mod_16_to_255_2048x128: (
+                PowMod {
+                    params: PowModParams {
+                        limb_width: 32,
+                        n_limbs_b: 64,
+                        n_limbs_e: 4,
+                    },
+                    inputs: Some(PowModInputs {
+                        b: "16",
+                        e: "254",
+                        m: "255",
+                        res: "1",
+                    }),
+                },
+                true
+            ),
         }
 }

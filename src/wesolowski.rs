@@ -92,20 +92,15 @@ pub fn proof_of_exp<E: Engine, CS: ConstraintSystem<E>>(
         base.limb_width,
         base.limbs.len(),
     )?;
-    println!("Q allocated");
     let r = BigNat::alloc_from_nat(
         cs.namespace(|| "r"),
         r_computation,
         challenge.limb_width,
         challenge.limbs.len(),
     )?;
-    println!("r allocated");
     let ql = q.pow_mod(cs.namespace(|| "Q^l"), &challenge, &modulus)?;
-    println!("Q^l synthesized");
     let br = base.pow_mod(cs.namespace(|| "b^r"), &r, &modulus)?;
-    println!("b^r synthesized");
     let left = ql.mult_mod(cs.namespace(|| "Q^l b^r"), &br, &modulus)?.1;
-    println!("left synthesized");
     left.equal(cs.namespace(|| "Q^l b^r == res"), &result)
 }
 

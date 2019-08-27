@@ -14,7 +14,7 @@ pub struct AllocatedRsaGroup<E: Engine> {
 }
 
 impl<E: Engine> AllocatedRsaGroup<E> {
-    pub fn alloc<CS, G, M>(
+    pub fn alloc_input<CS, G, M>(
         mut cs: CS,
         g: G,
         m: M,
@@ -26,7 +26,9 @@ impl<E: Engine> AllocatedRsaGroup<E> {
         M: FnOnce() -> Result<BigUint, SynthesisError>,
     {
         let g = BigNat::alloc_from_nat(cs.namespace(|| "g"), g, params.limb_width, params.n_limbs)?;
+        g.inputize(cs.namespace(|| "g input"))?;
         let m = BigNat::alloc_from_nat(cs.namespace(|| "m"), m, params.limb_width, params.n_limbs)?;
+        m.inputize(cs.namespace(|| "m input"))?;
         Ok(Self { g, m })
     }
     pub fn new(g: BigNat<E>, m: BigNat<E>) -> Result<Self, SynthesisError> {
@@ -161,7 +163,7 @@ impl<E: Engine, B: RsaSetBackend> RsaSet<E, B> {
                 digest
             },
             group.m.limb_width,
-            dbg!(group.m.limbs.len()),
+            group.m.limbs.len(),
         )?;
         Ok(Self {
             value,
@@ -179,30 +181,15 @@ impl<E: Engine, B: RsaSetBackend> RsaSet<E, B> {
         let old_value = self.value;
         let value = || -> Result<B, SynthesisError> {
             let mut value = old_value.ok_or(SynthesisError::AssignmentMissing)?;
-            println!("{:#?}", value);
-            for i in items {
-                println!("\t{}", i.value.as_ref().unwrap());
-            }
             value.remove_all(
                 items
                     .iter()
                     .map(|i| i.value.grab())
                     .collect::<Result<Vec<_>, _>>()?,
             );
-            println!("{:#?}", value);
             Ok(value)
         };
         let new_set = Self::alloc(cs.namespace(|| "new"), value, self.group)?;
-        println!("New set allocated:");
-        println!(
-            "\tdig0: {:x}\n\tdig1: {:x}\n\titems{:#?}",
-            new_set.digest.value.as_ref().unwrap(),
-            self.digest.value.as_ref().unwrap(),
-            items
-                .iter()
-                .map(|i| i.value.as_ref().unwrap())
-                .collect::<Vec<_>>(),
-        );
         proof_of_exp(
             cs.namespace(|| "proof"),
             &new_set.digest,
