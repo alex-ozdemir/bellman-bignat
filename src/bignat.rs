@@ -1,10 +1,12 @@
 use num_bigint::BigUint;
-use num_traits::{Pow, ToPrimitive, One};
+use num_traits::{Pow, ToPrimitive};
 use sapling_crypto::bellman::pairing::ff::{Field, PrimeField};
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
+use sapling_crypto::circuit::boolean::Boolean;
 
 use std::cmp::max;
+use std::convert::From;
 use std::rc::Rc;
 use std::borrow::Borrow;
 
@@ -230,6 +232,46 @@ impl<E: Engine> BigNat<E> {
         Ok(())
     }
 
+    pub fn is_equal<CS: ConstraintSystem<E>>(
+        &self,
+        mut cs: CS,
+        other: &Self,
+    ) -> Result<Boolean, SynthesisError> {
+        use sapling_crypto::circuit::num::{AllocatedNum, Num};
+        let mut rolling = Boolean::Constant(true);
+        if self.limbs.len() != other.limbs.len() || self.limb_width != other.limb_width {
+            return Err(SynthesisError::Unsatisfiable);
+        }
+        let n = self.limbs.len();
+        for i in 0..n {
+            let self_limb = AllocatedNum::alloc(cs.namespace(|| format!("self {}", i)), || {
+                Ok(self.limb_values.as_ref().grab()?[i])
+            })?;
+            cs.enforce(
+                || format!("equal self {}", i),
+                |lc| lc,
+                |lc| lc,
+                |lc| lc - &Num::from(self_limb.clone()).lc(E::Fr::one()) + &self.limbs[i],
+            );
+            let other_limb = AllocatedNum::alloc(cs.namespace(|| format!("other {}", i)), || {
+                Ok(other.limb_values.as_ref().grab()?[i])
+            })?;
+            cs.enforce(
+                || format!("equal other {}", i),
+                |lc| lc,
+                |lc| lc,
+                |lc| lc - &Num::from(other_limb.clone()).lc(E::Fr::one()) + &other.limbs[i],
+            );
+            let b = AllocatedNum::equals(
+                cs.namespace(|| format!("eq {}", i)),
+                &self_limb,
+                &other_limb,
+            )?;
+            rolling = Boolean::and(cs.namespace(|| format!("and {}", i)), &b, &rolling)?;
+        }
+        Ok(rolling)
+    }
+
     /// Break `self` up into a bit-vector.
     pub fn decompose<CS: ConstraintSystem<E>>(
         &self,
@@ -257,29 +299,22 @@ impl<E: Engine> BigNat<E> {
         Ok(Bitvector { bits, values })
     }
 
-    pub fn recompose<CS: ConstraintSystem<E>>(
-        &self,
-        bits: &Bitvector<E>,
-        limb_width: usize,
-        n_limbs: usize,
-    ) -> Result<Self, SynthesisError> {
-        if bits.bits.len() > limb_width * n_limbs || E::Fr::CAPACITY < limb_width as u32 {
-            return Err(SynthesisError::Unsatisfiable);
-        }
-        let value = bits.values.as_ref().map(|bit_values| limbs_to_nat::<E::Fr,_,_>(bit_values.iter().map(|b| if *b { E::Fr::one() } else { E::Fr::zero() }), 1));
-        let limb_values: Option<Vec<E::Fr>> = value.as_ref().map(|v| (1..n_limbs).map(|i| nat_to_f(&((v >> (i * limb_width)) & ((BigUint::one() << limb_width) - 1usize))).unwrap()).collect::<Vec<_>>());
-        let limbs = bits.bits.chunks(limb_width).map(|chunk| {
-            chunk.iter().enumerate().fold(LinearCombination::zero(), |lc, (i, b)| {
-                lc + (nat_to_f::<E::Fr>(&(BigUint::one() << i)).unwrap(), b)
-            })
-        }).collect();
-        Ok(Self {
-            value,
-            limb_values,
-            limbs,
-            limb_width,
-            max_word: (BigUint::one() << limb_width) - 1usize,
-        })
+    fn recompose(bv: &Bitvector<E>, limb_width: usize) -> Self {
+        let nat = BigNat::from_limbs(
+            bv.bits
+                .iter()
+                .enumerate()
+                .map(|(i, bit)| {
+                    let val =
+                        bv.values
+                            .as_ref()
+                            .map(|v| if v[i] { E::Fr::one() } else { E::Fr::zero() });
+                    Num::new(val, bit.clone())
+                })
+                .collect(),
+            1,
+        );
+        nat.group_limbs(limb_width)
     }
 
     pub fn from_poly(poly: Polynomial<E>, limb_width: usize, max_word: BigUint) -> Self {
@@ -573,6 +608,41 @@ impl<E: Engine> BigNat<E> {
         let exp_bin_rev = exp.decompose(cs.namespace(|| "exp decomp"))?.reversed();
         self.pow_mod_bin_rev(cs.namespace(|| "binary exp"), exp_bin_rev, modulus)
     }
+
+    /// Assuming that the input is equivalent to 3 modulo 4, does a round of Miller-Rabin to check
+    /// for primality
+    pub fn miller_rabin_round<CS: ConstraintSystem<E>>(
+        &self,
+        mut cs: CS,
+        base: &Self,
+    ) -> Result<Boolean, SynthesisError> {
+        let bits = self.decompose(cs.namespace(|| "decomp"))?;
+        if bits.bits.len() < 3 {
+            return Err(SynthesisError::Unsatisfiable);
+        }
+        // Unwraps are safe b/c of len check above
+        bits.get(0)
+            .unwrap()
+            .constrain_value(cs.namespace(|| "odd"), true);
+        bits.get(1)
+            .unwrap()
+            .constrain_value(cs.namespace(|| "= 3 mod 4"), true);
+        let n_less_one = BigNat::recompose(&bits.clone().shr(1).shl(1), self.limb_width);
+        let one = BigNat::alloc_from_nat(
+            cs.namespace(|| "1"),
+            || Ok(BigUint::from(1usize)),
+            self.limb_width,
+            self.limbs.len(),
+        )?;
+        // 2a + 1 == n
+        let a = BigNat::recompose(&bits.shr(1), self.limb_width);
+        // Check that b^a == 1 (mod self) OR
+        //            b^a == -1 (mod self)
+        let pow = base.pow_mod(cs.namespace(|| "b^a"), &a, self)?;
+        let is_1 = pow.is_equal(cs.namespace(|| "=1"), &n_less_one)?;
+        let is_neg_1 = pow.is_equal(cs.namespace(|| "=-1"), &one)?;
+        Ok(Boolean::and(cs.namespace(|| "or"), &is_1.not(), &is_neg_1.not())?.not())
+    }
 }
 
 #[cfg(test)]
@@ -584,7 +654,6 @@ mod tests {
 
     use crate::usize_to_f;
     use std::str::FromStr;
-
 
     pub struct CarrierInputs {
         pub a: Vec<usize>,
@@ -950,49 +1019,49 @@ mod tests {
 
     circuit_tests! {
         decomp_1_into_1b: (
-            NumberBitDecomp {
-                params: NumberBitDecompParams {
-                    n_bits: 1,
-                },
-                inputs: Some(NumberBitDecompInputs {
-                    n: BigUint::from(1usize),
-                }),
-            },
-            true
-        ),
-        decomp_1_into_2b: (
-            NumberBitDecomp {
-                params: NumberBitDecompParams {
-                    n_bits: 2,
-                },
-                inputs: Some(NumberBitDecompInputs {
-                    n: BigUint::from(1usize),
-                }),
-            },
-            true
-        ),
-        decomp_5_into_2b_fails: (
-            NumberBitDecomp {
-                params: NumberBitDecompParams {
-                    n_bits: 2,
-                },
-                inputs: Some(NumberBitDecompInputs {
-                    n: BigUint::from(5usize),
-                }),
-            },
-            false
-        ),
-        decomp_255_into_8b: (
-            NumberBitDecomp {
-                params: NumberBitDecompParams {
-                    n_bits: 8,
-                },
-                inputs: Some(NumberBitDecompInputs {
-                    n: BigUint::from(255usize),
-                }),
-            },
-            true
-        ),
+                              NumberBitDecomp {
+                                  params: NumberBitDecompParams {
+                                      n_bits: 1,
+                                  },
+                                  inputs: Some(NumberBitDecompInputs {
+                                      n: BigUint::from(1usize),
+                                  }),
+                              },
+                              true
+                          ),
+                          decomp_1_into_2b: (
+                              NumberBitDecomp {
+                                  params: NumberBitDecompParams {
+                                      n_bits: 2,
+                                  },
+                                  inputs: Some(NumberBitDecompInputs {
+                                      n: BigUint::from(1usize),
+                                  }),
+                              },
+                              true
+                          ),
+                          decomp_5_into_2b_fails: (
+                              NumberBitDecomp {
+                                  params: NumberBitDecompParams {
+                                      n_bits: 2,
+                                  },
+                                  inputs: Some(NumberBitDecompInputs {
+                                      n: BigUint::from(5usize),
+                                  }),
+                              },
+                              false
+                          ),
+                          decomp_255_into_8b: (
+                              NumberBitDecomp {
+                                  params: NumberBitDecompParams {
+                                      n_bits: 8,
+                                  },
+                                  inputs: Some(NumberBitDecompInputs {
+                                      n: BigUint::from(255usize),
+                                  }),
+                              },
+                              true
+                          ),
     }
 
     #[derive(Debug)]
@@ -1101,135 +1170,295 @@ mod tests {
     }
 
     circuit_tests! {
-            pow_mod_1_to_0: (
-                PowMod {
-                    params: PowModParams {
-                        limb_width: 4,
-                        n_limbs_b: 2,
-                        n_limbs_e: 2,
-                    },
-                    inputs: Some(PowModInputs {
-                        b: "1",
-                        e: "0",
-                        m: "255",
-                        res: "1",
-                    }),
-                },
-                true
-            ),
-            pow_mod_1_to_1: (
-                PowMod {
-                    params: PowModParams {
-                        limb_width: 4,
-                        n_limbs_b: 2,
-                        n_limbs_e: 2,
-                    },
-                    inputs: Some(PowModInputs {
-                        b: "1",
-                        e: "1",
-                        m: "255",
-                        res: "1",
-                    }),
-                },
-                true
-            ),
-            pow_mod_1_to_255: (
-                PowMod {
-                    params: PowModParams {
-                        limb_width: 4,
-                        n_limbs_b: 2,
-                        n_limbs_e: 2,
-                    },
-                    inputs: Some(PowModInputs {
-                        b: "1",
-                        e: "255",
-                        m: "255",
-                        res: "1",
-                    }),
-                },
-                true
-            ),
-            pow_mod_2_to_2: (
-                PowMod {
-                    params: PowModParams {
-                        limb_width: 4,
-                        n_limbs_b: 3,
-                        n_limbs_e: 1,
-                    },
-                    inputs: Some(PowModInputs {
-                        b: "2",
-                        e: "2",
-                        m: "1255",
-                        res: "4",
-                    }),
-                },
-                true
-            ),
-            pow_mod_16_to_2: (
-                PowMod {
-                    params: PowModParams {
-                        limb_width: 4,
-                        n_limbs_b: 2,
-                        n_limbs_e: 2,
-                    },
-                    inputs: Some(PowModInputs {
-                        b: "16",
-                        e: "2",
-                        m: "255",
-                        res: "1",
-                    }),
-                },
-                true
-            ),
-            pow_mod_16_to_5: (
-                PowMod {
-                    params: PowModParams {
-                        limb_width: 4,
-                        n_limbs_b: 2,
-                        n_limbs_e: 2,
-                    },
-                    inputs: Some(PowModInputs {
-                        b: "16",
-                        e: "5",
-                        m: "255",
-                        res: "16",
-                    }),
-                },
-                true
-            ),
-            pow_mod_16_to_255: (
-                PowMod {
-                    params: PowModParams {
-                        limb_width: 4,
-                        n_limbs_b: 2,
-                        n_limbs_e: 2,
-                    },
-                    inputs: Some(PowModInputs {
-                        b: "16",
-                        e: "254",
-                        m: "255",
-                        res: "1",
-                    }),
-                },
-                true
-            ),
-    // This is a production-sized test. On my machine it takes
-    // ~5GB and 60s.
-            pow_mod_16_to_255_2048x128: (
-                PowMod {
-                    params: PowModParams {
-                        limb_width: 32,
-                        n_limbs_b: 64,
-                        n_limbs_e: 4,
-                    },
-                    inputs: Some(PowModInputs {
-                        b: "16",
-                        e: "254",
-                        m: "255",
-                        res: "1",
-                    }),
-                },
-                true
-            ),
+        pow_mod_1_to_0: (
+                            PowMod {
+                                params: PowModParams {
+                                    limb_width: 4,
+                                    n_limbs_b: 2,
+                                    n_limbs_e: 2,
+                                },
+                                inputs: Some(PowModInputs {
+                                    b: "1",
+                                    e: "0",
+                                    m: "255",
+                                    res: "1",
+                                }),
+                            },
+                            true
+                        ),
+                        pow_mod_1_to_1: (
+                            PowMod {
+                                params: PowModParams {
+                                    limb_width: 4,
+                                    n_limbs_b: 2,
+                                    n_limbs_e: 2,
+                                },
+                                inputs: Some(PowModInputs {
+                                    b: "1",
+                                    e: "1",
+                                    m: "255",
+                                    res: "1",
+                                }),
+                            },
+                            true
+                        ),
+                        pow_mod_1_to_255: (
+                            PowMod {
+                                params: PowModParams {
+                                    limb_width: 4,
+                                    n_limbs_b: 2,
+                                    n_limbs_e: 2,
+                                },
+                                inputs: Some(PowModInputs {
+                                    b: "1",
+                                    e: "255",
+                                    m: "255",
+                                    res: "1",
+                                }),
+                            },
+                            true
+                        ),
+                        pow_mod_2_to_2: (
+                            PowMod {
+                                params: PowModParams {
+                                    limb_width: 4,
+                                    n_limbs_b: 3,
+                                    n_limbs_e: 1,
+                                },
+                                inputs: Some(PowModInputs {
+                                    b: "2",
+                                    e: "2",
+                                    m: "1255",
+                                    res: "4",
+                                }),
+                            },
+                            true
+                        ),
+                        pow_mod_16_to_2: (
+                            PowMod {
+                                params: PowModParams {
+                                    limb_width: 4,
+                                    n_limbs_b: 2,
+                                    n_limbs_e: 2,
+                                },
+                                inputs: Some(PowModInputs {
+                                    b: "16",
+                                    e: "2",
+                                    m: "255",
+                                    res: "1",
+                                }),
+                            },
+                            true
+                        ),
+                        pow_mod_16_to_5: (
+                            PowMod {
+                                params: PowModParams {
+                                    limb_width: 4,
+                                    n_limbs_b: 2,
+                                    n_limbs_e: 2,
+                                },
+                                inputs: Some(PowModInputs {
+                                    b: "16",
+                                    e: "5",
+                                    m: "255",
+                                    res: "16",
+                                }),
+                            },
+                            true
+                        ),
+                        pow_mod_16_to_255: (
+                            PowMod {
+                                params: PowModParams {
+                                    limb_width: 4,
+                                    n_limbs_b: 2,
+                                    n_limbs_e: 2,
+                                },
+                                inputs: Some(PowModInputs {
+                                    b: "16",
+                                    e: "254",
+                                    m: "255",
+                                    res: "1",
+                                }),
+                            },
+                            true
+                        ),
+                        // This is a production-sized test. On my machine it takes
+                        // ~5GB and 30s.
+                        //        pow_mod_16_to_255_2048x128: (
+                        //            PowMod {
+                        //                params: PowModParams {
+                        //                    limb_width: 32,
+                        //                    n_limbs_b: 64,
+                        //                    n_limbs_e: 4,
+                        //                },
+                        //                inputs: Some(PowModInputs {
+                        //                    b: "16",
+                        //                    e: "254",
+                        //                    m: "255",
+                        //                    res: "1",
+                        //                }),
+                        //            },
+                        //            true
+                        //        ),
+    }
+
+
+    #[derive(Debug)]
+    pub struct MillerRabinRoundInputs<'a> {
+        pub b: &'a str,
+        pub n: &'a str,
+        pub result: bool,
+    }
+
+    pub struct MillerRabinRoundParams {
+        pub limb_width: usize,
+        pub n_limbs: usize,
+    }
+
+    pub struct MillerRabinRound<'a> {
+        inputs: Option<MillerRabinRoundInputs<'a>>,
+        params: MillerRabinRoundParams,
+    }
+
+    impl<'a, E: Engine> Circuit<E> for MillerRabinRound<'a> {
+        fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
+            use sapling_crypto::circuit::boolean::AllocatedBit;
+            let b = BigNat::alloc_from_nat(
+                cs.namespace(|| "b"),
+                || Ok(BigUint::from_str(self.inputs.grab()?.b).unwrap()),
+                self.params.limb_width,
+                self.params.n_limbs,
+            )?;
+            let n = BigNat::alloc_from_nat(
+                cs.namespace(|| "n"),
+                || Ok(BigUint::from_str(self.inputs.grab()?.n).unwrap()),
+                self.params.limb_width,
+                self.params.n_limbs,
+            )?;
+            let expected_res = Boolean::Is(AllocatedBit::alloc(cs.namespace(|| "bit"), self.inputs.map(|o| o.result))?);
+            let actual_res = n.miller_rabin_round(cs.namespace(|| "mr"), &b)?;
+            Boolean::enforce_equal(cs.namespace(|| "eq"), &expected_res, &actual_res)?;
+            Ok(())
         }
+    }
+    circuit_tests! {
+        mr_round_7_base_5: (
+            MillerRabinRound {
+                params: MillerRabinRoundParams {
+                    limb_width: 4,
+                    n_limbs: 2,
+                },
+                inputs: Some(MillerRabinRoundInputs {
+                    b: "5",
+                    n: "7",
+                    result: true,
+                }),
+            },
+            true),
+        mr_round_11_base_2: (
+            MillerRabinRound {
+                params: MillerRabinRoundParams {
+                    limb_width: 4,
+                    n_limbs: 2,
+                },
+                inputs: Some(MillerRabinRoundInputs {
+                    b: "2",
+                    n: "11",
+                    result: true,
+                }),
+            },
+            true),
+        mr_round_5_base_2: (
+            MillerRabinRound {
+                params: MillerRabinRoundParams {
+                    limb_width: 4,
+                    n_limbs: 2,
+                },
+                inputs: Some(MillerRabinRoundInputs {
+                    b: "2",
+                    n: "5",
+                    result: true,
+                }),
+            },
+            false),
+        // ~80,000 constraints
+        mr_round_full_base_2: (
+            MillerRabinRound {
+                params: MillerRabinRoundParams {
+                    limb_width: 32,
+                    n_limbs: 4,
+                },
+                inputs: Some(MillerRabinRoundInputs {
+                    b: "2",
+                    n: "262215269494931243253999821294977607927",
+                    result: true,
+                }),
+            },
+            true),
+        mr_round_full_base_3: (
+            MillerRabinRound {
+                params: MillerRabinRoundParams {
+                    limb_width: 32,
+                    n_limbs: 4,
+                },
+                inputs: Some(MillerRabinRoundInputs {
+                    b: "3",
+                    n: "262215269494931243253999821294977607927",
+                    result: true,
+                }),
+            },
+            true),
+        mr_round_full_base_5: (
+            MillerRabinRound {
+                params: MillerRabinRoundParams {
+                    limb_width: 32,
+                    n_limbs: 4,
+                },
+                inputs: Some(MillerRabinRoundInputs {
+                    b: "5",
+                    n: "262215269494931243253999821294977607927",
+                    result: true,
+                }),
+            },
+            true),
+        mr_round_full_base_2_fail: (
+            MillerRabinRound {
+                params: MillerRabinRoundParams {
+                    limb_width: 32,
+                    n_limbs: 4,
+                },
+                inputs: Some(MillerRabinRoundInputs {
+                    b: "2",
+                    n: "304740101182592084246827883024894699479",
+                    result: false,
+                }),
+            },
+            true),
+        mr_round_full_base_3_fail: (
+            MillerRabinRound {
+                params: MillerRabinRoundParams {
+                    limb_width: 32,
+                    n_limbs: 4,
+                },
+                inputs: Some(MillerRabinRoundInputs {
+                    b: "3",
+                    n: "304740101182592084246827883024894699479",
+                    result: false,
+                }),
+            },
+            true),
+        mr_round_full_base_5_fail: (
+            MillerRabinRound {
+                params: MillerRabinRoundParams {
+                    limb_width: 32,
+                    n_limbs: 4,
+                },
+                inputs: Some(MillerRabinRoundInputs {
+                    b: "5",
+                    n: "304740101182592084246827883024894699479",
+                    result: false,
+                }),
+            },
+            true),
+    }
 }

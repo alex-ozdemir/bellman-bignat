@@ -1,7 +1,7 @@
 // (mostly from franklin-crypto)
-use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
-use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::pairing::ff::Field;
+use sapling_crypto::bellman::pairing::Engine;
+use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
 
 use OptionExt;
 
@@ -13,6 +13,7 @@ pub struct Bit<E: Engine> {
     pub value: Option<bool>,
 }
 
+#[derive(Clone)]
 /// A representation of a bit-vector
 pub struct Bitvector<E: Engine> {
     /// The linear combination which constrain the values of the bits
@@ -34,6 +35,31 @@ impl<E: Engine> Bitvector<E> {
         self.bits.truncate(n);
         self
     }
+
+    pub fn get(&self, i: usize) -> Option<Bit<E>> {
+        self.bits.get(i).map(|lc| {
+            Bit {
+                bit: lc.clone(),
+                value: self.values.as_ref().map(|vs| vs[i].clone()),
+            }
+        })
+    }
+
+    pub fn shr(mut self, i: usize) -> Self {
+        self.values.as_mut().map(|v| {
+            v.drain(0..i);
+        });
+        self.bits.drain(0..i);
+        self
+    }
+
+    pub fn shl(mut self, i: usize) -> Self {
+        self.values.as_mut().map(|v| {
+            v.splice(0..0, std::iter::repeat(false).take(i));
+        });
+        self.bits.splice(0..0, std::iter::repeat(LinearCombination::zero()).take(i));
+        self
+    }
 }
 
 impl<E: Engine> Bit<E> {
@@ -41,7 +67,6 @@ impl<E: Engine> Bit<E> {
     /// boolean value.
     pub fn alloc<CS>(mut cs: CS, value: Option<bool>) -> Result<Self, SynthesisError>
     where
-        E: Engine,
         CS: ConstraintSystem<E>,
     {
         let var = cs.alloc(
@@ -68,5 +93,22 @@ impl<E: Engine> Bit<E> {
             bit: LinearCombination::zero() + var,
             value,
         })
+    }
+    pub fn constrain_value<CS>(&self, mut cs: CS, value: bool)
+    where
+        CS: ConstraintSystem<E>,
+    {
+        cs.enforce(
+            || format!("is {}", value),
+            |lc| lc,
+            |lc| lc,
+            |lc| {
+                if value {
+                    lc + &self.bit - CS::one()
+                } else {
+                    lc + &self.bit
+                }
+            },
+        );
     }
 }
