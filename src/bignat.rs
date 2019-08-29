@@ -5,10 +5,10 @@ use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
 use sapling_crypto::circuit::boolean::Boolean;
 
+use std::borrow::Borrow;
 use std::cmp::max;
 use std::convert::From;
 use std::rc::Rc;
-use std::borrow::Borrow;
 
 use bit::{Bit, Bitvector};
 use num::Num;
@@ -89,7 +89,7 @@ impl<E: Engine> BigNat<E> {
                                 return Err(SynthesisError::Unsatisfiable);
                             }
                             if value.is_none() {
-                                value = Some(limbs_to_nat::<E::Fr,_,_>(vs.iter(), limb_width));
+                                value = Some(limbs_to_nat::<E::Fr, _, _>(vs.iter(), limb_width));
                             }
                             if limb_values.is_none() {
                                 limb_values = Some(vs.clone());
@@ -124,7 +124,7 @@ impl<E: Engine> BigNat<E> {
             .collect::<Option<Vec<E::Fr>>>();
         let value = limb_values
             .as_ref()
-            .map(|values| limbs_to_nat::<E::Fr,_,_>(values.iter(), limb_width));
+            .map(|values| limbs_to_nat::<E::Fr, _, _>(values.iter(), limb_width));
         let max_word = (BigUint::from(1usize) << limb_width) - 1usize;
         Self {
             value,
@@ -192,21 +192,11 @@ impl<E: Engine> BigNat<E> {
         })
     }
 
-    pub fn inputize<CS: ConstraintSystem<E>>(
-        &self,
-        mut cs: CS,
-    ) -> Result<(), SynthesisError> {
+    pub fn inputize<CS: ConstraintSystem<E>>(&self, mut cs: CS) -> Result<(), SynthesisError> {
         for (i, l) in self.limbs.iter().enumerate() {
             let mut c = cs.namespace(|| format!("limb {}", i));
-            let v = c.alloc_input(
-                || "alloc",
-                || Ok(self.limb_values.as_ref().grab()?[i]))?;
-            c.enforce(
-                || "eq",
-                |lc| lc,
-                |lc| lc,
-                |lc| lc + v - l,
-            );
+            let v = c.alloc_input(|| "alloc", || Ok(self.limb_values.as_ref().grab()?[i]))?;
+            c.enforce(|| "eq", |lc| lc, |lc| lc, |lc| lc + v - l);
         }
         Ok(())
     }
@@ -323,7 +313,7 @@ impl<E: Engine> BigNat<E> {
             value: poly
                 .values
                 .as_ref()
-                .map(|limb_values| limbs_to_nat::<E::Fr,_,_>(limb_values.iter(), limb_width)),
+                .map(|limb_values| limbs_to_nat::<E::Fr, _, _>(limb_values.iter(), limb_width)),
             max_word,
             limb_values: poly.values,
             limb_width,
@@ -642,6 +632,42 @@ impl<E: Engine> BigNat<E> {
         let is_1 = pow.is_equal(cs.namespace(|| "=1"), &n_less_one)?;
         let is_neg_1 = pow.is_equal(cs.namespace(|| "=-1"), &one)?;
         Ok(Boolean::and(cs.namespace(|| "or"), &is_1.not(), &is_neg_1.not())?.not())
+    }
+
+    pub fn miller_rabin<CS: ConstraintSystem<E>>(
+        &self,
+        mut cs: CS,
+        n_rounds: usize,
+    ) -> Result<Boolean, SynthesisError> {
+        fn primes(n: usize) -> Vec<usize> {
+            let mut ps = vec![2];
+            let mut next = 3;
+            while ps.len() < n {
+                if !ps.iter().any(|p| next % p == 0) {
+                    ps.push(next);
+                }
+                next += 1;
+            }
+            ps
+        }
+        let ps = primes(n_rounds);
+        let mut rolling = Boolean::Constant(true);
+        for p in ps {
+            let big_p = BigUint::from(p);
+            if big_p.bits() > self.limb_width * self.limbs.len() {
+                return Err(SynthesisError::Unsatisfiable);
+            }
+            let base = BigNat::alloc_from_nat(
+                cs.namespace(|| format!("base {}", p)),
+                || Ok(big_p),
+                self.limb_width,
+                self.limbs.len(),
+            )?;
+            let round =
+                self.miller_rabin_round(cs.namespace(|| format!("mr round with {}", p)), &base)?;
+            rolling = Boolean::and(cs.namespace(|| format!("and {}", p)), &rolling, &round)?;
+        }
+        Ok(rolling)
     }
 }
 
@@ -1302,7 +1328,6 @@ mod tests {
                         //        ),
     }
 
-
     #[derive(Debug)]
     pub struct MillerRabinRoundInputs<'a> {
         pub b: &'a str,
@@ -1335,12 +1360,16 @@ mod tests {
                 self.params.limb_width,
                 self.params.n_limbs,
             )?;
-            let expected_res = Boolean::Is(AllocatedBit::alloc(cs.namespace(|| "bit"), self.inputs.map(|o| o.result))?);
+            let expected_res = Boolean::Is(AllocatedBit::alloc(
+                cs.namespace(|| "bit"),
+                self.inputs.map(|o| o.result),
+            )?);
             let actual_res = n.miller_rabin_round(cs.namespace(|| "mr"), &b)?;
             Boolean::enforce_equal(cs.namespace(|| "eq"), &expected_res, &actual_res)?;
             Ok(())
         }
     }
+
     circuit_tests! {
         mr_round_7_base_5: (
             MillerRabinRound {
@@ -1457,6 +1486,72 @@ mod tests {
                     b: "5",
                     n: "304740101182592084246827883024894699479",
                     result: false,
+                }),
+            },
+            true),
+    }
+
+    #[derive(Debug)]
+    pub struct MillerRabinInputs<'a> {
+        pub n: &'a str,
+        pub result: bool,
+    }
+
+    pub struct MillerRabinParams {
+        pub limb_width: usize,
+        pub n_limbs: usize,
+        pub n_rounds: usize,
+    }
+
+    pub struct MillerRabin<'a> {
+        inputs: Option<MillerRabinInputs<'a>>,
+        params: MillerRabinParams,
+    }
+
+    impl<'a, E: Engine> Circuit<E> for MillerRabin<'a> {
+        fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
+            use sapling_crypto::circuit::boolean::AllocatedBit;
+            let n = BigNat::alloc_from_nat(
+                cs.namespace(|| "n"),
+                || Ok(BigUint::from_str(self.inputs.grab()?.n).unwrap()),
+                self.params.limb_width,
+                self.params.n_limbs,
+            )?;
+            let expected_res = Boolean::Is(AllocatedBit::alloc(
+                cs.namespace(|| "bit"),
+                self.inputs.map(|o| o.result),
+            )?);
+            let actual_res = n.miller_rabin(cs.namespace(|| "mr"), self.params.n_rounds)?;
+            Boolean::enforce_equal(cs.namespace(|| "eq"), &expected_res, &actual_res)?;
+            Ok(())
+        }
+    }
+
+    circuit_tests! {
+        mr_small_251: (
+            MillerRabin {
+                params: MillerRabinParams {
+                    limb_width: 4,
+                    n_limbs: 2,
+                    n_rounds: 8,
+                },
+                inputs: Some(MillerRabinInputs {
+                    n: "251",
+                    result: true,
+                }),
+            },
+            true),
+        // ~640,000 constraints
+        mr_full: (
+            MillerRabin {
+                params: MillerRabinParams {
+                    limb_width: 32,
+                    n_limbs: 4,
+                    n_rounds: 8,
+                },
+                inputs: Some(MillerRabinInputs {
+                    n: "262215269494931243253999821294977607927",
+                    result: true,
                 }),
             },
             true),
