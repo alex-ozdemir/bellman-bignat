@@ -1,4 +1,3 @@
-
 use num_bigint::BigUint;
 use sapling_crypto::bellman::pairing::bn256::Bn256;
 use sapling_crypto::bellman::pairing::ff::{PrimeField, ScalarEngine};
@@ -13,10 +12,10 @@ use std::str::FromStr;
 use bignat::BigNat;
 use hash::hash_to_rsa_element;
 use hash::helper;
+use hash::HashDomain;
 use rsa_set::{
     AllocatedRsaGroup, NaiveRsaSetBackend, RsaGroup, RsaGroupParams, RsaSet, RsaSetBackend,
 };
-
 
 const CHALLENGE: &str = "274481455456098291870407972073878126369";
 
@@ -54,9 +53,27 @@ impl RollupInputs<Bn256, NaiveRsaSetBackend> {
         n_bits_elem: usize,
         group: RsaGroup,
     ) -> Self {
-        let untouched_items: Vec<Vec<String>> = (0..n_untouched).map(|i| (0..item_len).map(|j| format!("1{:06}{:03}", i, j)).collect()).collect();
-        let removed_items: Vec<Vec<String>> = (0..n_removed).map(|i| (0..item_len).map(|j| format!("1{:06}{:03}", i, j)).collect()).collect();
-        let inserted_items: Vec<Vec<String>> = (0..n_inserted).map(|i| (0..item_len).map(|j| format!("1{:06}{:03}", i, j)).collect()).collect();
+        let untouched_items: Vec<Vec<String>> = (0..n_untouched)
+            .map(|i| {
+                (0..item_len)
+                    .map(|j| format!("1{:06}{:03}", i, j))
+                    .collect()
+            })
+            .collect();
+        let removed_items: Vec<Vec<String>> = (0..n_removed)
+            .map(|i| {
+                (0..item_len)
+                    .map(|j| format!("1{:06}{:03}", i, j))
+                    .collect()
+            })
+            .collect();
+        let inserted_items: Vec<Vec<String>> = (0..n_inserted)
+            .map(|i| {
+                (0..item_len)
+                    .map(|j| format!("1{:06}{:03}", i, j))
+                    .collect()
+            })
+            .collect();
 
         Self::new(
             untouched_items,
@@ -99,16 +116,23 @@ impl RollupInputs<Bn256, NaiveRsaSetBackend> {
                     .collect()
             })
             .collect();
+        let hash_domain = HashDomain {
+            n_bits: n_bits_elem,
+            n_trailing_ones: 1,
+        };
         let untouched_hashes = untouched
             .iter()
-            .map(|xs| helper::hash_to_rsa_element::<Bn256>(&xs, n_bits_elem, hash));
+            .map(|xs| helper::hash_to_rsa_element::<Bn256>(&xs, &hash_domain, hash));
         let removed_hashes = removed
             .iter()
-            .map(|xs| helper::hash_to_rsa_element::<Bn256>(&xs, n_bits_elem, hash));
+            .map(|xs| helper::hash_to_rsa_element::<Bn256>(&xs, &hash_domain, hash));
         let inserted_hashes = inserted
             .iter()
-            .map(|xs| helper::hash_to_rsa_element::<Bn256>(&xs, n_bits_elem, hash));
-        let final_digest = untouched_hashes.clone().chain(inserted_hashes).fold(group.g.clone(), |g, i| g.modpow(&i, &group.m));
+            .map(|xs| helper::hash_to_rsa_element::<Bn256>(&xs, &hash_domain, hash));
+        let final_digest = untouched_hashes
+            .clone()
+            .chain(inserted_hashes)
+            .fold(group.g.clone(), |g, i| g.modpow(&i, &group.m));
         let set = NaiveRsaSetBackend::new_with(group, untouched_hashes.chain(removed_hashes));
         RollupInputs {
             initial_state: set,
@@ -170,6 +194,10 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, S: RsaSetBackend> Circuit<E> for 
             group,
         )?;
 
+        let hash_domain = HashDomain {
+            n_bits: self.params.n_bits_elem,
+            n_trailing_ones: 1,
+        };
         println!("Hashing Deletions...");
         let removals = (0..self.params.n_removes)
             .map(|i| -> Result<BigNat<E>, SynthesisError> {
@@ -184,7 +212,7 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, S: RsaSetBackend> Circuit<E> for 
                     cs.namespace(|| format!("hash remove {}", i)),
                     &to_hash,
                     self.params.limb_width,
-                    self.params.n_bits_elem,
+                    &hash_domain,
                     &self.params.hash,
                 )
             })
@@ -204,7 +232,7 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, S: RsaSetBackend> Circuit<E> for 
                     cs.namespace(|| format!("hash insert {}", i)),
                     &to_hash,
                     self.params.limb_width,
-                    self.params.n_bits_elem,
+                    &hash_domain,
                     &self.params.hash,
                 )
             })
@@ -214,7 +242,8 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, S: RsaSetBackend> Circuit<E> for 
         let reduced_set = set.remove(cs.namespace(|| "remove"), &challenge, &removals)?;
 
         println!("Inserting elements");
-        let expanded_set = reduced_set.insert(cs.namespace(|| "insert"), &challenge, &insertions)?;
+        let expanded_set =
+            reduced_set.insert(cs.namespace(|| "insert"), &challenge, &insertions)?;
         let expected_digest = BigNat::alloc_from_nat(
             cs.namespace(|| "expected_digest"),
             || Ok(self.inputs.as_ref().grab()?.final_digest.clone()),
@@ -223,7 +252,9 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, S: RsaSetBackend> Circuit<E> for 
         )?;
 
         println!("Verifying resulting digest");
-        expanded_set.digest.equal(cs.namespace(|| "check"), &expected_digest)?;
+        expanded_set
+            .digest
+            .equal(cs.namespace(|| "check"), &expected_digest)?;
         Ok(())
     }
 }
@@ -271,45 +302,45 @@ mod test {
                 hash: Bn256PoseidonParams::new::<sapling_crypto::group_hash::Keccak256Hasher>(),
             },
         }, true),
-        small_rsa_5_swaps: (Rollup {
-            inputs: Some(RollupInputs::new(
-                [].to_vec(),
-                [
-                    ["0", "1", "2", "3", "4"].iter().map(|s| s.to_string()).collect(),
-                    ["1", "1", "2", "3", "4"].iter().map(|s| s.to_string()).collect(),
-                    ["2", "1", "2", "3", "4"].iter().map(|s| s.to_string()).collect(),
-                    ["3", "1", "2", "3", "4"].iter().map(|s| s.to_string()).collect(),
-                    ["4", "1", "2", "3", "4"].iter().map(|s| s.to_string()).collect(),
-                ].to_vec(),
-                [
-                    ["0", "1", "2", "3", "5"].iter().map(|s| s.to_string()).collect(),
-                    ["1", "1", "2", "3", "5"].iter().map(|s| s.to_string()).collect(),
-                    ["2", "1", "2", "3", "5"].iter().map(|s| s.to_string()).collect(),
-                    ["3", "1", "2", "3", "5"].iter().map(|s| s.to_string()).collect(),
-                    ["4", "1", "2", "3", "5"].iter().map(|s| s.to_string()).collect(),
-                ].to_vec(),
-                &Bn256PoseidonParams::new::<sapling_crypto::group_hash::Keccak256Hasher>(),
-                128,
-                RsaGroup {
-                    g: BigUint::from(2usize),
-                    m: BigUint::from_str(RSA_512).unwrap(),
-                },
-            )),
-            params: RollupParams {
-                group: RsaGroup {
-                    g: BigUint::from(2usize),
-                    m: BigUint::from_str(RSA_512).unwrap(),
-                },
-                limb_width: 32,
-                n_bits_elem: 128,
-                n_bits_challenge: 128,
-                n_bits_base: 512,
-                item_size: 5,
-                n_inserts: 5,
-                n_removes: 5,
-                hash: Bn256PoseidonParams::new::<sapling_crypto::group_hash::Keccak256Hasher>(),
-            },
-        }, true),
+        //small_rsa_5_swaps: (Rollup {
+        //    inputs: Some(RollupInputs::new(
+        //        [].to_vec(),
+        //        [
+        //            ["0", "1", "2", "3", "4"].iter().map(|s| s.to_string()).collect(),
+        //            ["1", "1", "2", "3", "4"].iter().map(|s| s.to_string()).collect(),
+        //            ["2", "1", "2", "3", "4"].iter().map(|s| s.to_string()).collect(),
+        //            ["3", "1", "2", "3", "4"].iter().map(|s| s.to_string()).collect(),
+        //            ["4", "1", "2", "3", "4"].iter().map(|s| s.to_string()).collect(),
+        //        ].to_vec(),
+        //        [
+        //            ["0", "1", "2", "3", "5"].iter().map(|s| s.to_string()).collect(),
+        //            ["1", "1", "2", "3", "5"].iter().map(|s| s.to_string()).collect(),
+        //            ["2", "1", "2", "3", "5"].iter().map(|s| s.to_string()).collect(),
+        //            ["3", "1", "2", "3", "5"].iter().map(|s| s.to_string()).collect(),
+        //            ["4", "1", "2", "3", "5"].iter().map(|s| s.to_string()).collect(),
+        //        ].to_vec(),
+        //        &Bn256PoseidonParams::new::<sapling_crypto::group_hash::Keccak256Hasher>(),
+        //        128,
+        //        RsaGroup {
+        //            g: BigUint::from(2usize),
+        //            m: BigUint::from_str(RSA_512).unwrap(),
+        //        },
+        //    )),
+        //    params: RollupParams {
+        //        group: RsaGroup {
+        //            g: BigUint::from(2usize),
+        //            m: BigUint::from_str(RSA_512).unwrap(),
+        //        },
+        //        limb_width: 32,
+        //        n_bits_elem: 128,
+        //        n_bits_challenge: 128,
+        //        n_bits_base: 512,
+        //        item_size: 5,
+        //        n_inserts: 5,
+        //        n_removes: 5,
+        //        hash: Bn256PoseidonParams::new::<sapling_crypto::group_hash::Keccak256Hasher>(),
+        //    },
+        //}, true),
         //full_rsa_30_swaps: (Rollup {
         //    inputs: Some(RollupInputs::from_counts(
         //        0,

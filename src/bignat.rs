@@ -1542,18 +1542,18 @@ mod tests {
             },
             true),
         // ~640,000 constraints
-        mr_full: (
-            MillerRabin {
-                params: MillerRabinParams {
-                    limb_width: 32,
-                    n_limbs: 4,
-                    n_rounds: 8,
-                },
-                inputs: Some(MillerRabinInputs {
-                    n: "262215269494931243253999821294977607927",
-                    result: true,
-                }),
-            },
-            true),
+        //mr_full: (
+        //    MillerRabin {
+        //        params: MillerRabinParams {
+        //            limb_width: 32,
+        //            n_limbs: 4,
+        //            n_rounds: 8,
+        //        },
+        //        inputs: Some(MillerRabinInputs {
+        //            n: "262215269494931243253999821294977607927",
+        //            result: true,
+        //        }),
+        //    },
+        //    true),
     }
 }
