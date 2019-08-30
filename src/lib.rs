@@ -25,7 +25,7 @@ mod test_helpers {
                     let mut cs = TestConstraintSystem::<Bn256>::new();
 
                     circuit.synthesize(&mut cs).expect("synthesis failed");
-                    println!(concat!("Constaints in {}: {}"), stringify!($name), cs.num_constraints());
+                    println!(concat!("Constraints in {}: {}"), stringify!($name), cs.num_constraints());
                     if is_sat && !cs.is_satisfied() {
                         println!("UNSAT: {:#?}", cs.which_is_unsatisfied())
                     }
@@ -48,6 +48,7 @@ pub mod wesolowski;
 pub mod rsa_set;
 pub mod hash;
 pub mod rollup;
+pub mod mimc;
 
 use sapling_crypto::bellman::pairing::ff::{PrimeField, PrimeFieldRepr};
 use num_bigint::BigUint;
