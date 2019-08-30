@@ -5,10 +5,10 @@ use sapling_crypto::circuit::boolean::Boolean;
 use sapling_crypto::circuit::num::AllocatedNum;
 use sapling_crypto::poseidon::{PoseidonEngine, PoseidonHashParams, QuinticSBox};
 
+use mimc::mimc;
 use num_bigint::BigUint;
 
 use bignat::BigNat;
-use usize_to_f;
 use OptionExt;
 
 const MILLER_RABIN_ROUNDS: usize = 2;
@@ -64,13 +64,19 @@ fn miller_rabin_round(n: &BigUint, b: &BigUint) -> bool {
 pub mod helper {
 
     use super::HashDomain;
+    use f_to_nat;
+    use mimc::helper::mimc;
     use num_bigint::BigUint;
     use num_traits::One;
     use sapling_crypto::bellman::pairing::ff::Field;
     use sapling_crypto::poseidon::{
         poseidon_hash, PoseidonEngine, PoseidonHashParams, QuinticSBox,
     };
-    use {f_to_nat, usize_to_f};
+
+    /// Given an integer, returns the integer with its low `k` bits.
+    fn low_k_bits(n: &BigUint, k: usize) -> BigUint {
+        n & ((BigUint::one() << k) - 1usize)
+    }
 
     pub fn hash_to_rsa_element<E: PoseidonEngine<SBox = QuinticSBox<E>>>(
         inputs: &[E::Fr],
@@ -84,28 +90,21 @@ pub mod helper {
         let bits_from_hash = domain.n_bits - 1 - domain.n_trailing_ones;
         let n_hashes = (bits_from_hash - 1) / bits_per_hash + 1;
 
-        // First we hash the inputs.
+        // First we hash the inputs, using poseidon.
         let hash = poseidon_hash::<E>(params, inputs).pop().unwrap();
 
-        // Then we add 4 different suffixes and hash each
-        let hashes: BigUint = if n_hashes > 1 {
-            (0..n_hashes)
-            .map(|i| {
-                let elem = poseidon_hash::<E>(params, &[hash, usize_to_f(i)])
-                    .pop()
-                    .unwrap();
-                let mut nat = f_to_nat(&elem) & ((BigUint::from(1usize) << bits_per_hash) - 1usize);
-                nat <<= bits_per_hash * i;
-                nat
-            })
-            .sum()
-        } else {
-            f_to_nat(&hash) & ((BigUint::from(1usize) << bits_per_hash) - 1usize)
-        };
+        // Then, to get more bits, we extend with MiMC
+        let mut sum_of_hashes = low_k_bits(&f_to_nat(&hash), bits_per_hash);
+        let mut perm = hash;
+        for i in 1..n_hashes {
+            perm = mimc(perm);
+            let low_bits = low_k_bits(&f_to_nat(&perm), bits_per_hash);
+            sum_of_hashes +=  low_bits << (bits_per_hash * i);
+        }
 
         // Now we assemble the 1024b number. Notice the ORs are all disjoint.
         let mut acc = (BigUint::one() << domain.n_trailing_ones) - 1usize;
-        acc |= (hashes & ((BigUint::one() << bits_from_hash) - 1usize)) << domain.n_trailing_ones;
+        acc |= low_k_bits(&sum_of_hashes, bits_from_hash) << domain.n_trailing_ones;
         acc |= BigUint::one() << (domain.n_bits - 1);
         acc
     }
@@ -161,7 +160,7 @@ pub fn hash_to_rsa_element<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: Constra
     let bits_from_hash = domain.n_bits - 1 - domain.n_trailing_ones;
     let n_hashes = (bits_from_hash - 1) / bits_per_hash + 1;
 
-    // First we hash the inputs
+    // First we hash the inputs, with poseidon
     let hash = sapling_crypto::circuit::poseidon_hash::poseidon_hash(
         cs.namespace(|| "inputs"),
         &input,
@@ -170,44 +169,24 @@ pub fn hash_to_rsa_element<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: Constra
     .pop()
     .unwrap();
 
-    let bits: Vec<Boolean> = if n_hashes > 1 {
-        // Now we hash the suffixes
-        let hashes = (0..n_hashes)
-            .map(|i| {
-                let input = [
-                    hash.clone(),
-                    AllocatedNum::alloc(cs.namespace(|| format!("suffix {}", i)), || {
-                        Ok(usize_to_f(i))
-                    })?,
-                ];
-                sapling_crypto::circuit::poseidon_hash::poseidon_hash(
-                    cs.namespace(|| format!("hash {}", i)),
-                    &input,
-                    &params,
-                    // Unwrap is safe b/c we know there is 1 output.
-                )
-                .map(|mut h| h.pop().unwrap())
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+    let mut hash_bits = hash.into_bits_le_strict(cs.namespace(|| "bitify"))?;
+    hash_bits.truncate(bits_per_hash);
 
-        hashes
-            .into_iter()
-            .enumerate()
-            .map(|(i, n)| n.into_bits_le_strict(cs.namespace(|| format!("bitify {}", i))))
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .flat_map(|mut v| {
-                v.truncate(bits_per_hash);
-                v
-            })
-            .collect()
-    } else {
-        hash.into_bits_le_strict(cs.namespace(|| "bitify"))?
-    };
+    // Then we extend with MiMC
+    let mut perm = hash.clone();
+    for i in 0..(n_hashes - 1) {
+        perm = mimc(cs.namespace(|| format!("mimc {}", i)), perm)?;
+        let low_bits: Vec<Boolean> = {
+            let mut b = perm.into_bits_le_strict(cs.namespace(|| format!("bitify {}", i)))?;
+            b.truncate(bits_per_hash);
+            b
+        };
+        hash_bits.extend(low_bits);
+    }
 
     let mut all_bits = Vec::new();
     all_bits.extend(std::iter::repeat(Boolean::Constant(true)).take(domain.n_trailing_ones));
-    all_bits.extend(bits.into_iter().take(bits_from_hash));
+    all_bits.extend(hash_bits.into_iter().take(bits_from_hash));
     all_bits.push(Boolean::Constant(true));
     let nat = BigNat::from_limbs(
         all_bits
