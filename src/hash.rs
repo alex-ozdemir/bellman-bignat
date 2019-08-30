@@ -1,6 +1,6 @@
 use num::Num;
 use sapling_crypto::bellman::pairing::ff::Field;
-use sapling_crypto::bellman::{ConstraintSystem, SynthesisError, LinearCombination};
+use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
 use sapling_crypto::circuit::boolean::Boolean;
 use sapling_crypto::circuit::num::AllocatedNum;
 use sapling_crypto::poseidon::{PoseidonEngine, PoseidonHashParams, QuinticSBox};
@@ -88,7 +88,8 @@ pub mod helper {
         let hash = poseidon_hash::<E>(params, inputs).pop().unwrap();
 
         // Then we add 4 different suffixes and hash each
-        let hashes: BigUint = (0..n_hashes)
+        let hashes: BigUint = if n_hashes > 1 {
+            (0..n_hashes)
             .map(|i| {
                 let elem = poseidon_hash::<E>(params, &[hash, usize_to_f(i)])
                     .pop()
@@ -97,7 +98,10 @@ pub mod helper {
                 nat <<= bits_per_hash * i;
                 nat
             })
-            .sum();
+            .sum()
+        } else {
+            f_to_nat(&hash) & ((BigUint::from(1usize) << bits_per_hash) - 1usize)
+        };
 
         // Now we assemble the 1024b number. Notice the ORs are all disjoint.
         let mut acc = (BigUint::one() << domain.n_trailing_ones) - 1usize;
@@ -166,36 +170,40 @@ pub fn hash_to_rsa_element<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: Constra
     .pop()
     .unwrap();
 
-    // Now we hash the suffixes
-    let hashes = (0..n_hashes)
-        .map(|i| {
-            let input = [
-                hash.clone(),
-                AllocatedNum::alloc(cs.namespace(|| format!("suffix {}", i)), || {
-                    Ok(usize_to_f(i))
-                })?,
-            ];
-            sapling_crypto::circuit::poseidon_hash::poseidon_hash(
-                cs.namespace(|| format!("hash {}", i)),
-                &input,
-                &params,
-                // Unwrap is safe b/c we know there is 1 output.
-            )
-            .map(|mut h| h.pop().unwrap())
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let bits: Vec<Boolean> = if n_hashes > 1 {
+        // Now we hash the suffixes
+        let hashes = (0..n_hashes)
+            .map(|i| {
+                let input = [
+                    hash.clone(),
+                    AllocatedNum::alloc(cs.namespace(|| format!("suffix {}", i)), || {
+                        Ok(usize_to_f(i))
+                    })?,
+                ];
+                sapling_crypto::circuit::poseidon_hash::poseidon_hash(
+                    cs.namespace(|| format!("hash {}", i)),
+                    &input,
+                    &params,
+                    // Unwrap is safe b/c we know there is 1 output.
+                )
+                .map(|mut h| h.pop().unwrap())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
-    let bits: Vec<Boolean> = hashes
-        .into_iter()
-        .enumerate()
-        .map(|(i, n)| n.into_bits_le_strict(cs.namespace(|| format!("bitify {}", i))))
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .flat_map(|mut v| {
-            v.truncate(bits_per_hash);
-            v
-        })
-        .collect();
+        hashes
+            .into_iter()
+            .enumerate()
+            .map(|(i, n)| n.into_bits_le_strict(cs.namespace(|| format!("bitify {}", i))))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flat_map(|mut v| {
+                v.truncate(bits_per_hash);
+                v
+            })
+            .collect()
+    } else {
+        hash.into_bits_le_strict(cs.namespace(|| "bitify"))?
+    };
 
     let mut all_bits = Vec::new();
     all_bits.extend(std::iter::repeat(Boolean::Constant(true)).take(domain.n_trailing_ones));
@@ -237,7 +245,11 @@ pub fn hash_to_prime<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: ConstraintSys
             .ok_or(SynthesisError::Unsatisfiable)?;
         Ok(nonce)
     })?;
-    Num::new(nonce.get_value(), LinearCombination::zero() + nonce.get_variable()).fits_in_bits(cs.namespace(|| "nonce bound"), helper::nonce_width(domain))?;
+    Num::new(
+        nonce.get_value(),
+        LinearCombination::zero() + nonce.get_variable(),
+    )
+    .fits_in_bits(cs.namespace(|| "nonce bound"), helper::nonce_width(domain))?;
     inputs.push(nonce);
     let hash = hash_to_rsa_element(cs.namespace(|| "hash"), &inputs, limb_width, domain, params)?;
     let res = hash.miller_rabin(cs.namespace(|| "primeck"), MILLER_RABIN_ROUNDS)?;
@@ -322,55 +334,55 @@ mod test {
     circuit_tests! {
         hash_one: (RsaHash {
             inputs: Some(
-                RsaHashInputs {
-                    inputs: &[
-                        "1",
-                    ],
-                }
-            ),
-            params: RsaHashParams {
-                desired_bits: 1024,
-                hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
-            }
+                        RsaHashInputs {
+                            inputs: &[
+                                "1",
+                            ],
+                        }
+                    ),
+                    params: RsaHashParams {
+                        desired_bits: 1024,
+                        hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+                    }
         }, true),
         hash_ten: (RsaHash {
             inputs: Some(
-                RsaHashInputs {
-                    inputs: &[
-                        "1", "2", "3", "4", "5", "6", "7", "8", "9", "10",
-                    ],
-                }
-            ),
-            params: RsaHashParams {
-                desired_bits: 1024,
-                hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
-            }
+                        RsaHashInputs {
+                            inputs: &[
+                                "1", "2", "3", "4", "5", "6", "7", "8", "9", "10",
+                            ],
+                        }
+                    ),
+                    params: RsaHashParams {
+                        desired_bits: 1024,
+                        hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+                    }
         }, true),
         hash_ten_bit_flip: (RsaHash {
             inputs: Some(
-                RsaHashInputs {
-                    inputs: &[
-                        "1", "2", "3", "4", "5", "6", "7", "8", "9", "9",
-                    ],
-                }
-            ),
-            params: RsaHashParams {
-                desired_bits: 1024,
-                hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
-            }
+                        RsaHashInputs {
+                            inputs: &[
+                                "1", "2", "3", "4", "5", "6", "7", "8", "9", "9",
+                            ],
+                        }
+                    ),
+                    params: RsaHashParams {
+                        desired_bits: 1024,
+                        hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+                    }
         }, true),
         hash_ten_2048: (RsaHash {
             inputs: Some(
-                RsaHashInputs {
-                    inputs: &[
-                        "1", "2", "3", "4", "5", "6", "7", "8", "9", "10",
-                    ],
-                }
-            ),
-            params: RsaHashParams {
-                desired_bits: 2048,
-                hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
-            }
+                        RsaHashInputs {
+                            inputs: &[
+                                "1", "2", "3", "4", "5", "6", "7", "8", "9", "10",
+                            ],
+                        }
+                    ),
+                    params: RsaHashParams {
+                        desired_bits: 2048,
+                        hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+                    }
         }, true),
     }
 
@@ -420,14 +432,12 @@ mod test {
                 .map(|s| E::Fr::from_str(s).unwrap())
                 .collect();
             let domain = HashDomain {
-                    n_bits: self.params.desired_bits,
-                    n_trailing_ones: 2,
+                n_bits: self.params.desired_bits,
+                n_trailing_ones: 2,
             };
-            let (expected_ouput, _, _) = super::helper::hash_to_prime::<E>(
-                &input_values,
-                &domain,
-                &self.params.hash,
-            ).unwrap();
+            let (expected_ouput, _, _) =
+                super::helper::hash_to_prime::<E>(&input_values, &domain, &self.params.hash)
+                    .unwrap();
             let allocated_expected_output = BigNat::alloc_from_nat(
                 cs.namespace(|| "output"),
                 || Ok(expected_ouput),
@@ -457,16 +467,37 @@ mod test {
     circuit_tests! {
         prime_hash_one: (PrimeHash {
             inputs: Some(
-                PrimeHashInputs {
-                    inputs: &[
-                        "1",
-                    ],
-                }
-            ),
-            params: PrimeHashParams {
-                desired_bits: 128,
-                hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
-            }
+                        PrimeHashInputs {
+                            inputs: &[
+                                "1",
+                            ],
+                        }
+                    ),
+                    params: PrimeHashParams {
+                        desired_bits: 128,
+                        hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+                    }
+        }, true),
+        prime_hash_ten: (PrimeHash {
+            inputs: Some(
+                        PrimeHashInputs {
+                            inputs: &[
+                                "0",
+                                "1",
+                                "2",
+                                "3",
+                                "5",
+                                "6",
+                                "7",
+                                "8",
+                                "9",
+                            ],
+                        }
+                    ),
+                    params: PrimeHashParams {
+                        desired_bits: 128,
+                        hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+                    }
         }, true),
     }
 }
