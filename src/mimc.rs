@@ -130,24 +130,33 @@ pub fn mimc<E: Engine, CS: ConstraintSystem<E>>(
     for i in 0..91 {
         let mut cs = cs.namespace(|| format!("round {}", i));
         let rk_val = E::Fr::from_str(ROUND_KEYS[i]).unwrap();
-        let xc = AllocatedNum::alloc(cs.namespace(|| "x+c result"), || {
-            Ok({
-                let mut t = x.get_value().grab()?.clone();
-                t.add_assign(&rk_val);
-                t
-            })
+        let x2 = AllocatedNum::alloc(cs.namespace(|| "x2 result"), || {
+            let mut t = x.get_value().grab()?.clone();
+            t.add_assign(&rk_val);
+            t.square();
+            Ok(t)
         })?;
         cs.enforce(
-            || "x+c",
-            |lc| lc,
-            |lc| lc,
-            |lc| lc + x.get_variable() + (rk_val, CS::one()) - xc.get_variable(),
+            || "x2 = (x+c)^2",
+            |lc| lc + x.get_variable() + (rk_val, CS::one()),
+            |lc| lc + x.get_variable() + (rk_val, CS::one()),
+            |lc| lc + x2.get_variable(),
         );
-
-        let x2 = xc.square(cs.namespace(|| "x2"))?;
         let x4 = x2.square(cs.namespace(|| "x4"))?;
         let x6 = x4.mul(cs.namespace(|| "x6"), &x2)?;
-        let x7 = x6.mul(cs.namespace(|| "x7"), &xc)?;
+        let x7 = AllocatedNum::alloc(cs.namespace(|| "x7"), || {
+            let mut xc = x.get_value().grab()?.clone();
+            xc.add_assign(&rk_val);
+            let mut t = x6.get_value().grab()?.clone();
+            t.mul_assign(&xc);
+            Ok(t)
+        })?;
+        cs.enforce(
+            || "x7 = (x+c)x6",
+            |lc| lc + x.get_variable() + (rk_val, CS::one()),
+            |lc| lc + x6.get_variable(),
+            |lc| lc + x7.get_variable(),
+        );
         x = x7;
     }
     Ok(x)
@@ -155,8 +164,8 @@ pub fn mimc<E: Engine, CS: ConstraintSystem<E>>(
 
 #[cfg(test)]
 mod test {
-    use sapling_crypto::circuit::boolean::Boolean;
     use super::*;
+    use sapling_crypto::circuit::boolean::Boolean;
     use test_helpers::*;
 
     pub struct MimcInputs<'a> {
@@ -179,12 +188,10 @@ mod test {
                 AllocatedNum::alloc(cs.namespace(|| "output"), || Ok(expected_ouput))?;
             let allocated_input: AllocatedNum<E> =
                 AllocatedNum::alloc(cs.namespace(|| format!("input")), || Ok(input_value))?;
-            let hash = mimc(
-                cs.namespace(|| "hash"),
-                allocated_input,
-            )?;
-            let eq = AllocatedNum::equals(cs.namespace(|| "eq"), &hash, &allocated_expected_output)?;
-            Boolean::enforce_equal(cs.namespace(||"eq2"), &eq, &Boolean::Constant(true))?;
+            let hash = mimc(cs.namespace(|| "hash"), allocated_input)?;
+            let eq =
+                AllocatedNum::equals(cs.namespace(|| "eq"), &hash, &allocated_expected_output)?;
+            Boolean::enforce_equal(cs.namespace(|| "eq2"), &eq, &Boolean::Constant(true))?;
             Ok(())
         }
     }
