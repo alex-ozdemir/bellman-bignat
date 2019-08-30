@@ -1,8 +1,10 @@
 use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
+use sapling_crypto::circuit::num::AllocatedNum;
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::pairing::ff::{Field, PrimeField, PrimeFieldRepr};
 
 use usize_to_f;
+use OptionExt;
 
 use bit::{Bit, Bitvector};
 
@@ -84,5 +86,16 @@ impl<E: Engine> Num<E> {
             )
             .collect();
         Ok(Bitvector { values, bits })
+    }
+
+    pub fn as_sapling_allocated_num<CS: ConstraintSystem<E>>(&self, mut cs: CS) -> Result<AllocatedNum<E>, SynthesisError> {
+        let new = AllocatedNum::alloc(cs.namespace(|| "alloc"), || Ok(*self.value.grab()?))?;
+        cs.enforce(
+            || "eq",
+            |lc| lc,
+            |lc| lc,
+            |lc| lc + new.get_variable() - &self.num,
+        );
+        Ok(new)
     }
 }

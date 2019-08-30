@@ -192,6 +192,14 @@ impl<E: Engine> BigNat<E> {
         })
     }
 
+    pub fn as_limbs<CS: ConstraintSystem<E>>(&self) -> Vec<Num<E>> {
+        let mut limbs = Vec::new();
+        for (i, lc) in self.limbs.iter().enumerate() {
+            limbs.push(Num::new(self.limb_values.as_ref().map(|vs| vs[i].clone()), lc.clone()));
+        }
+        limbs
+    }
+
     pub fn inputize<CS: ConstraintSystem<E>>(&self, mut cs: CS) -> Result<(), SynthesisError> {
         for (i, l) in self.limbs.iter().enumerate() {
             let mut c = cs.namespace(|| format!("limb {}", i));

@@ -7,31 +7,12 @@ use sapling_crypto::circuit::num::AllocatedNum;
 use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
 use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
 
-use std::str::FromStr;
-
 use bignat::BigNat;
-use hash::hash_to_rsa_element;
-use hash::helper;
-use hash::HashDomain;
+use hash::{hash_to_prime, hash_to_rsa_element, helper, HashDomain};
 use rsa_set::{
     AllocatedRsaGroup, NaiveRsaSetBackend, RsaGroup, RsaGroupParams, RsaSet, RsaSetBackend,
 };
-
-const CHALLENGE: &str = "274481455456098291870407972073878126369";
-
-trait OptionExt<T> {
-    fn grab(&self) -> Result<&T, SynthesisError>;
-    fn grab_mut(&mut self) -> Result<&mut T, SynthesisError>;
-}
-
-impl<T> OptionExt<T> for Option<T> {
-    fn grab(&self) -> Result<&T, SynthesisError> {
-        self.as_ref().ok_or(SynthesisError::AssignmentMissing)
-    }
-    fn grab_mut(&mut self) -> Result<&mut T, SynthesisError> {
-        self.as_mut().ok_or(SynthesisError::AssignmentMissing)
-    }
-}
+use OptionExt;
 
 pub struct RollupInputs<E: Engine, S: RsaSetBackend> {
     /// The initial state of the set
@@ -63,14 +44,14 @@ impl RollupInputs<Bn256, NaiveRsaSetBackend> {
         let removed_items: Vec<Vec<String>> = (0..n_removed)
             .map(|i| {
                 (0..item_len)
-                    .map(|j| format!("1{:06}{:03}", i, j))
+                    .map(|j| format!("2{:06}{:03}", i, j))
                     .collect()
             })
             .collect();
         let inserted_items: Vec<Vec<String>> = (0..n_inserted)
             .map(|i| {
                 (0..item_len)
-                    .map(|j| format!("1{:06}{:03}", i, j))
+                    .map(|j| format!("3{:06}{:03}", i, j))
                     .collect()
             })
             .collect();
@@ -172,13 +153,6 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, S: RsaSetBackend> Circuit<E> for 
                 n_limbs: self.params.n_bits_base / self.params.limb_width,
             },
         )?;
-        let challenge = BigNat::alloc_from_nat(
-            cs.namespace(|| "challenge"),
-            // TODO have this be the prime-hash of the inputs.
-            || Ok(BigUint::from_str(CHALLENGE).unwrap()),
-            self.params.limb_width,
-            self.params.n_bits_challenge / self.params.limb_width,
-        )?;
         println!("Constructing Set");
         let set = RsaSet::alloc(
             cs.namespace(|| "set init"),
@@ -237,6 +211,56 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, S: RsaSetBackend> Circuit<E> for 
                 )
             })
             .collect::<Result<Vec<BigNat<E>>, SynthesisError>>()?;
+        let mut to_hash_to_challenge: Vec<AllocatedNum<E>> = Vec::new();
+        to_hash_to_challenge.extend(
+            set.digest
+                .as_limbs::<CS>()
+                .into_iter()
+                .enumerate()
+                .map(|(i, n)| {
+                    n.as_sapling_allocated_num(cs.namespace(|| format!("digest hash {}", i)))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        );
+        for i in 0..self.params.n_inserts {
+            for j in 0..self.params.item_size {
+                to_hash_to_challenge.push(AllocatedNum::alloc(
+                    cs.namespace(|| format!("chash insert {} {}", i.clone(), j)),
+                    || {
+                        Ok(**self
+                            .inputs
+                            .as_ref()
+                            .and_then(|is| is.to_insert.get(i).and_then(|iss| iss.get(j)))
+                            .grab()?)
+                    },
+                )?)
+            }
+        }
+        for i in 0..self.params.n_removes {
+            for j in 0..self.params.item_size {
+                to_hash_to_challenge.push(AllocatedNum::alloc(
+                    cs.namespace(|| format!("chash remove {} {}", i.clone(), j)),
+                    || {
+                        Ok(**self
+                            .inputs
+                            .as_ref()
+                            .and_then(|is| is.to_remove.get(i).and_then(|iss| iss.get(j)))
+                            .grab()?)
+                    },
+                )?)
+            }
+        }
+
+        let challenge = hash_to_prime(
+            cs.namespace(|| "chash"),
+            &to_hash_to_challenge,
+            self.params.limb_width,
+            &HashDomain {
+                n_bits: self.params.n_bits_challenge,
+                n_trailing_ones: 2,
+            },
+            &self.params.hash,
+        )?;
 
         println!("Deleting elements");
         let reduced_set = set.remove(cs.namespace(|| "remove"), &challenge, &removals)?;
@@ -268,6 +292,7 @@ mod test {
     const RSA_512: &str = "11834783464130424096695514462778870280264989938857328737807205623069291535525952722847913694296392927890261736769191982212777933726583565708193466779811767";
 
     use super::*;
+    use std::str::FromStr;
     use test_helpers::*;
 
     circuit_tests! {
