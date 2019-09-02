@@ -14,7 +14,7 @@ use rsa_set::{
 };
 use OptionExt;
 
-pub struct RollupInputs<E: Engine, S: RsaSetBackend> {
+pub struct RollupInputs<E: Engine, S: RsaSetBackend<RsaGroup>> {
     /// The initial state of the set
     pub initial_state: S,
     pub final_digest: BigUint,
@@ -24,7 +24,7 @@ pub struct RollupInputs<E: Engine, S: RsaSetBackend> {
     pub to_insert: Vec<Vec<E::Fr>>,
 }
 
-impl RollupInputs<Bn256, NaiveRsaSetBackend> {
+impl RollupInputs<Bn256, NaiveRsaSetBackend<RsaGroup>> {
     pub fn from_counts(
         n_untouched: usize,
         n_removed: usize,
@@ -137,12 +137,12 @@ pub struct RollupParams<E: PoseidonEngine> {
     pub hash: E::Params,
 }
 
-pub struct Rollup<E: PoseidonEngine<SBox = QuinticSBox<E>>, S: RsaSetBackend> {
+pub struct Rollup<E: PoseidonEngine<SBox = QuinticSBox<E>>, S: RsaSetBackend<RsaGroup>> {
     pub inputs: Option<RollupInputs<E, S>>,
     pub params: RollupParams<E>,
 }
 
-impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, S: RsaSetBackend> Circuit<E> for Rollup<E, S> {
+impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, S: RsaSetBackend<RsaGroup>> Circuit<E> for Rollup<E, S> {
     fn synthesize<CS: ConstraintSystem<E>>(mut self, cs: &mut CS) -> Result<(), SynthesisError> {
         let group = AllocatedRsaGroup::alloc_input(
             cs.namespace(|| "group"),

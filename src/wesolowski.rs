@@ -3,71 +3,65 @@ use num_traits::One;
 use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
 use sapling_crypto::bellman::pairing::Engine;
 
+use group::{CircuitSemiGroup, SemiGroup, Gadget};
 use bignat::BigNat;
 use OptionExt;
 
 /// Computes `b ^ (prod(xs) / l) % m`, cleverly.
-pub fn base_to_product<'a, I: Iterator<Item = &'a BigUint>>(
-    b: &BigUint,
+pub fn base_to_product<'a, G: SemiGroup, I: Iterator<Item = &'a BigUint>>(
+    g: &G,
+    b: &G::Elem,
     l: &BigUint,
-    m: &BigUint,
     xs: I,
-) -> BigUint {
-    base_to_product_helper(&BigUint::one(), b, l, m, xs).0
+) -> G::Elem {
+    base_to_product_helper(g, &BigUint::one(), b, l, xs).0
 }
 
 /// Computes `b ^ (a * prod(xs) / l) % m` and `b ^ prod(x) % m`.
-pub fn base_to_product_helper<'a, I: Iterator<Item = &'a BigUint>>(
+pub fn base_to_product_helper<'a, G: SemiGroup, I: Iterator<Item = &'a BigUint>>(
+    g: &G,
     a: &BigUint,
-    b: &BigUint,
+    b: &G::Elem,
     l: &BigUint,
-    m: &BigUint,
     mut xs: I,
-) -> (BigUint, BigUint) {
+) -> (G::Elem, G::Elem) {
     if let Some(x) = xs.next() {
-        let (rq, rp) = base_to_product_helper(&(a * x % l), b, l, m, xs);
-        (rp.modpow(&(a * x / l), &m) * rq % m, rp.modpow(&x, &m))
+        let (rq, rp) = base_to_product_helper(g, &(a * x % l), b, l, xs);
+        (g.op(&g.power(&rp, &(a * x / l)), &rq), g.power(&rp, &x))
     } else {
-        (b.modpow(&(a / l), m), b.clone())
+        (g.power(&b, &(a / l)), b.clone())
     }
 }
 
 /// Computes `b ^ (prod(xs) / l) % m`, naively.
-pub fn base_to_product_naive<'a, I: Iterator<Item = &'a BigUint>>(
-    b: &BigUint,
+pub fn base_to_product_naive<'a, G: SemiGroup, I: Iterator<Item = &'a BigUint>>(
+    g: &G,
+    b: &G::Elem,
     l: &BigUint,
-    m: &BigUint,
     xs: I,
-) -> BigUint {
+) -> G::Elem {
     let mut pow = BigUint::one();
     for x in xs {
         pow *= x;
     }
     pow /= l;
-    b.modpow(&pow, m)
+    g.power(&b, &pow)
 }
 
 /// \exists q s.t. q^l \times base^r = result
-pub fn proof_of_exp<E: Engine, CS: ConstraintSystem<E>>(
+pub fn proof_of_exp<E: Engine, G: CircuitSemiGroup<E>, CS: ConstraintSystem<E>>(
     mut cs: CS,
-    base: &BigNat<E>,
-    modulus: &BigNat<E>,
+    group: &G,
+    base: &G::Elem,
     power_factors: &[BigNat<E>],
     challenge: &BigNat<E>,
-    result: &BigNat<E>,
-) -> Result<(), SynthesisError> {
-    if base.limb_width != modulus.limb_width
-        || base.limb_width != result.limb_width
-        || base.limbs.len() != modulus.limbs.len()
-        || base.limbs.len() != result.limbs.len()
-    {
-        return Err(SynthesisError::Unsatisfiable);
-    }
-    let q_computation = || -> Result<BigUint, SynthesisError> {
-        Ok(base_to_product(
-            base.value.grab()?,
-            challenge.value.grab()?,
-            modulus.value.grab()?,
+    result: &G::Elem,
+) -> Result<(), SynthesisError> where G::Elem : Gadget<E, Value = <G::Group as SemiGroup>::Elem> {
+    let q_computation = || -> Result<<G::Group as SemiGroup>::Elem, SynthesisError> {
+        Ok(base_to_product::<G::Group, _>(
+            *group.group().grab()?,
+            *base.value().grab()?,
+            *challenge.value().grab()?,
             power_factors
                 .iter()
                 .map(|pow| pow.value.grab())
@@ -79,29 +73,28 @@ pub fn proof_of_exp<E: Engine, CS: ConstraintSystem<E>>(
         let mut prod = BigUint::one();
         let l = challenge.value.grab()?;
         for pow in power_factors {
-            if pow.limb_width != challenge.limb_width {
+            if pow.params.limb_width != challenge.params.limb_width {
                 return Err(SynthesisError::Unsatisfiable);
             }
             prod = prod * pow.value.grab()? % l;
         }
         Ok(prod)
     };
-    let q = BigNat::alloc_from_nat(
+    let q = <G::Elem as Gadget<E>>::alloc(
         cs.namespace(|| "Q"),
         q_computation,
-        base.limb_width,
-        base.limbs.len(),
+        <G::Elem as Gadget<E>>::params(base),
     )?;
     let r = BigNat::alloc_from_nat(
         cs.namespace(|| "r"),
         r_computation,
-        challenge.limb_width,
+        challenge.params.limb_width,
         challenge.limbs.len(),
     )?;
-    let ql = q.pow_mod(cs.namespace(|| "Q^l"), &challenge, &modulus)?;
-    let br = base.pow_mod(cs.namespace(|| "b^r"), &r, &modulus)?;
-    let left = ql.mult_mod(cs.namespace(|| "Q^l b^r"), &br, &modulus)?.1;
-    left.equal(cs.namespace(|| "Q^l b^r == res"), &result)
+    let ql = group.power(cs.namespace(|| "Q^l"), &q, &challenge)?;
+    let br = group.power(cs.namespace(|| "Q^l"), &base, &r)?;
+    let left = group.op(cs.namespace(|| "Q^l b^r"), &ql, &br)?;
+    <G::Elem as Gadget<E>>::assert_equal(cs.namespace(|| "Q^l b^r == res"),&left, &result)
 }
 
 

@@ -1,12 +1,22 @@
 use num_bigint::BigUint;
+use num_traits::One;
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
 
 use std::collections::BTreeSet;
 
 use bignat::BigNat;
+use group::{SemiGroup, CircuitSemiGroup, Gadget};
 use wesolowski::proof_of_exp;
 use OptionExt;
+
+
+// TODO (aozdemir) mod out by the <-1> subgroup.
+#[derive(Clone, Debug)]
+pub struct RsaGroup {
+    pub g: BigUint,
+    pub m: BigUint,
+}
 
 pub struct AllocatedRsaGroup<E: Engine> {
     pub g: BigNat<E>,
@@ -45,11 +55,20 @@ impl<E: Engine> AllocatedRsaGroup<E> {
     }
 }
 
-// TODO (aozdemir) mod out by the <-1> subgroup.
-#[derive(Clone, Debug)]
-pub struct RsaGroup {
-    pub g: BigUint,
-    pub m: BigUint,
+impl SemiGroup for RsaGroup {
+    type Elem = BigUint;
+
+    fn op(&self, a: &BigUint, b: &BigUint) -> BigUint {
+        a * b % &self.m
+    }
+
+    fn identity(&self) -> BigUint {
+        BigUint::one()
+    }
+
+    fn generator(&self) -> BigUint {
+        self.g.clone()
+    }
 }
 
 pub struct RsaGroupParams {
@@ -57,18 +76,19 @@ pub struct RsaGroupParams {
     pub n_limbs: usize,
 }
 
-pub trait RsaSetBackend: Sized + std::fmt::Debug {
+pub trait RsaSetBackend<G: SemiGroup>: Sized {
+
     /// Create a new `RsaSet` which computes product mod `modulus`.
-    fn new(group: RsaGroup) -> Self;
+    fn new(group: G) -> Self;
     /// Add `n` to the set, returning whether `n` is new to the set.
     fn insert(&mut self, n: BigUint) -> bool;
     /// Remove `n` from the set, returning whether `n` was present.
     fn remove(&mut self, n: &BigUint) -> bool;
     /// The digest of the current elements (`g` to the product of the elements).
-    fn digest(&self) -> BigUint;
+    fn digest(&self) -> G::Elem;
 
     /// Gets the underlying RSA group
-    fn group(&self) -> &RsaGroup;
+    fn group(&self) -> &G;
 
     /// Add all of the `ns` to the set.
     fn insert_all<I: IntoIterator<Item = BigUint>>(&mut self, ns: I) {
@@ -78,13 +98,13 @@ pub trait RsaSetBackend: Sized + std::fmt::Debug {
     }
 
     /// Remove all of the `ns` from the set.
-    fn remove_all<'a, I: IntoIterator<Item = &'a BigUint>>(&mut self, ns: I) {
+    fn remove_all<'a, I: IntoIterator<Item = &'a BigUint>>(&mut self, ns: I) where G::Elem: 'a {
         for n in ns {
             self.remove(n);
         }
     }
 
-    fn new_with<I: IntoIterator<Item = BigUint>>(group: RsaGroup, items: I) -> Self {
+    fn new_with<I: IntoIterator<Item = BigUint>>(group: G, items: I) -> Self {
         let mut this = Self::new(group);
         this.insert_all(items);
         this
@@ -92,23 +112,23 @@ pub trait RsaSetBackend: Sized + std::fmt::Debug {
 }
 
 /// An `RsaSetBackend` which computes products from scratch each time.
-pub struct NaiveRsaSetBackend {
-    group: RsaGroup,
+pub struct NaiveRsaSetBackend<G: SemiGroup> {
+    group: G,
     elements: BTreeSet<BigUint>,
 }
 
-impl std::fmt::Debug for NaiveRsaSetBackend {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
-        writeln!(f, "NaiveRsaSetBackend:")?;
-        for e in &self.elements {
-            writeln!(f, "\t{}", e)?;
-        }
-        Ok(())
-    }
-}
+//impl<G: SemiGroup> std::fmt::Debug for NaiveRsaSetBackend<G> where G::Elem: std::fmt::Display {
+//    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+//        writeln!(f, "NaiveRsaSetBackend:")?;
+//        for e in &self.elements {
+//            writeln!(f, "\t{}", e)?;
+//        }
+//        Ok(())
+//    }
+//}
 
-impl RsaSetBackend for NaiveRsaSetBackend {
-    fn new(group: RsaGroup) -> Self {
+impl<G: SemiGroup> RsaSetBackend<G> for NaiveRsaSetBackend<G> where G::Elem: Ord {
+    fn new(group: G) -> Self {
         Self {
             group,
             elements: BTreeSet::new(),
@@ -123,26 +143,26 @@ impl RsaSetBackend for NaiveRsaSetBackend {
         self.elements.remove(n)
     }
 
-    fn digest(&self) -> BigUint {
+    fn digest(&self) -> G::Elem {
         self.elements
             .iter()
-            .fold(self.group.g.clone(), |acc, elem| {
-                acc.modpow(elem, &self.group.m)
+            .fold(self.group.generator(), |acc, elem| {
+                self.group.power(&acc, &elem)
             })
     }
 
-    fn group(&self) -> &RsaGroup {
+    fn group(&self) -> &G {
         &self.group
     }
 }
 
-pub struct RsaSet<E: Engine, B: RsaSetBackend> {
+pub struct RsaSet<E: Engine, Elem, CG: CircuitSemiGroup<E>, G: SemiGroup, B: RsaSetBackend<G>> where {
     pub value: Option<B>,
-    pub digest: BigNat<E>,
+    pub digest: CG::Elem,
     pub group: AllocatedRsaGroup<E>,
 }
 
-impl<E: Engine, B: RsaSetBackend> RsaSet<E, B> {
+impl<E: Engine, G, B> RsaSet<E, B> where G: SemiGroup, B: RsaSetBackend<G> {
     pub fn alloc<CS, F>(
         mut cs: CS,
         f: F,

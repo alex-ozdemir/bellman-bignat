@@ -45,10 +45,11 @@ pub mod poly;
 pub mod bignat;
 pub mod lazy;
 pub mod wesolowski;
-pub mod rsa_set;
-pub mod hash;
-pub mod rollup;
+//pub mod rsa_set;
+//pub mod hash;
+//pub mod rollup;
 pub mod mimc;
+pub mod group;
 
 use sapling_crypto::bellman::pairing::ff::{PrimeField, PrimeFieldRepr};
 use num_bigint::BigUint;
