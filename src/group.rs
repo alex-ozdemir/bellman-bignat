@@ -8,16 +8,19 @@ use std::fmt::Debug;
 use bignat::{BigNat, BigNatParams};
 use bit::{Bit, Bitvector};
 
-pub trait Gadget<E: Engine>: Sized {
+pub trait Gadget<E: Engine>: Sized + Clone {
     type Value: Clone;
+    type Access: Clone + Eq;
     type Params: Clone + Eq + Debug;
     fn alloc<CS: ConstraintSystem<E>>(
         cs: CS,
         value: Option<&Self::Value>,
+        access: Self::Access,
         params: &Self::Params,
     ) -> Result<Self, SynthesisError>;
     fn wires(&self) -> Vec<LinearCombination<E>>;
     fn value(&self) -> Option<&Self::Value>;
+    fn access(&self) -> &Self::Access;
     fn params(&self) -> &Self::Params;
     fn mux<CS: ConstraintSystem<E>>(
         mut cs: CS,
@@ -28,17 +31,25 @@ pub trait Gadget<E: Engine>: Sized {
         let i0_wires = i0.wires();
         let i1_wires = i1.wires();
         if i0_wires.len() != i1_wires.len() || i0.params() != i1.params() {
-            println!("Bad {} {}", i0_wires.len(), i1_wires.len());
-            println!("Bad {:?} {:?}", i0.params(), i1.params());
+            eprintln!("mux error: Params differ!");
             return Err(SynthesisError::Unsatisfiable);
         }
         let value: Option<&Self::Value> = s
             .value
             .and_then(|b| if b { i1.value() } else { i0.value() });
-        let out: Self = Self::alloc(cs.namespace(|| "out"), value, i0.params())?;
+        if i0.access() != i1.access() {
+            eprintln!("mux error: Accesses differ!");
+            return Err(SynthesisError::Unsatisfiable);
+        }
+        let out: Self = Self::alloc(
+            cs.namespace(|| "out"),
+            value,
+            i0.access().clone(),
+            i0.params(),
+        )?;
         let out_wires = out.wires();
         if out_wires.len() != i0_wires.len() {
-            println!("Bad2");
+            eprintln!("mux error: output has a bad number of wires!");
             return Err(SynthesisError::Unsatisfiable);
         }
         for (i, ((i0w, i1w), out_w)) in i0_wires
@@ -142,7 +153,7 @@ pub trait SemiGroup: Clone {
 }
 
 // TODO (aozdemir) mod out by the <-1> subgroup.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RsaGroup {
     pub g: BigUint,
     pub m: BigUint,
@@ -170,6 +181,7 @@ pub struct CircuitRsaGroupParams {
     pub n_limbs: usize,
 }
 
+#[derive(Clone)]
 pub struct CircuitRsaGroup<E: Engine> {
     pub g: BigNat<E>,
     pub m: BigNat<E>,
@@ -178,29 +190,45 @@ pub struct CircuitRsaGroup<E: Engine> {
     pub params: CircuitRsaGroupParams,
 }
 
+impl<E: Engine> std::cmp::PartialEq for CircuitRsaGroup<E> {
+    fn eq(&self, other: &Self) -> bool {
+        self.g == other.g
+            && self.m == other.m
+            && self.id == other.id
+            && self.value == other.value
+            && self.params == other.params
+    }
+}
+impl<E: Engine> std::cmp::Eq for CircuitRsaGroup<E> {}
+
 impl<E: Engine> Gadget<E> for CircuitRsaGroup<E> {
     type Value = RsaGroup;
     type Params = CircuitRsaGroupParams;
+    type Access = ();
     fn alloc<CS: ConstraintSystem<E>>(
         mut cs: CS,
         value: Option<&Self::Value>,
+        _access: (),
         params: &Self::Params,
     ) -> Result<Self, SynthesisError> {
         let value = value.cloned();
         let g = <BigNat<E> as Gadget<E>>::alloc(
             cs.namespace(|| "g"),
             value.as_ref().map(|v| &v.g),
+            (),
             &BigNatParams::new(params.limb_width, params.n_limbs),
         )?;
         let m = <BigNat<E> as Gadget<E>>::alloc(
             cs.namespace(|| "m"),
             value.as_ref().map(|v| &v.m),
+            (),
             &BigNatParams::new(params.limb_width, params.n_limbs),
         )?;
         let one = BigUint::one();
         let id = <BigNat<E> as Gadget<E>>::alloc(
             cs.namespace(|| "id"),
             value.as_ref().map(|_| &one),
+            (),
             &BigNatParams::new(params.limb_width, params.n_limbs),
         )?;
         Ok(Self {
@@ -221,6 +249,9 @@ impl<E: Engine> Gadget<E> for CircuitRsaGroup<E> {
     }
     fn params(&self) -> &Self::Params {
         &self.params
+    }
+    fn access(&self) -> &() {
+        &()
     }
 }
 

@@ -4,7 +4,7 @@ extern crate rand;
 extern crate sapling_crypto;
 
 use bellman_bignat::bignat::nat_to_limbs;
-use bellman_bignat::rollup::{Rollup, RollupParams, RollupInputs};
+use bellman_bignat::set::{Set, SetParams, SetInputs};
 use bellman_bignat::group::RsaGroup;
 use bellman_bignat::rsa_set::NaiveExpSet;
 use num_bigint::BigUint;
@@ -40,9 +40,9 @@ fn main() {
 
     let params = {
         let hash = Bn256PoseidonParams::new::<sapling_crypto::group_hash::Keccak256Hasher>();
-        let c = Rollup::<_, NaiveExpSet<RsaGroup>> {
+        let c = Set::<_, NaiveExpSet<RsaGroup>> {
             inputs: None,
-            params: RollupParams {
+            params: SetParams {
                 group: group.clone(),
                 limb_width: 32,
                 n_bits_elem: RSA_SIZE,
@@ -67,8 +67,8 @@ fn main() {
     println!("Done with key");
 
     // Create a groth16 proof with our parameters.
-    let circuit = Rollup {
-        inputs: Some(RollupInputs::from_counts(
+    let circuit = Set {
+        inputs: Some(SetInputs::from_counts(
             0,
             n_swaps,
             n_swaps,
@@ -80,7 +80,7 @@ fn main() {
                 m: BigUint::from_str(RSA_2048).unwrap(),
             },
         )),
-        params: RollupParams {
+        params: SetParams {
             group: group.clone(),
             limb_width: 32,
             n_bits_elem: RSA_SIZE,

@@ -87,6 +87,7 @@ where
     let q = <G::Elem as Gadget<E>>::alloc(
         cs.namespace(|| "Q"),
         q_value.as_ref(),
+        base.access().clone(),
         <G::Elem as Gadget<E>>::params(base),
     )?;
     let r = BigNat::alloc_from_nat(
@@ -298,6 +299,7 @@ mod tests {
             let g = <CircuitRsaGroup<E> as Gadget<E>>::alloc(
                 cs.namespace(|| "g"),
                 group.as_ref(),
+                (),
                 &CircuitRsaGroupParams {
                     n_limbs: self.params.n_limbs_b,
                     limb_width: self.params.limb_width,

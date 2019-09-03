@@ -68,6 +68,13 @@ pub struct BigNat<E: Engine> {
     pub params: BigNatParams,
 }
 
+impl<E: Engine> std::cmp::PartialEq for BigNat<E> {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value && self.params == other.params
+    }
+}
+impl<E: Engine> std::cmp::Eq for BigNat<E> {}
+
 impl<E: Engine> From<BigNat<E>> for Polynomial<E> {
     fn from(other: BigNat<E>) -> Polynomial<E> {
         Polynomial {
@@ -457,12 +464,6 @@ impl<E: Engine> BigNat<E> {
         other: &Self,
         modulus: &Self,
     ) -> Result<(BigNat<E>, BigNat<E>), SynthesisError> {
-        println!(
-            "mm: {} * {} % {}",
-            self.value.as_ref().unwrap(),
-            other.value.as_ref().unwrap(),
-            modulus.value.as_ref().unwrap()
-        );
         if self.params.limb_width != other.params.limb_width {
             return Err(SynthesisError::Unsatisfiable);
         }
@@ -506,14 +507,6 @@ impl<E: Engine> BigNat<E> {
         let left_int = BigNat::from_poly(Polynomial::from(left), limb_width, left_max_word);
         let right_int = BigNat::from_poly(Polynomial::from(right), limb_width, right_max_word);
         left_int.equal_when_carried_regroup(cs.namespace(|| "carry"), &right_int)?;
-        println!(
-            "mm: {} * {} % {} = {} {}",
-            self.value.as_ref().unwrap(),
-            other.value.as_ref().unwrap(),
-            modulus.value.as_ref().unwrap(),
-            quotient.value.as_ref().unwrap(),
-            remainder.value.as_ref().unwrap(),
-        );
         Ok((quotient, remainder))
     }
 
@@ -568,19 +561,6 @@ impl<E: Engine> BigNat<E> {
         mut exp: Bitvector<E>,
         modulus: &Self,
     ) -> Result<BigNat<E>, SynthesisError> {
-        println!(
-            "pm: {} ^ {} % {}",
-            self.value.as_ref().unwrap(),
-            exp.values
-                .as_ref()
-                .unwrap()
-                .iter()
-                .rev()
-                .map(|b| if *b { "1" } else { "0" })
-                .collect::<Vec<_>>()
-                .concat(),
-            modulus.value.as_ref().unwrap()
-        );
         if exp.bits.len() == 0 {
             Ok(BigNat {
                 limb_values: Some({
@@ -703,9 +683,11 @@ impl<E: Engine> BigNat<E> {
 impl<E: Engine> Gadget<E> for BigNat<E> {
     type Value = BigUint;
     type Params = BigNatParams;
+    type Access = ();
     fn alloc<CS: ConstraintSystem<E>>(
         cs: CS,
         value: Option<&Self::Value>,
+        _access: (),
         params: &Self::Params,
     ) -> Result<Self, SynthesisError> {
         BigNat::alloc_from_nat(
@@ -724,6 +706,9 @@ impl<E: Engine> Gadget<E> for BigNat<E> {
     fn wires(&self) -> Vec<LinearCombination<E>> {
         self.limbs.clone()
     }
+    fn access(&self) -> &() {
+        &()
+    }
     fn mux<CS: ConstraintSystem<E>>(
         mut cs: CS,
         s: &Bit<E>,
@@ -741,6 +726,7 @@ impl<E: Engine> Gadget<E> for BigNat<E> {
         let out: Self = Self::alloc(
             cs.namespace(|| "out"),
             value,
+            (),
             &BigNatParams {
                 max_word: max(i0.params.max_word.clone(), i1.params.max_word.clone()),
                 limb_width: i0.params.limb_width,
@@ -1265,14 +1251,12 @@ mod tests {
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
-            println!("b: {}", b.value.as_ref().unwrap());
             let e = BigNat::alloc_from_nat(
                 cs.namespace(|| "e"),
                 || Ok(BigUint::from_str(self.inputs.grab()?.e).unwrap()),
                 self.params.limb_width,
                 self.params.n_limbs_e,
             )?;
-            println!("e: {}", e.value.as_ref().unwrap());
             let res = BigNat::alloc_from_nat(
                 cs.namespace(|| "res"),
                 || Ok(BigUint::from_str(self.inputs.grab()?.res).unwrap()),
@@ -1285,7 +1269,6 @@ mod tests {
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
-            println!("m: {}", m.value.as_ref().unwrap());
             let actual = b.pow_mod(cs.namespace(|| "pow"), &e, &m)?;
             actual.equal(cs.namespace(|| "check"), &res)?;
             Ok(())

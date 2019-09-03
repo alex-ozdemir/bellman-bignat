@@ -8,12 +8,12 @@ use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
 use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
 
 use bignat::BigNat;
+use group::{CircuitRsaGroup, CircuitRsaGroupParams, Gadget, RsaGroup};
 use hash::{hash_to_prime, hash_to_rsa_element, helper, HashDomain};
-use rsa_set::{ExpSet, NaiveExpSet, CircuitExpSet};
-use group::{Gadget, RsaGroup, CircuitRsaGroup, CircuitRsaGroupParams};
+use rsa_set::{CircuitExpSet, ExpSet, NaiveExpSet};
 use OptionExt;
 
-pub struct RollupInputs<E: Engine, S: ExpSet> {
+pub struct SetInputs<E: Engine, S: ExpSet> {
     /// The initial state of the set
     pub initial_state: S,
     pub final_digest: BigUint,
@@ -23,7 +23,7 @@ pub struct RollupInputs<E: Engine, S: ExpSet> {
     pub to_insert: Vec<Vec<E::Fr>>,
 }
 
-impl RollupInputs<Bn256, NaiveExpSet<RsaGroup>> {
+impl SetInputs<Bn256, NaiveExpSet<RsaGroup>> {
     pub fn from_counts(
         n_untouched: usize,
         n_removed: usize,
@@ -114,7 +114,7 @@ impl RollupInputs<Bn256, NaiveExpSet<RsaGroup>> {
             .chain(inserted_hashes)
             .fold(group.g.clone(), |g, i| g.modpow(&i, &group.m));
         let set = NaiveExpSet::new_with(group, untouched_hashes.chain(removed_hashes));
-        RollupInputs {
+        SetInputs {
             initial_state: set,
             final_digest,
             to_remove: removed,
@@ -124,7 +124,7 @@ impl RollupInputs<Bn256, NaiveExpSet<RsaGroup>> {
 }
 
 #[derive(Clone)]
-pub struct RollupParams<E: PoseidonEngine> {
+pub struct SetParams<E: PoseidonEngine> {
     pub group: RsaGroup,
     pub limb_width: usize,
     pub n_bits_base: usize,
@@ -136,23 +136,31 @@ pub struct RollupParams<E: PoseidonEngine> {
     pub hash: E::Params,
 }
 
-pub struct Rollup<E: PoseidonEngine<SBox = QuinticSBox<E>>, S: ExpSet> {
-    pub inputs: Option<RollupInputs<E, S>>,
-    pub params: RollupParams<E>,
+pub struct Set<E: PoseidonEngine<SBox = QuinticSBox<E>>, S: ExpSet> {
+    pub inputs: Option<SetInputs<E, S>>,
+    pub params: SetParams<E>,
 }
 
-impl<E: PoseidonEngine<SBox = QuinticSBox<E>>> Circuit<E> for Rollup<E, NaiveExpSet<RsaGroup>> {
+impl<E: PoseidonEngine<SBox = QuinticSBox<E>>> Circuit<E> for Set<E, NaiveExpSet<RsaGroup>> {
     fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
+        println!("Constructing Group");
+        let raw_group = self.inputs.grab()?.initial_state.group().clone();
+        let group = CircuitRsaGroup::alloc(
+            cs.namespace(|| "group"),
+            Some(&raw_group),
+            (),
+            &CircuitRsaGroupParams {
+                limb_width: self.params.limb_width,
+                n_limbs: self.params.n_bits_base,
+            },
+        )?;
         println!("Constructing Set");
         let set: CircuitExpSet<E, RsaGroup, CircuitRsaGroup<E>> = CircuitExpSet::alloc(
             cs.namespace(|| "set init"),
             self.inputs.as_ref().map(|is| &is.initial_state),
-            &CircuitRsaGroupParams {
-                limb_width: self.params.limb_width,
-                n_limbs: self.params.n_bits_base / self.params.limb_width,
-            },
+            group,
+            &(),
         )?;
-
         let hash_domain = HashDomain {
             n_bits: self.params.n_bits_elem,
             n_trailing_ones: 1,
@@ -281,8 +289,8 @@ mod test {
     use test_helpers::*;
 
     circuit_tests! {
-        small_rsa_1_swap: (Rollup {
-            inputs: Some(RollupInputs::new(
+        small_rsa_1_swap: (Set {
+            inputs: Some(SetInputs::new(
                 [].to_vec(),
                 [
                     ["0", "1", "2", "3", "4"].iter().map(|s| s.to_string()).collect(),
@@ -290,14 +298,14 @@ mod test {
                 [
                     ["0", "1", "2", "3", "5"].iter().map(|s| s.to_string()).collect(),
                 ].to_vec(),
-                &Bn256PoseidonParams::new::<sapling_crypto::group_hash::Keccak256Hasher>(),
+                &Bn256PoseidonParams::new::<sapling_crypto::group_hash::BlakeHasher>(),
                 128,
                 RsaGroup {
                     g: BigUint::from(2usize),
                     m: BigUint::from_str(RSA_512).unwrap(),
                 },
             )),
-            params: RollupParams {
+            params: SetParams {
                 group: RsaGroup {
                     g: BigUint::from(2usize),
                     m: BigUint::from_str(RSA_512).unwrap(),
@@ -309,11 +317,11 @@ mod test {
                 item_size: 5,
                 n_inserts: 1,
                 n_removes: 1,
-                hash: Bn256PoseidonParams::new::<sapling_crypto::group_hash::Keccak256Hasher>(),
+                hash: Bn256PoseidonParams::new::<sapling_crypto::group_hash::BlakeHasher>(),
             },
         }, true),
-        //small_rsa_5_swaps: (Rollup {
-        //    inputs: Some(RollupInputs::new(
+        //small_rsa_5_swaps: (Set {
+        //    inputs: Some(SetInputs::new(
         //        [].to_vec(),
         //        [
         //            ["0", "1", "2", "3", "4"].iter().map(|s| s.to_string()).collect(),
@@ -336,7 +344,7 @@ mod test {
         //            m: BigUint::from_str(RSA_512).unwrap(),
         //        },
         //    )),
-        //    params: RollupParams {
+        //    params: SetParams {
         //        group: RsaGroup {
         //            g: BigUint::from(2usize),
         //            m: BigUint::from_str(RSA_512).unwrap(),
@@ -351,8 +359,8 @@ mod test {
         //        hash: Bn256PoseidonParams::new::<sapling_crypto::group_hash::Keccak256Hasher>(),
         //    },
         //}, true),
-        //full_rsa_30_swaps: (Rollup {
-        //    inputs: Some(RollupInputs::from_counts(
+        //full_rsa_30_swaps: (Set {
+        //    inputs: Some(SetInputs::from_counts(
         //        0,
         //        30,
         //        30,
@@ -364,7 +372,7 @@ mod test {
         //            m: BigUint::from_str(RSA_2048).unwrap(),
         //        },
         //    )),
-        //    params: RollupParams {
+        //    params: SetParams {
         //        group: RsaGroup {
         //            g: BigUint::from(2usize),
         //            m: BigUint::from_str(RSA_2048).unwrap(),
