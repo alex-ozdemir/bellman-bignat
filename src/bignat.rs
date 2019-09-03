@@ -1,11 +1,12 @@
 use num_bigint::BigUint;
-use num_traits::{Pow, ToPrimitive};
+use num_traits::{One, Pow, ToPrimitive};
 use sapling_crypto::bellman::pairing::ff::{Field, PrimeField};
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
 use sapling_crypto::circuit::boolean::Boolean;
 
 use std::borrow::Borrow;
+use std::cmp::max;
 use std::convert::From;
 use std::rc::Rc;
 
@@ -37,11 +38,21 @@ pub fn nat_to_limbs<'a, F: PrimeField>(nat: &BigUint, limb_width: usize, n_limbs
         .collect()
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BigNatParams {
     pub max_word: BigUint,
     pub limb_width: usize,
     pub n_limbs: usize,
+}
+
+impl BigNatParams {
+    pub fn new(limb_width: usize, n_limbs: usize) -> Self {
+        BigNatParams {
+            max_word: (BigUint::one() << limb_width) - 1usize,
+            n_limbs,
+            limb_width,
+        }
+    }
 }
 
 /// A representation of a large natural number (a member of {0, 1, 2, ... })
@@ -198,11 +209,7 @@ impl<E: Engine> BigNat<E> {
                 None
             },
             limbs,
-            params: BigNatParams {
-                max_word: Pow::pow(&BigUint::from(2usize), limb_width) - 1usize,
-                limb_width,
-                n_limbs,
-            },
+            params: BigNatParams::new(limb_width, n_limbs),
         })
     }
 
@@ -450,6 +457,12 @@ impl<E: Engine> BigNat<E> {
         other: &Self,
         modulus: &Self,
     ) -> Result<(BigNat<E>, BigNat<E>), SynthesisError> {
+        println!(
+            "mm: {} * {} % {}",
+            self.value.as_ref().unwrap(),
+            other.value.as_ref().unwrap(),
+            modulus.value.as_ref().unwrap()
+        );
         if self.params.limb_width != other.params.limb_width {
             return Err(SynthesisError::Unsatisfiable);
         }
@@ -493,6 +506,14 @@ impl<E: Engine> BigNat<E> {
         let left_int = BigNat::from_poly(Polynomial::from(left), limb_width, left_max_word);
         let right_int = BigNat::from_poly(Polynomial::from(right), limb_width, right_max_word);
         left_int.equal_when_carried_regroup(cs.namespace(|| "carry"), &right_int)?;
+        println!(
+            "mm: {} * {} % {} = {} {}",
+            self.value.as_ref().unwrap(),
+            other.value.as_ref().unwrap(),
+            modulus.value.as_ref().unwrap(),
+            quotient.value.as_ref().unwrap(),
+            remainder.value.as_ref().unwrap(),
+        );
         Ok((quotient, remainder))
     }
 
@@ -547,6 +568,19 @@ impl<E: Engine> BigNat<E> {
         mut exp: Bitvector<E>,
         modulus: &Self,
     ) -> Result<BigNat<E>, SynthesisError> {
+        println!(
+            "pm: {} ^ {} % {}",
+            self.value.as_ref().unwrap(),
+            exp.values
+                .as_ref()
+                .unwrap()
+                .iter()
+                .rev()
+                .map(|b| if *b { "1" } else { "0" })
+                .collect::<Vec<_>>()
+                .concat(),
+            modulus.value.as_ref().unwrap()
+        );
         if exp.bits.len() == 0 {
             Ok(BigNat {
                 limb_values: Some({
@@ -669,15 +703,17 @@ impl<E: Engine> BigNat<E> {
 impl<E: Engine> Gadget<E> for BigNat<E> {
     type Value = BigUint;
     type Params = BigNatParams;
-    fn alloc<F, CS: ConstraintSystem<E>>(
+    fn alloc<CS: ConstraintSystem<E>>(
         cs: CS,
-        value: F,
+        value: Option<&Self::Value>,
         params: &Self::Params,
-    ) -> Result<Self, SynthesisError>
-    where
-        F: FnOnce() -> Result<Self::Value, SynthesisError>,
-    {
-        BigNat::alloc_from_nat(cs, value, params.limb_width, params.n_limbs)
+    ) -> Result<Self, SynthesisError> {
+        BigNat::alloc_from_nat(
+            cs,
+            || Ok(value.grab()?.clone().clone()),
+            params.limb_width,
+            params.n_limbs,
+        )
     }
     fn value(&self) -> Option<&BigUint> {
         self.value.as_ref()
@@ -687,6 +723,45 @@ impl<E: Engine> Gadget<E> for BigNat<E> {
     }
     fn wires(&self) -> Vec<LinearCombination<E>> {
         self.limbs.clone()
+    }
+    fn mux<CS: ConstraintSystem<E>>(
+        mut cs: CS,
+        s: &Bit<E>,
+        i0: &Self,
+        i1: &Self,
+    ) -> Result<Self, SynthesisError> {
+        let i0_wires = i0.wires();
+        let i1_wires = i1.wires();
+        if i0_wires.len() != i1_wires.len() || i0.params.limb_width != i1.params.limb_width {
+            return Err(SynthesisError::Unsatisfiable);
+        }
+        let value: Option<&Self::Value> = s
+            .value
+            .and_then(|b| if b { i1.value() } else { i0.value() });
+        let out: Self = Self::alloc(
+            cs.namespace(|| "out"),
+            value,
+            &BigNatParams {
+                max_word: max(i0.params.max_word.clone(), i1.params.max_word.clone()),
+                limb_width: i0.params.limb_width,
+                n_limbs: i0.params.n_limbs,
+            },
+        )?;
+        let out_wires = out.wires();
+        for (i, ((i0w, i1w), out_w)) in i0_wires
+            .into_iter()
+            .zip(i1_wires)
+            .zip(out_wires)
+            .enumerate()
+        {
+            cs.enforce(
+                || format!("{}", i),
+                |lc| lc + &s.bit,
+                |lc| lc + &i1w - &i0w,
+                |lc| lc + &out_w - &i0w,
+            );
+        }
+        Ok(out)
     }
 }
 
@@ -1190,12 +1265,14 @@ mod tests {
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
+            println!("b: {}", b.value.as_ref().unwrap());
             let e = BigNat::alloc_from_nat(
                 cs.namespace(|| "e"),
                 || Ok(BigUint::from_str(self.inputs.grab()?.e).unwrap()),
                 self.params.limb_width,
                 self.params.n_limbs_e,
             )?;
+            println!("e: {}", e.value.as_ref().unwrap());
             let res = BigNat::alloc_from_nat(
                 cs.namespace(|| "res"),
                 || Ok(BigUint::from_str(self.inputs.grab()?.res).unwrap()),
@@ -1208,6 +1285,7 @@ mod tests {
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
+            println!("m: {}", m.value.as_ref().unwrap());
             let actual = b.pow_mod(cs.namespace(|| "pow"), &e, &m)?;
             actual.equal(cs.namespace(|| "check"), &res)?;
             Ok(())

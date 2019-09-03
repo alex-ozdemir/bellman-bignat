@@ -1,10 +1,10 @@
 use num_bigint::BigUint;
 use num_traits::One;
-use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
 use sapling_crypto::bellman::pairing::Engine;
+use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
 
-use group::{CircuitSemiGroup, SemiGroup, Gadget};
 use bignat::BigNat;
+use group::{CircuitSemiGroup, Gadget, RsaGroup, SemiGroup};
 use OptionExt;
 
 /// Computes `b ^ (prod(xs) / l) % m`, cleverly.
@@ -56,18 +56,22 @@ pub fn proof_of_exp<E: Engine, G: CircuitSemiGroup<E>, CS: ConstraintSystem<E>>(
     power_factors: &[BigNat<E>],
     challenge: &BigNat<E>,
     result: &G::Elem,
-) -> Result<(), SynthesisError> where G::Elem : Gadget<E, Value = <G::Group as SemiGroup>::Elem> {
-    let q_computation = || -> Result<<G::Group as SemiGroup>::Elem, SynthesisError> {
-        Ok(base_to_product::<G::Group, _>(
-            *group.group().grab()?,
-            *base.value().grab()?,
-            *challenge.value().grab()?,
-            power_factors
-                .iter()
-                .map(|pow| pow.value.grab())
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter(),
-        ))
+) -> Result<(), SynthesisError>
+where
+    G::Elem: Gadget<E, Value = <G::Group as SemiGroup>::Elem>,
+{
+    let q_value: Option<<G::Group as SemiGroup>::Elem> = {
+        group.group().and_then(|g| {
+            base.value().and_then(|b| {
+                challenge.value().and_then(|c| {
+                    power_factors
+                        .iter()
+                        .map(|pow| pow.value())
+                        .collect::<Option<Vec<&BigUint>>>()
+                        .map(|facs| base_to_product(g, b, c, facs.into_iter()))
+                })
+            })
+        })
     };
     let r_computation = || -> Result<BigUint, SynthesisError> {
         let mut prod = BigUint::one();
@@ -82,7 +86,7 @@ pub fn proof_of_exp<E: Engine, G: CircuitSemiGroup<E>, CS: ConstraintSystem<E>>(
     };
     let q = <G::Elem as Gadget<E>>::alloc(
         cs.namespace(|| "Q"),
-        q_computation,
+        q_value.as_ref(),
         <G::Elem as Gadget<E>>::params(base),
     )?;
     let r = BigNat::alloc_from_nat(
@@ -92,20 +96,19 @@ pub fn proof_of_exp<E: Engine, G: CircuitSemiGroup<E>, CS: ConstraintSystem<E>>(
         challenge.limbs.len(),
     )?;
     let ql = group.power(cs.namespace(|| "Q^l"), &q, &challenge)?;
-    let br = group.power(cs.namespace(|| "Q^l"), &base, &r)?;
+    let br = group.power(cs.namespace(|| "b^r"), &base, &r)?;
     let left = group.op(cs.namespace(|| "Q^l b^r"), &ql, &br)?;
-    <G::Elem as Gadget<E>>::assert_equal(cs.namespace(|| "Q^l b^r == res"),&left, &result)
+    <G::Elem as Gadget<E>>::assert_equal(cs.namespace(|| "Q^l b^r == res"), &left, &result)
 }
-
-
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use test_helpers::*;
     use quickcheck::TestResult;
+    use test_helpers::*;
 
+    use group::{CircuitRsaGroup, CircuitRsaGroupParams};
 
     use std::str::FromStr;
 
@@ -288,11 +291,17 @@ mod tests {
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
-            let m = BigNat::alloc_from_nat(
-                cs.namespace(|| "m"),
-                || Ok(BigUint::from_str(self.inputs.grab()?.m).unwrap()),
-                self.params.limb_width,
-                self.params.n_limbs_b,
+            let group = self.inputs.as_ref().map(|is| RsaGroup {
+                m: BigUint::from_str(is.m).unwrap(),
+                g: BigUint::from(2usize),
+            });
+            let g = <CircuitRsaGroup<E> as Gadget<E>>::alloc(
+                cs.namespace(|| "g"),
+                group.as_ref(),
+                &CircuitRsaGroupParams {
+                    n_limbs: self.params.n_limbs_b,
+                    limb_width: self.params.limb_width,
+                },
             )?;
             let l = BigNat::alloc_from_nat(
                 cs.namespace(|| "l"),
@@ -300,7 +309,7 @@ mod tests {
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
-            proof_of_exp(cs.namespace(|| "proof of exp"), &b, &m, &exps, &l, &res)
+            proof_of_exp(cs.namespace(|| "proof of exp"), &g, &b, &exps, &l, &res)
         }
     }
 
@@ -314,7 +323,11 @@ mod tests {
             BigUint::from(1usize),
             BigUint::from(1usize),
         ];
-        let clever = base_to_product(&b, &l, &m, xs.iter());
+        let g = RsaGroup {
+            m,
+            g: BigUint::from(2usize),
+        };
+        let clever = base_to_product(&g, &b, &l, xs.iter());
         assert_eq!(clever, BigUint::from(1usize));
     }
 
@@ -328,7 +341,29 @@ mod tests {
         ];
         let l = BigUint::from(3usize);
         let m = BigUint::from(3usize);
-        let clever = base_to_product(&b, &l, &m, xs.iter());
+        let g = RsaGroup {
+            m,
+            g: BigUint::from(2usize),
+        };
+        let clever = base_to_product(&g, &b, &l, xs.iter());
+        assert_eq!(clever, BigUint::from(1usize));
+    }
+
+    #[test]
+    fn base_to_product_2() {
+        let b = BigUint::from(2usize);
+        let m = BigUint::from(17usize);
+        let l = BigUint::from(2usize);
+        let xs = [
+            BigUint::from(1usize),
+            BigUint::from(1usize),
+            BigUint::from(1usize),
+        ];
+        let g = RsaGroup {
+            m,
+            g: BigUint::from(2usize),
+        };
+        let clever = base_to_product(&g, &b, &l, xs.iter());
         assert_eq!(clever, BigUint::from(1usize));
     }
 
@@ -354,8 +389,12 @@ mod tests {
         }
         let l = BigUint::from(l);
         let xs = [BigUint::from(x0), BigUint::from(x1), BigUint::from(x2)];
-        let clever = base_to_product(&b, &l, &m, xs.iter());
-        let naive = base_to_product_naive(&b, &l, &m, xs.iter());
+        let g = RsaGroup {
+            m,
+            g: BigUint::from(2usize),
+        };
+        let clever = base_to_product(&g, &b, &l, xs.iter());
+        let naive = base_to_product_naive(&g, &b, &l, xs.iter());
         TestResult::from_bool(clever == naive)
     }
 
