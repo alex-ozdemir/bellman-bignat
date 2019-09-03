@@ -1,29 +1,27 @@
 use num_bigint::BigUint;
-use num_traits::One;
 use sapling_crypto::bellman::pairing::Engine;
-use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
+use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
 
 use std::collections::BTreeSet;
 
 use bignat::BigNat;
-use group::{SemiGroup, CircuitSemiGroup, Gadget};
+use group::{CircuitSemiGroup, Gadget, SemiGroup};
 use wesolowski::proof_of_exp;
-use OptionExt;
 
-
-pub trait RsaSetBackend<G: SemiGroup>: Sized {
+pub trait ExpSet: Sized {
+    type G: SemiGroup;
 
     /// Create a new `RsaSet` which computes product mod `modulus`.
-    fn new(group: G) -> Self;
+    fn new(group: Self::G) -> Self;
     /// Add `n` to the set, returning whether `n` is new to the set.
     fn insert(&mut self, n: BigUint) -> bool;
     /// Remove `n` from the set, returning whether `n` was present.
     fn remove(&mut self, n: &BigUint) -> bool;
     /// The digest of the current elements (`g` to the product of the elements).
-    fn digest(&self) -> G::Elem;
+    fn digest(&self) -> <Self::G as SemiGroup>::Elem;
 
     /// Gets the underlying RSA group
-    fn group(&self) -> &G;
+    fn group(&self) -> &Self::G;
 
     /// Add all of the `ns` to the set.
     fn insert_all<I: IntoIterator<Item = BigUint>>(&mut self, ns: I) {
@@ -33,21 +31,28 @@ pub trait RsaSetBackend<G: SemiGroup>: Sized {
     }
 
     /// Remove all of the `ns` from the set.
-    fn remove_all<'a, I: IntoIterator<Item = &'a BigUint>>(&mut self, ns: I) where G::Elem: 'a {
+    fn remove_all<'a, I: IntoIterator<Item = &'a BigUint>>(&mut self, ns: I)
+    where
+        <Self::G as SemiGroup>::Elem: 'a,
+    {
         for n in ns {
             self.remove(n);
         }
     }
 
-    fn new_with<I: IntoIterator<Item = BigUint>>(group: G, items: I) -> Self {
+    fn new_with<I: IntoIterator<Item = BigUint>>(group: Self::G, items: I) -> Self {
         let mut this = Self::new(group);
         this.insert_all(items);
         this
     }
 }
 
-/// An `RsaSetBackend` which computes products from scratch each time.
-pub struct NaiveRsaSetBackend<G: SemiGroup> {
+#[derive(Clone, Debug)]
+/// An `NaiveExpSet` which computes products from scratch each time.
+pub struct NaiveExpSet<G: SemiGroup>
+where
+    G::Elem: Ord,
+{
     group: G,
     elements: BTreeSet<BigUint>,
 }
@@ -62,7 +67,11 @@ pub struct NaiveRsaSetBackend<G: SemiGroup> {
 //    }
 //}
 
-impl<G: SemiGroup> RsaSetBackend<G> for NaiveRsaSetBackend<G> where G::Elem: Ord {
+impl<G: SemiGroup> ExpSet for NaiveExpSet<G>
+where
+    G::Elem: Ord,
+{
+    type G = G;
     fn new(group: G) -> Self {
         Self {
             group,
@@ -91,64 +100,87 @@ impl<G: SemiGroup> RsaSetBackend<G> for NaiveRsaSetBackend<G> where G::Elem: Ord
     }
 }
 
-pub struct RsaSet<E: Engine, Elem, CG: CircuitSemiGroup<E>, G: SemiGroup, B: RsaSetBackend<G>> where {
-    pub value: Option<B>,
+pub struct CircuitExpSet<
+    E: Engine,
+    G: SemiGroup,
+    CG: CircuitSemiGroup<E, Group = G> + Gadget<E, Value = G>,
+> where
+    G::Elem: Ord,
+{
+    pub value: Option<NaiveExpSet<G>>,
+    pub group: CG,
     pub digest: CG::Elem,
-    pub group: AllocatedRsaGroup<E>,
+    pub params: <CG as Gadget<E>>::Params,
 }
 
-impl<E: Engine, G, B> RsaSet<E, B> where G: SemiGroup, B: RsaSetBackend<G> {
-    pub fn alloc<CS, F>(
+impl<E: Engine, G: SemiGroup, CG: CircuitSemiGroup<E, Group = G> + Gadget<E, Value = G>> Gadget<E>
+    for CircuitExpSet<E, G, CG>
+where
+    G::Elem: Ord,
+    CG::Elem: Gadget<E, Value = <CG::Group as SemiGroup>::Elem>,
+{
+    type Value = NaiveExpSet<G>;
+    type Params = <CG as Gadget<E>>::Params;
+    fn alloc<CS: ConstraintSystem<E>>(
         mut cs: CS,
-        f: F,
-        group: AllocatedRsaGroup<E>,
-    ) -> Result<Self, SynthesisError>
-    where
-        CS: ConstraintSystem<E>,
-        F: FnOnce() -> Result<B, SynthesisError>,
-    {
-        let mut value = None;
-        let digest = BigNat::alloc_from_nat(
+        value: Option<&Self::Value>,
+        params: &Self::Params,
+    ) -> Result<Self, SynthesisError> {
+        let digest: CG::Elem = <CG::Elem as Gadget<E>>::alloc(
             cs.namespace(|| "digest"),
-            // Compute the digest
-            || {
-                let set = f()?;
-                let digest = Ok(set.digest());
-                value = Some(set);
-                digest
-            },
-            group.m.limb_width,
-            group.m.limbs.len(),
+            value.map(|s: &NaiveExpSet<G>| s.digest()).as_ref(),
+            &CG::elem_params(params),
+        )?;
+        let group = CG::alloc(
+            cs.namespace(|| "group"),
+            value.map(|s: &NaiveExpSet<G>| &s.group),
+            params,
         )?;
         Ok(Self {
-            value,
+            value: value.cloned(),
             digest,
             group,
+            params: params.clone(),
         })
     }
+    fn wires(&self) -> Vec<LinearCombination<E>> {
+        self.digest.wires()
+    }
+    fn value(&self) -> Option<&Self::Value> {
+        self.value.as_ref()
+    }
+    fn params(&self) -> &Self::Params {
+        &self.params
+    }
+}
 
+impl<E: Engine, G: SemiGroup, CG: CircuitSemiGroup<E, Group = G> + Gadget<E, Value = G>>
+    CircuitExpSet<E, G, CG>
+where
+    G::Elem: Ord,
+    CG::Elem: Gadget<E, Value = <CG::Group as SemiGroup>::Elem>,
+{
     pub fn remove<CS: ConstraintSystem<E>>(
         self,
         mut cs: CS,
         challenge: &BigNat<E>,
         items: &[BigNat<E>],
     ) -> Result<Self, SynthesisError> {
-        let old_value = self.value;
-        let value = || -> Result<B, SynthesisError> {
-            let mut value = old_value.ok_or(SynthesisError::AssignmentMissing)?;
-            value.remove_all(
-                items
-                    .iter()
-                    .map(|i| i.value.grab())
-                    .collect::<Result<Vec<_>, _>>()?,
-            );
-            Ok(value)
-        };
-        let new_set = Self::alloc(cs.namespace(|| "new"), value, self.group)?;
+        let value = self.value.clone().and_then(|mut set| {
+            items
+                .iter()
+                .map(|i| i.value.as_ref())
+                .collect::<Option<Vec<&BigUint>>>()
+                .map(|is| {
+                    set.remove_all(is);
+                    set
+                })
+        });
+        let new_set = Self::alloc(cs.namespace(|| "new"), value.as_ref(), &self.params)?;
         proof_of_exp(
             cs.namespace(|| "proof"),
+            &new_set.group,
             &new_set.digest,
-            &new_set.group.m,
             items,
             challenge,
             &self.digest,
@@ -162,22 +194,21 @@ impl<E: Engine, G, B> RsaSet<E, B> where G: SemiGroup, B: RsaSetBackend<G> {
         challenge: &BigNat<E>,
         items: &[BigNat<E>],
     ) -> Result<Self, SynthesisError> {
-        let old_value = self.value;
-        let value = || -> Result<B, SynthesisError> {
-            let mut value = old_value.ok_or(SynthesisError::AssignmentMissing)?;
-            value.insert_all(
-                items
-                    .iter()
-                    .map(|i| i.value.grab().map(|c| c.clone()))
-                    .collect::<Result<Vec<_>, _>>()?,
-            );
-            Ok(value)
-        };
-        let new_set = Self::alloc(cs.namespace(|| "new"), value, self.group)?;
+        let value = self.value.clone().and_then(|mut set| {
+            items
+                .iter()
+                .map(|i| i.value.clone())
+                .collect::<Option<Vec<BigUint>>>()
+                .map(|is| {
+                    set.insert_all(is);
+                    set
+                })
+        });
+        let new_set = Self::alloc(cs.namespace(|| "new"), value.as_ref(), &self.params)?;
         proof_of_exp(
             cs.namespace(|| "proof"),
+            &new_set.group,
             &self.digest,
-            &new_set.group.m,
             items,
             challenge,
             &new_set.digest,
@@ -190,6 +221,9 @@ impl<E: Engine, G, B> RsaSet<E, B> where G: SemiGroup, B: RsaSetBackend<G> {
 mod tests {
     use super::*;
     use test_helpers::*;
+
+    use group::{CircuitRsaGroup, CircuitRsaGroupParams, Gadget, RsaGroup};
+    use OptionExt;
 
     use std::str::FromStr;
 
@@ -216,29 +250,12 @@ mod tests {
 
     impl<'a, E: Engine> Circuit<E> for RsaRemoval<'a> {
         fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
-            let group_raw = RsaGroup {
-                g: BigUint::from_str(self.inputs.grab()?.g).unwrap(),
-                m: BigUint::from_str(self.inputs.grab()?.m).unwrap(),
-            };
-            let g = BigNat::alloc_from_nat(
-                cs.namespace(|| "g"),
-                || Ok(group_raw.g.clone()),
-                self.params.limb_width,
-                self.params.n_limbs_b,
-            )?;
             let challenge = BigNat::alloc_from_nat(
                 cs.namespace(|| "challenge"),
                 || Ok(BigUint::from_str(self.inputs.grab()?.challenge).unwrap()),
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
-            let m = BigNat::alloc_from_nat(
-                cs.namespace(|| "m"),
-                || Ok(group_raw.m.clone()),
-                self.params.limb_width,
-                self.params.n_limbs_b,
-            )?;
-            let group = AllocatedRsaGroup::new(g, m)?;
             let initial_items_vec: Vec<BigUint> = self
                 .inputs
                 .grab()?
@@ -274,15 +291,19 @@ mod tests {
                 self.params.n_limbs_b,
             )?;
 
-            let initial_set = RsaSet::alloc(
+            let initial_set: CircuitExpSet<E, RsaGroup, CircuitRsaGroup<E>> = CircuitExpSet::alloc(
                 cs.namespace(|| "initial_set"),
-                || {
-                    Ok(NaiveRsaSetBackend::new_with(
-                        group_raw,
-                        initial_items_vec.into_iter(),
-                    ))
+                Some(&NaiveExpSet::new_with(
+                    RsaGroup {
+                        g: BigUint::from_str(self.inputs.grab()?.g).unwrap(),
+                        m: BigUint::from_str(self.inputs.grab()?.m).unwrap(),
+                    },
+                    initial_items_vec.into_iter(),
+                )),
+                &CircuitRsaGroupParams {
+                    limb_width: self.params.limb_width,
+                    n_limbs: self.params.n_limbs_b,
                 },
-                group,
             )?;
 
             initial_set

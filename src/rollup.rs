@@ -9,12 +9,11 @@ use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
 
 use bignat::BigNat;
 use hash::{hash_to_prime, hash_to_rsa_element, helper, HashDomain};
-use rsa_set::{
-    AllocatedRsaGroup, NaiveRsaSetBackend, RsaGroup, RsaGroupParams, RsaSet, RsaSetBackend,
-};
+use rsa_set::{ExpSet, NaiveExpSet, CircuitExpSet};
+use group::{Gadget, RsaGroup, CircuitRsaGroup, CircuitRsaGroupParams};
 use OptionExt;
 
-pub struct RollupInputs<E: Engine, S: RsaSetBackend<RsaGroup>> {
+pub struct RollupInputs<E: Engine, S: ExpSet> {
     /// The initial state of the set
     pub initial_state: S,
     pub final_digest: BigUint,
@@ -24,7 +23,7 @@ pub struct RollupInputs<E: Engine, S: RsaSetBackend<RsaGroup>> {
     pub to_insert: Vec<Vec<E::Fr>>,
 }
 
-impl RollupInputs<Bn256, NaiveRsaSetBackend<RsaGroup>> {
+impl RollupInputs<Bn256, NaiveExpSet<RsaGroup>> {
     pub fn from_counts(
         n_untouched: usize,
         n_removed: usize,
@@ -114,7 +113,7 @@ impl RollupInputs<Bn256, NaiveRsaSetBackend<RsaGroup>> {
             .clone()
             .chain(inserted_hashes)
             .fold(group.g.clone(), |g, i| g.modpow(&i, &group.m));
-        let set = NaiveRsaSetBackend::new_with(group, untouched_hashes.chain(removed_hashes));
+        let set = NaiveExpSet::new_with(group, untouched_hashes.chain(removed_hashes));
         RollupInputs {
             initial_state: set,
             final_digest,
@@ -137,35 +136,21 @@ pub struct RollupParams<E: PoseidonEngine> {
     pub hash: E::Params,
 }
 
-pub struct Rollup<E: PoseidonEngine<SBox = QuinticSBox<E>>, S: RsaSetBackend<RsaGroup>> {
+pub struct Rollup<E: PoseidonEngine<SBox = QuinticSBox<E>>, S: ExpSet> {
     pub inputs: Option<RollupInputs<E, S>>,
     pub params: RollupParams<E>,
 }
 
-impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, S: RsaSetBackend<RsaGroup>> Circuit<E> for Rollup<E, S> {
-    fn synthesize<CS: ConstraintSystem<E>>(mut self, cs: &mut CS) -> Result<(), SynthesisError> {
-        let group = AllocatedRsaGroup::alloc_input(
-            cs.namespace(|| "group"),
-            || Ok(self.params.group.g.clone()),
-            || Ok(self.params.group.m.clone()),
-            RsaGroupParams {
+impl<E: PoseidonEngine<SBox = QuinticSBox<E>>> Circuit<E> for Rollup<E, NaiveExpSet<RsaGroup>> {
+    fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
+        println!("Constructing Set");
+        let set: CircuitExpSet<E, RsaGroup, CircuitRsaGroup<E>> = CircuitExpSet::alloc(
+            cs.namespace(|| "set init"),
+            self.inputs.as_ref().map(|is| &is.initial_state),
+            &CircuitRsaGroupParams {
                 limb_width: self.params.limb_width,
                 n_limbs: self.params.n_bits_base / self.params.limb_width,
             },
-        )?;
-        println!("Constructing Set");
-        let set = RsaSet::alloc(
-            cs.namespace(|| "set init"),
-            || {
-                Ok({
-                    let backend = std::mem::replace(
-                        &mut self.inputs.grab_mut()?.initial_state,
-                        S::new(self.params.group.clone()),
-                    );
-                    backend
-                })
-            },
-            group,
         )?;
 
         let hash_domain = HashDomain {

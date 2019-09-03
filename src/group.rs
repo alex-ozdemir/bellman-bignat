@@ -10,7 +10,7 @@ use bit::{Bit, Bitvector};
 
 pub trait Gadget<E: Engine>: Sized {
     type Value: Clone;
-    type Params: Eq + Debug;
+    type Params: Clone + Eq + Debug;
     fn alloc<CS: ConstraintSystem<E>>(
         cs: CS,
         value: Option<&Self::Value>,
@@ -32,10 +32,10 @@ pub trait Gadget<E: Engine>: Sized {
             println!("Bad {:?} {:?}", i0.params(), i1.params());
             return Err(SynthesisError::Unsatisfiable);
         }
-        let value: Option<&Self::Value> =
-            s.value
-                .and_then(|b| if b { i1.value() } else { i0.value() });
-        let out: Self = Self::alloc(cs.namespace(|| "out"), value, i0.params().clone())?;
+        let value: Option<&Self::Value> = s
+            .value
+            .and_then(|b| if b { i1.value() } else { i0.value() });
+        let out: Self = Self::alloc(cs.namespace(|| "out"), value, i0.params())?;
         let out_wires = out.wires();
         if out_wires.len() != i0_wires.len() {
             println!("Bad2");
@@ -86,6 +86,7 @@ pub trait CircuitSemiGroup<E: Engine>: Gadget<E> {
     fn generator(&self) -> Self::Elem;
     fn identity(&self) -> Self::Elem;
     fn group(&self) -> Option<&Self::Group>;
+    fn elem_params(p: &<Self as Gadget<E>>::Params) -> <Self::Elem as Gadget<E>>::Params;
     fn power_bin_rev<CS: ConstraintSystem<E>>(
         &self,
         mut cs: CS,
@@ -117,7 +118,7 @@ pub trait CircuitSemiGroup<E: Engine>: Gadget<E> {
     }
 }
 
-pub trait SemiGroup {
+pub trait SemiGroup: Clone {
     type Elem: Clone + Debug;
     fn op(&self, a: &Self::Elem, b: &Self::Elem) -> Self::Elem;
     fn identity(&self) -> Self::Elem;
@@ -233,6 +234,9 @@ impl<E: Engine> CircuitSemiGroup<E> for CircuitRsaGroup<E> {
         b: &BigNat<E>,
     ) -> Result<Self::Elem, SynthesisError> {
         a.mult_mod(cs, b, &self.m).map(|(_, r)| r)
+    }
+    fn elem_params(p: &<Self as Gadget<E>>::Params) -> <Self::Elem as Gadget<E>>::Params {
+        BigNatParams::new(p.limb_width, p.n_limbs)
     }
     fn group(&self) -> Option<&Self::Group> {
         self.value.as_ref()

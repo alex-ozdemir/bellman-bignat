@@ -5,9 +5,8 @@ extern crate sapling_crypto;
 
 use bellman_bignat::bignat::nat_to_limbs;
 use bellman_bignat::rollup::{Rollup, RollupParams, RollupInputs};
-use bellman_bignat::rsa_set::{
-    NaiveRsaSetBackend, RsaGroup,
-};
+use bellman_bignat::group::RsaGroup;
+use bellman_bignat::rsa_set::NaiveExpSet;
 use num_bigint::BigUint;
 use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
 
@@ -41,7 +40,7 @@ fn main() {
 
     let params = {
         let hash = Bn256PoseidonParams::new::<sapling_crypto::group_hash::Keccak256Hasher>();
-        let c = Rollup::<_, NaiveRsaSetBackend> {
+        let c = Rollup::<_, NaiveExpSet<RsaGroup>> {
             inputs: None,
             params: RollupParams {
                 group: group.clone(),

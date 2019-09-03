@@ -4,7 +4,7 @@ use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
 
 use bignat::BigNat;
-use group::{CircuitSemiGroup, Gadget, RsaGroup, SemiGroup};
+use group::{CircuitSemiGroup, Gadget, SemiGroup};
 use OptionExt;
 
 /// Computes `b ^ (prod(xs) / l) % m`, cleverly.
@@ -108,7 +108,7 @@ mod tests {
     use quickcheck::TestResult;
     use test_helpers::*;
 
-    use group::{CircuitRsaGroup, CircuitRsaGroupParams};
+    use group::{RsaGroup, CircuitRsaGroup, CircuitRsaGroupParams};
 
     use std::str::FromStr;
 

@@ -1,14 +1,13 @@
-use num::Num;
+use num_bigint::BigUint;
 use sapling_crypto::bellman::pairing::ff::Field;
 use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
 use sapling_crypto::circuit::boolean::Boolean;
 use sapling_crypto::circuit::num::AllocatedNum;
 use sapling_crypto::poseidon::{PoseidonEngine, PoseidonHashParams, QuinticSBox};
 
-use mimc::mimc;
-use num_bigint::BigUint;
-
 use bignat::BigNat;
+use mimc::mimc;
+use num::Num;
 use OptionExt;
 
 const MILLER_RABIN_ROUNDS: usize = 2;
@@ -99,7 +98,7 @@ pub mod helper {
         for i in 1..n_hashes {
             perm = mimc(perm);
             let low_bits = low_k_bits(&f_to_nat(&perm), bits_per_hash);
-            sum_of_hashes +=  low_bits << (bits_per_hash * i);
+            sum_of_hashes += low_bits << (bits_per_hash * i);
         }
 
         // Now we assemble the 1024b number. Notice the ORs are all disjoint.
@@ -241,6 +240,7 @@ mod test {
     use super::*;
 
     use OptionExt;
+    use group::Gadget;
 
     use test_helpers::*;
 
@@ -301,7 +301,10 @@ mod test {
                 },
                 &self.params.hash,
             )?;
-            assert_eq!(hash.limbs.len() * hash.limb_width, self.params.desired_bits);
+            assert_eq!(
+                hash.limbs.len() * hash.params().limb_width,
+                self.params.desired_bits
+            );
             hash.equal(cs.namespace(|| "eq"), &allocated_expected_output)?;
             Ok(())
         }
@@ -437,7 +440,7 @@ mod test {
                 &domain,
                 &self.params.hash,
             )?;
-            assert_eq!(hash.limbs.len() * hash.limb_width, self.params.desired_bits);
+            assert_eq!(hash.limbs.len() * hash.params.limb_width, self.params.desired_bits);
             hash.equal(cs.namespace(|| "eq"), &allocated_expected_output)?;
             Ok(())
         }

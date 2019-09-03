@@ -45,9 +45,9 @@ pub mod poly;
 pub mod bignat;
 pub mod lazy;
 pub mod wesolowski;
-//pub mod rsa_set;
-//pub mod hash;
-//pub mod rollup;
+pub mod rsa_set;
+pub mod hash;
+pub mod rollup;
 pub mod mimc;
 pub mod group;
 
