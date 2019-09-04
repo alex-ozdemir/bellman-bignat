@@ -8,11 +8,9 @@ use bignat::BigNat;
 use group::{CircuitSemiGroup, Gadget, SemiGroup};
 use wesolowski::proof_of_exp;
 
-pub trait ExpSet<T>: Sized {
+pub trait ExpSet<T>: Sized + Clone {
     type G: SemiGroup;
 
-    /// Create a new `RsaSet` which computes product mod `modulus`.
-    fn new(group: Self::G) -> Self;
     /// Add `n` to the set, returning whether `n` is new to the set.
     fn insert(&mut self, n: T) -> bool;
     /// Remove `n` from the set, returning whether `n` was present.
@@ -40,20 +38,11 @@ pub trait ExpSet<T>: Sized {
             self.remove(n);
         }
     }
-
-    fn new_with<I: IntoIterator<Item = T>>(group: Self::G, items: I) -> Self {
-        let mut this = Self::new(group);
-        this.insert_all(items);
-        this
-    }
 }
 
 /// An `NaiveExpSet` which computes products from scratch each time.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NaiveExpSet<G: SemiGroup>
-where
-    G::Elem: Ord,
-{
+pub struct NaiveExpSet<G: SemiGroup> {
     group: G,
     elements: BTreeSet<BigUint>,
 }
@@ -68,17 +57,26 @@ where
 //    }
 //}
 
-impl<G: SemiGroup> ExpSet<BigUint> for NaiveExpSet<G>
-where
-    G::Elem: Ord,
-{
-    type G = G;
-    fn new(group: G) -> Self {
+impl<G: SemiGroup> NaiveExpSet<G> {
+    pub fn new(group: G) -> Self {
         Self {
             group,
             elements: BTreeSet::new(),
         }
     }
+
+    pub fn new_with<I: IntoIterator<Item = BigUint>>(group: G, items: I) -> Self {
+        let mut this = Self::new(group);
+        this.insert_all(items);
+        this
+    }
+}
+
+impl<G: SemiGroup> ExpSet<BigUint> for NaiveExpSet<G>
+where
+    G::Elem: Ord,
+{
+    type G = G;
 
     fn insert(&mut self, n: BigUint) -> bool {
         self.elements.insert(n)
@@ -102,29 +100,25 @@ where
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct CircuitExpSet<
+pub struct CircuitExpSet<E, CG>
+where
     E: Engine,
-    G: SemiGroup,
-    CG: CircuitSemiGroup<E, Group = G> + Gadget<E, Value = G>,
-> where
-    G::Elem: Ord,
-    CG::Elem: Gadget<E, Value = <CG::Group as SemiGroup>::Elem, Access = ()>,
+    CG: CircuitSemiGroup<E = E> + Gadget<E = E, Value = <CG as CircuitSemiGroup>::Group>,
+    CG::Elem: Gadget<E = E, Value = <CG::Group as SemiGroup>::Elem, Access = ()>,
 {
-    pub value: Option<NaiveExpSet<G>>,
+    pub value: Option<NaiveExpSet<<CG as Gadget>::Value>>,
     pub group: CG,
     pub digest: CG::Elem,
 }
 
-impl<
-        E: Engine,
-        G: SemiGroup,
-        CG: CircuitSemiGroup<E, Group = G> + Gadget<E, Value = G> + Eq + Clone,
-    > Gadget<E> for CircuitExpSet<E, G, CG>
+impl<E, CG> Gadget for CircuitExpSet<E, CG>
 where
-    G::Elem: Ord,
-    CG::Elem: Gadget<E, Value = <CG::Group as SemiGroup>::Elem, Access = ()>,
+    E: Engine,
+    CG: CircuitSemiGroup<E = E> + Gadget<E = E, Value = <CG as CircuitSemiGroup>::Group>,
+    CG::Elem: Gadget<E = E, Value = <CG::Group as SemiGroup>::Elem, Access = ()>,
 {
-    type Value = NaiveExpSet<G>;
+    type E = E;
+    type Value = NaiveExpSet<CG::Value>;
     type Params = ();
     type Access = CG;
     fn alloc<CS: ConstraintSystem<E>>(
@@ -133,9 +127,9 @@ where
         access: CG,
         _params: &(),
     ) -> Result<Self, SynthesisError> {
-        let digest: CG::Elem = <CG::Elem as Gadget<E>>::alloc(
+        let digest: CG::Elem = <CG::Elem as Gadget>::alloc(
             cs.namespace(|| "digest"),
-            value.map(|s: &NaiveExpSet<G>| s.digest()).as_ref(),
+            value.map(|s: &NaiveExpSet<CG::Value>| s.digest()).as_ref(),
             (),
             &CG::elem_params(access.params()),
         )?;
@@ -163,14 +157,11 @@ where
     }
 }
 
-impl<
-        E: Engine,
-        G: SemiGroup,
-        CG: CircuitSemiGroup<E, Group = G> + Gadget<E, Value = G> + Eq + Clone,
-    > CircuitExpSet<E, G, CG>
+impl<E, CG> CircuitExpSet<E, CG>
 where
-    G::Elem: Ord,
-    CG::Elem: Gadget<E, Value = <CG::Group as SemiGroup>::Elem, Access = ()>,
+    E: Engine,
+    CG: CircuitSemiGroup<E = E> + Gadget<E = E, Value = <CG as CircuitSemiGroup>::Group>,
+    CG::Elem: Gadget<E = E, Value = <CG::Group as SemiGroup>::Elem, Access = ()>,
 {
     pub fn remove<CS: ConstraintSystem<E>>(
         self,
@@ -325,7 +316,7 @@ mod tests {
                     n_limbs: self.params.n_limbs_b,
                 },
             )?;
-            let initial_set: CircuitExpSet<E, RsaGroup, CircuitRsaGroup<E>> = CircuitExpSet::alloc(
+            let initial_set: CircuitExpSet<E, CircuitRsaGroup<E>> = CircuitExpSet::alloc(
                 cs.namespace(|| "initial_set"),
                 Some(&NaiveExpSet::new_with(
                     raw_group,

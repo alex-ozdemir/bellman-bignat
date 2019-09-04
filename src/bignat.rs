@@ -682,7 +682,8 @@ impl<E: Engine> BigNat<E> {
     }
 }
 
-impl<E: Engine> Gadget<E> for BigNat<E> {
+impl<E: Engine> Gadget for BigNat<E> {
+    type E = E;
     type Value = BigUint;
     type Params = BigNatParams;
     type Access = ();

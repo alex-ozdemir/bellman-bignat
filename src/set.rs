@@ -2,16 +2,178 @@ use num_bigint::BigUint;
 use sapling_crypto::bellman::pairing::bn256::Bn256;
 use sapling_crypto::bellman::pairing::ff::{PrimeField, ScalarEngine};
 use sapling_crypto::bellman::pairing::Engine;
-use sapling_crypto::bellman::{Circuit, ConstraintSystem, SynthesisError};
+use sapling_crypto::bellman::{Circuit, ConstraintSystem, LinearCombination, SynthesisError};
 use sapling_crypto::circuit::num::AllocatedNum;
 use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
-use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
+use sapling_crypto::poseidon::{PoseidonEngine, PoseidonHashParams, QuinticSBox};
 
 use bignat::BigNat;
-use group::{CircuitRsaGroup, CircuitRsaGroupParams, Gadget, RsaGroup};
+use group::{
+    CircuitRsaGroup, CircuitRsaGroupParams, CircuitSemiGroup, Gadget, RsaGroup, SemiGroup,
+};
 use hash::{hash_to_prime, hash_to_rsa_element, helper, HashDomain};
 use rsa_set::{CircuitExpSet, ExpSet, NaiveExpSet};
+use std::marker::PhantomData;
 use OptionExt;
+
+pub struct Set<
+    'a,
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    G: SemiGroup,
+    HParams: 'a,
+    Inner: ExpSet<BigUint, G = G>,
+> {
+    pub inner: Inner,
+    pub hash_params: &'a HParams,
+    pub hash_domain: HashDomain,
+    // TODO revisit upon the resolution of https://github.com/rust-lang/rust/issues/64155
+    pub _phant: PhantomData<E>,
+}
+
+impl<
+        'a,
+        E: PoseidonEngine<SBox = QuinticSBox<E>>,
+        G: SemiGroup + Clone,
+        HParams: 'a,
+        Inner: ExpSet<BigUint, G = G> + Clone,
+    > std::clone::Clone for Set<'a, E, G, HParams, Inner>
+{
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            hash_domain: self.hash_domain.clone(),
+            hash_params: self.hash_params,
+            _phant: self._phant,
+        }
+    }
+}
+
+impl<'a, HParams, E, G, Inner> ExpSet<Vec<E::Fr>> for Set<'a, E, G, HParams, Inner>
+where
+    HParams: PoseidonHashParams<E> + 'a,
+    E: PoseidonEngine<SBox = QuinticSBox<E>, Params = HParams>,
+    G: SemiGroup,
+    Inner: ExpSet<BigUint, G = G>,
+{
+    type G = G;
+
+    /// Add `n` to the set, returning whether `n` is new to the set.
+    fn insert(&mut self, n: Vec<E::Fr>) -> bool {
+        self.inner.insert(
+            helper::hash_to_prime::<E>(&n, &self.hash_domain, &self.hash_params)
+                .expect("Hash to prime failed")
+                .0,
+        )
+    }
+    /// Remove `n` from the set, returning whether `n` was present.
+    fn remove(&mut self, n: &Vec<E::Fr>) -> bool {
+        self.inner.remove(
+            &helper::hash_to_prime::<E>(&n, &self.hash_domain, &self.hash_params)
+                .expect("Hash to prime failed")
+                .0,
+        )
+    }
+    /// The digest of the current elements (`g` to the product of the elements).
+    fn digest(&self) -> <Self::G as SemiGroup>::Elem {
+        self.inner.digest()
+    }
+
+    /// Gets the underlying RSA group
+    fn group(&self) -> &Self::G {
+        self.inner.group()
+    }
+}
+
+pub struct CircuitSet<'a, E, CG, HParams, Inner>
+where
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    CG: CircuitSemiGroup,
+    HParams: 'a,
+    Inner: ExpSet<BigUint, G = <CG as CircuitSemiGroup>::Group>,
+{
+    pub value: Option<Set<'a, E, <CG as CircuitSemiGroup>::Group, HParams, Inner>>,
+    pub group: CG,
+    pub digest: CG::Elem,
+    pub hash_params: &'a HParams,
+}
+
+impl<'a, E, CG, HParams, Inner> std::clone::Clone for CircuitSet<'a, E, CG, HParams, Inner>
+where
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    CG: CircuitSemiGroup,
+    HParams: 'a,
+    Inner: ExpSet<BigUint, G = <CG as CircuitSemiGroup>::Group>,
+{
+    fn clone(&self) -> Self {
+        Self {
+            value: self.value.clone(),
+            group: self.group.clone(),
+            digest: self.digest.clone(),
+            hash_params: self.hash_params,
+        }
+    }
+}
+
+impl<'a, E, CG, HParams, Inner> std::cmp::PartialEq for CircuitSet<'a, E, CG, HParams, Inner>
+where
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    CG: CircuitSemiGroup,
+    HParams: 'a,
+    Inner: ExpSet<BigUint, G = <CG as CircuitSemiGroup>::Group>,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.digest == other.digest
+    }
+}
+
+impl<'a, E, CG, HParams, Inner> Gadget for CircuitSet<'a, E, CG, HParams, Inner>
+where
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    CG: CircuitSemiGroup<E = E>,
+    CG::Elem: Gadget<E = E, Value = <CG::Group as SemiGroup>::Elem, Access = ()>,
+    HParams: 'a,
+    Inner: ExpSet<BigUint, G = <CG as CircuitSemiGroup>::Group>,
+{
+    type E = E;
+    type Value = Set<'a, E, <CG as CircuitSemiGroup>::Group, HParams, Inner>;
+    type Access = CG;
+    type Params = &'a HParams;
+    fn alloc<CS: ConstraintSystem<Self::E>>(
+        mut cs: CS,
+        value: Option<&Self::Value>,
+        access: Self::Access,
+        params: &Self::Params,
+    ) -> Result<Self, SynthesisError> {
+        let digest: CG::Elem = <CG::Elem as Gadget>::alloc(
+            cs.namespace(|| "digest"),
+            value.map(|s| s.inner.digest()).as_ref(),
+            (),
+            &CG::elem_params(access.params()),
+        )?;
+        let group = access;
+        Ok(Self {
+            value: value.cloned(),
+            digest,
+            group,
+            hash_params: params,
+        })
+    }
+    fn wires(&self) -> Vec<LinearCombination<Self::E>> {
+        unimplemented!()
+    }
+    fn wire_values(&self) -> Option<Vec<<Self::E as ScalarEngine>::Fr>> {
+        unimplemented!()
+    }
+    fn value(&self) -> Option<&Self::Value> {
+        unimplemented!()
+    }
+    fn access(&self) -> &Self::Access {
+        unimplemented!()
+    }
+    fn params(&self) -> &Self::Params {
+        unimplemented!()
+    }
+}
 
 pub struct SetBenchInputs<E: Engine, S: ExpSet<BigUint>> {
     /// The initial state of the set
@@ -144,7 +306,10 @@ pub struct SetBench<E: PoseidonEngine<SBox = QuinticSBox<E>>, S: ExpSet<BigUint>
 impl<E: PoseidonEngine<SBox = QuinticSBox<E>>> Circuit<E> for SetBench<E, NaiveExpSet<RsaGroup>> {
     fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
         println!("Constructing Group");
-        let raw_group = self.inputs.as_ref().map(|s| s.initial_state.group().clone());
+        let raw_group = self
+            .inputs
+            .as_ref()
+            .map(|s| s.initial_state.group().clone());
         let group = CircuitRsaGroup::alloc(
             cs.namespace(|| "group"),
             raw_group.as_ref(),
@@ -156,7 +321,7 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>> Circuit<E> for SetBench<E, NaiveE
         )?;
         group.inputize(cs.namespace(|| "group input"))?;
         println!("Constructing Set");
-        let set: CircuitExpSet<E, RsaGroup, CircuitRsaGroup<E>> = CircuitExpSet::alloc(
+        let set: CircuitExpSet<E, CircuitRsaGroup<E>> = CircuitExpSet::alloc(
             cs.namespace(|| "set init"),
             self.inputs.as_ref().map(|is| &is.initial_state),
             group,
@@ -264,7 +429,6 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>> Circuit<E> for SetBench<E, NaiveE
         let expanded_set =
             reduced_set.insert(cs.namespace(|| "insert"), &challenge, &insertions)?;
 
-
         let expected_digest = BigNat::alloc_from_nat(
             cs.namespace(|| "expected_digest"),
             || Ok(self.inputs.as_ref().grab()?.final_digest.clone()),
@@ -296,34 +460,34 @@ mod test {
     circuit_tests! {
         small_rsa_1_swap: (SetBench {
             inputs: Some(SetBenchInputs::new(
-                [].to_vec(),
-                [
-                    ["0", "1", "2", "3", "4"].iter().map(|s| s.to_string()).collect(),
-                ].to_vec(),
-                [
-                    ["0", "1", "2", "3", "5"].iter().map(|s| s.to_string()).collect(),
-                ].to_vec(),
-                &Bn256PoseidonParams::new::<sapling_crypto::group_hash::Keccak256Hasher>(),
-                128,
-                RsaGroup {
-                    g: BigUint::from(2usize),
-                    m: BigUint::from_str(RSA_512).unwrap(),
-                },
-            )),
-            params: SetBenchParams {
-                group: RsaGroup {
-                    g: BigUint::from(2usize),
-                    m: BigUint::from_str(RSA_512).unwrap(),
-                },
-                limb_width: 32,
-                n_bits_elem: 128,
-                n_bits_challenge: 128,
-                n_bits_base: 512,
-                item_size: 5,
-                n_inserts: 1,
-                n_removes: 1,
-                hash: Bn256PoseidonParams::new::<sapling_crypto::group_hash::Keccak256Hasher>(),
-            },
+                            [].to_vec(),
+                            [
+                            ["0", "1", "2", "3", "4"].iter().map(|s| s.to_string()).collect(),
+                            ].to_vec(),
+                            [
+                            ["0", "1", "2", "3", "5"].iter().map(|s| s.to_string()).collect(),
+                            ].to_vec(),
+                            &Bn256PoseidonParams::new::<sapling_crypto::group_hash::Keccak256Hasher>(),
+                            128,
+                            RsaGroup {
+                                g: BigUint::from(2usize),
+                                m: BigUint::from_str(RSA_512).unwrap(),
+                            },
+                    )),
+                    params: SetBenchParams {
+                        group: RsaGroup {
+                            g: BigUint::from(2usize),
+                            m: BigUint::from_str(RSA_512).unwrap(),
+                        },
+                        limb_width: 32,
+                        n_bits_elem: 128,
+                        n_bits_challenge: 128,
+                        n_bits_base: 512,
+                        item_size: 5,
+                        n_inserts: 1,
+                        n_removes: 1,
+                        hash: Bn256PoseidonParams::new::<sapling_crypto::group_hash::Keccak256Hasher>(),
+                    },
         }, true),
         //small_rsa_5_swaps: (SetBench {
         //    inputs: Some(SetBenchInputs::new(

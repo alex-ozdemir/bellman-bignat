@@ -49,7 +49,7 @@ pub fn base_to_product_naive<'a, G: SemiGroup, I: Iterator<Item = &'a BigUint>>(
 }
 
 /// \exists q s.t. q^l \times base^r = result
-pub fn proof_of_exp<E: Engine, G: CircuitSemiGroup<E>, CS: ConstraintSystem<E>>(
+pub fn proof_of_exp<E: Engine, G: CircuitSemiGroup<E=E>, CS: ConstraintSystem<E>>(
     mut cs: CS,
     group: &G,
     base: &G::Elem,
@@ -58,7 +58,7 @@ pub fn proof_of_exp<E: Engine, G: CircuitSemiGroup<E>, CS: ConstraintSystem<E>>(
     result: &G::Elem,
 ) -> Result<(), SynthesisError>
 where
-    G::Elem: Gadget<E, Value = <G::Group as SemiGroup>::Elem>,
+    G::Elem: Gadget<Value = <G::Group as SemiGroup>::Elem>,
 {
     let q_value: Option<<G::Group as SemiGroup>::Elem> = {
         group.group().and_then(|g| {
@@ -84,11 +84,11 @@ where
         }
         Ok(prod)
     };
-    let q = <G::Elem as Gadget<E>>::alloc(
+    let q = <G::Elem as Gadget>::alloc(
         cs.namespace(|| "Q"),
         q_value.as_ref(),
         base.access().clone(),
-        <G::Elem as Gadget<E>>::params(base),
+        <G::Elem as Gadget>::params(base),
     )?;
     let r = BigNat::alloc_from_nat(
         cs.namespace(|| "r"),
@@ -99,7 +99,7 @@ where
     let ql = group.power(cs.namespace(|| "Q^l"), &q, &challenge)?;
     let br = group.power(cs.namespace(|| "b^r"), &base, &r)?;
     let left = group.op(cs.namespace(|| "Q^l b^r"), &ql, &br)?;
-    <G::Elem as Gadget<E>>::assert_equal(cs.namespace(|| "Q^l b^r == res"), &left, &result)
+    <G::Elem as Gadget>::assert_equal(cs.namespace(|| "Q^l b^r == res"), &left, &result)
 }
 
 #[cfg(test)]
@@ -296,7 +296,7 @@ mod tests {
                 m: BigUint::from_str(is.m).unwrap(),
                 g: BigUint::from(2usize),
             });
-            let g = <CircuitRsaGroup<E> as Gadget<E>>::alloc(
+            let g = <CircuitRsaGroup<E> as Gadget>::alloc(
                 cs.namespace(|| "g"),
                 group.as_ref(),
                 (),

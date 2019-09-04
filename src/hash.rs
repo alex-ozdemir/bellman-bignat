@@ -13,6 +13,7 @@ use OptionExt;
 const MILLER_RABIN_ROUNDS: usize = 2;
 
 /// A representation of the hash of
+#[derive(Clone)]
 pub struct HashDomain {
     pub n_bits: usize,
     pub n_trailing_ones: usize,

@@ -1,53 +1,51 @@
 use num_bigint::BigUint;
 use num_traits::One;
+use sapling_crypto::bellman::pairing::ff::ScalarEngine;
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
 
+use std::cmp::Eq;
 use std::fmt::Debug;
 
 use bignat::{BigNat, BigNatParams};
 use bit::{Bit, Bitvector};
 use OptionExt;
 
-pub trait Gadget<E: Engine>: Sized + Clone {
+pub trait Gadget: Sized + Clone {
+    type E: Engine;
     type Value: Clone;
     type Access: Clone + Eq;
-    type Params: Clone + Eq + Debug;
-    fn alloc<CS: ConstraintSystem<E>>(
+    type Params: Clone;
+    fn alloc<CS: ConstraintSystem<Self::E>>(
         cs: CS,
         value: Option<&Self::Value>,
         access: Self::Access,
         params: &Self::Params,
     ) -> Result<Self, SynthesisError>;
-    fn wires(&self) -> Vec<LinearCombination<E>>;
-    fn wire_values(&self) -> Option<Vec<E::Fr>>;
+    fn wires(&self) -> Vec<LinearCombination<Self::E>>;
+    fn wire_values(&self) -> Option<Vec<<Self::E as ScalarEngine>::Fr>>;
     fn value(&self) -> Option<&Self::Value>;
     fn access(&self) -> &Self::Access;
     fn params(&self) -> &Self::Params;
-    fn inputize<CS: ConstraintSystem<E>>(&self, mut cs: CS) -> Result<(), SynthesisError> {
+    fn inputize<CS: ConstraintSystem<Self::E>>(&self, mut cs: CS) -> Result<(), SynthesisError> {
         let values = self.wire_values();
         for (i, w) in self.wires().into_iter().enumerate() {
             let mut cs = cs.namespace(|| format!("{}", i));
             let in_ = cs.alloc_input(|| "in", || Ok(values.as_ref().grab()?[i].clone()))?;
-            cs.enforce(
-                || "eq",
-                |lc| lc,
-                |lc| lc,
-                |lc| lc + in_ - &w,
-            );
+            cs.enforce(|| "eq", |lc| lc, |lc| lc, |lc| lc + in_ - &w);
         }
         Ok(())
     }
-    fn mux<CS: ConstraintSystem<E>>(
+    fn mux<CS: ConstraintSystem<Self::E>>(
         mut cs: CS,
-        s: &Bit<E>,
+        s: &Bit<Self::E>,
         i0: &Self,
         i1: &Self,
     ) -> Result<Self, SynthesisError> {
         let i0_wires = i0.wires();
         let i1_wires = i1.wires();
-        if i0_wires.len() != i1_wires.len() || i0.params() != i1.params() {
-            eprintln!("mux error: Params differ!");
+        if i0_wires.len() != i1_wires.len() {
+            eprintln!("mux error: wires differ!");
             return Err(SynthesisError::Unsatisfiable);
         }
         let value: Option<&Self::Value> = s
@@ -84,14 +82,14 @@ pub trait Gadget<E: Engine>: Sized + Clone {
         Ok(out)
     }
 
-    fn assert_equal<CS: ConstraintSystem<E>>(
+    fn assert_equal<CS: ConstraintSystem<Self::E>>(
         mut cs: CS,
         i0: &Self,
         i1: &Self,
     ) -> Result<(), SynthesisError> {
         let i0_wires = i0.wires();
         let i1_wires = i1.wires();
-        if i0_wires.len() != i1_wires.len() || i0.params() != i1.params() {
+        if i0_wires.len() != i1_wires.len() {
             return Err(SynthesisError::Unsatisfiable);
         }
         for (i, (i0w, i1w)) in i0_wires.into_iter().zip(i1_wires).enumerate() {
@@ -101,52 +99,8 @@ pub trait Gadget<E: Engine>: Sized + Clone {
     }
 }
 
-pub trait CircuitSemiGroup<E: Engine>: Gadget<E> {
-    type Elem: Clone + Gadget<E>;
-    type Group: SemiGroup;
-    fn op<CS: ConstraintSystem<E>>(
-        &self,
-        cs: CS,
-        a: &Self::Elem,
-        b: &Self::Elem,
-    ) -> Result<Self::Elem, SynthesisError>;
-    fn generator(&self) -> Self::Elem;
-    fn identity(&self) -> Self::Elem;
-    fn group(&self) -> Option<&Self::Group>;
-    fn elem_params(p: &<Self as Gadget<E>>::Params) -> <Self::Elem as Gadget<E>>::Params;
-    fn power_bin_rev<CS: ConstraintSystem<E>>(
-        &self,
-        mut cs: CS,
-        base: &Self::Elem,
-        mut exp: Bitvector<E>,
-    ) -> Result<Self::Elem, SynthesisError> {
-        if exp.bits.len() == 0 {
-            Ok(self.identity())
-        } else {
-            let square = self.op(cs.namespace(|| "square"), &base, &base)?;
-            let select_bit = Bit {
-                // Unwrap is safe b/c of `n_bits` check
-                value: exp.values.as_mut().map(|vs| vs.pop().unwrap()),
-                bit: exp.bits.pop().unwrap(),
-            };
-            let rec = self.power_bin_rev(cs.namespace(|| "rec"), &square, exp)?;
-            let prod = self.op(cs.namespace(|| "prod"), &rec, &base)?;
-            <Self::Elem as Gadget<E>>::mux(cs.namespace(|| "mux"), &select_bit, &rec, &prod)
-        }
-    }
-    fn power<CS: ConstraintSystem<E>>(
-        &self,
-        mut cs: CS,
-        b: &Self::Elem,
-        e: &BigNat<E>,
-    ) -> Result<Self::Elem, SynthesisError> {
-        let exp_bin_rev = e.decompose(cs.namespace(|| "exp decomp"))?.reversed();
-        self.power_bin_rev(cs.namespace(|| "binary exp"), &b, exp_bin_rev)
-    }
-}
-
-pub trait SemiGroup: Clone {
-    type Elem: Clone + Debug;
+pub trait SemiGroup: Clone + Eq + Debug {
+    type Elem: Clone + Debug + Ord;
     fn op(&self, a: &Self::Elem, b: &Self::Elem) -> Self::Elem;
     fn identity(&self) -> Self::Elem;
     fn generator(&self) -> Self::Elem;
@@ -191,6 +145,50 @@ impl SemiGroup for RsaGroup {
     }
 }
 
+pub trait CircuitSemiGroup: Gadget + Eq {
+    type Elem: Clone + Gadget<E = Self::E> + Eq;
+    type Group: SemiGroup;
+    fn op<CS: ConstraintSystem<Self::E>>(
+        &self,
+        cs: CS,
+        a: &Self::Elem,
+        b: &Self::Elem,
+    ) -> Result<Self::Elem, SynthesisError>;
+    fn generator(&self) -> Self::Elem;
+    fn identity(&self) -> Self::Elem;
+    fn group(&self) -> Option<&Self::Group>;
+    fn elem_params(p: &<Self as Gadget>::Params) -> <Self::Elem as Gadget>::Params;
+    fn power_bin_rev<CS: ConstraintSystem<Self::E>>(
+        &self,
+        mut cs: CS,
+        base: &Self::Elem,
+        mut exp: Bitvector<Self::E>,
+    ) -> Result<Self::Elem, SynthesisError> {
+        if exp.bits.len() == 0 {
+            Ok(self.identity())
+        } else {
+            let square = self.op(cs.namespace(|| "square"), &base, &base)?;
+            let select_bit = Bit {
+                // Unwrap is safe b/c of `n_bits` check
+                value: exp.values.as_mut().map(|vs| vs.pop().unwrap()),
+                bit: exp.bits.pop().unwrap(),
+            };
+            let rec = self.power_bin_rev(cs.namespace(|| "rec"), &square, exp)?;
+            let prod = self.op(cs.namespace(|| "prod"), &rec, &base)?;
+            <Self::Elem as Gadget>::mux(cs.namespace(|| "mux"), &select_bit, &rec, &prod)
+        }
+    }
+    fn power<CS: ConstraintSystem<Self::E>>(
+        &self,
+        mut cs: CS,
+        b: &Self::Elem,
+        e: &BigNat<Self::E>,
+    ) -> Result<Self::Elem, SynthesisError> {
+        let exp_bin_rev = e.decompose(cs.namespace(|| "exp decomp"))?.reversed();
+        self.power_bin_rev(cs.namespace(|| "binary exp"), &b, exp_bin_rev)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CircuitRsaGroupParams {
     pub limb_width: usize,
@@ -217,7 +215,8 @@ impl<E: Engine> std::cmp::PartialEq for CircuitRsaGroup<E> {
 }
 impl<E: Engine> std::cmp::Eq for CircuitRsaGroup<E> {}
 
-impl<E: Engine> Gadget<E> for CircuitRsaGroup<E> {
+impl<E: Engine> Gadget for CircuitRsaGroup<E> {
+    type E = E;
     type Value = RsaGroup;
     type Params = CircuitRsaGroupParams;
     type Access = ();
@@ -228,20 +227,20 @@ impl<E: Engine> Gadget<E> for CircuitRsaGroup<E> {
         params: &Self::Params,
     ) -> Result<Self, SynthesisError> {
         let value = value.cloned();
-        let g = <BigNat<E> as Gadget<E>>::alloc(
+        let g = <BigNat<E> as Gadget>::alloc(
             cs.namespace(|| "g"),
             value.as_ref().map(|v| &v.g),
             (),
             &BigNatParams::new(params.limb_width, params.n_limbs),
         )?;
-        let m = <BigNat<E> as Gadget<E>>::alloc(
+        let m = <BigNat<E> as Gadget>::alloc(
             cs.namespace(|| "m"),
             value.as_ref().map(|v| &v.m),
             (),
             &BigNatParams::new(params.limb_width, params.n_limbs),
         )?;
         let one = BigUint::one();
-        let id = <BigNat<E> as Gadget<E>>::alloc(
+        let id = <BigNat<E> as Gadget>::alloc(
             cs.namespace(|| "id"),
             value.as_ref().map(|_| &one),
             (),
@@ -262,7 +261,8 @@ impl<E: Engine> Gadget<E> for CircuitRsaGroup<E> {
     }
     fn wire_values(&self) -> Option<Vec<E::Fr>> {
         let mut vs = self.g.wire_values();
-        vs.as_mut().map(|vs| self.m.wire_values().map(|vs2| vs.extend(vs2)));
+        vs.as_mut()
+            .map(|vs| self.m.wire_values().map(|vs2| vs.extend(vs2)));
         vs
     }
     fn value(&self) -> Option<&Self::Value> {
@@ -276,7 +276,7 @@ impl<E: Engine> Gadget<E> for CircuitRsaGroup<E> {
     }
 }
 
-impl<E: Engine> CircuitSemiGroup<E> for CircuitRsaGroup<E> {
+impl<E: Engine> CircuitSemiGroup for CircuitRsaGroup<E> {
     type Elem = BigNat<E>;
     type Group = RsaGroup;
     fn op<CS: ConstraintSystem<E>>(
@@ -287,7 +287,7 @@ impl<E: Engine> CircuitSemiGroup<E> for CircuitRsaGroup<E> {
     ) -> Result<Self::Elem, SynthesisError> {
         a.mult_mod(cs, b, &self.m).map(|(_, r)| r)
     }
-    fn elem_params(p: &<Self as Gadget<E>>::Params) -> <Self::Elem as Gadget<E>>::Params {
+    fn elem_params(p: &<Self as Gadget>::Params) -> <Self::Elem as Gadget>::Params {
         BigNatParams::new(p.limb_width, p.n_limbs)
     }
     fn group(&self) -> Option<&Self::Group> {
