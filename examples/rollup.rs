@@ -8,7 +8,7 @@ use bellman_bignat::group::RsaGroup;
 use bellman_bignat::hash::helper::hash_to_prime;
 use bellman_bignat::hash::HashDomain;
 use bellman_bignat::rsa_set::{ExpSet, NaiveExpSet};
-use bellman_bignat::set::{Set, SetInputs, SetParams};
+use bellman_bignat::set::{SetBench, SetBenchInputs, SetBenchParams};
 use num_bigint::BigUint;
 use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
 
@@ -45,9 +45,9 @@ fn main() {
 
     let params = {
         let hash = Bn256PoseidonParams::new::<sapling_crypto::group_hash::Keccak256Hasher>();
-        let c = Set::<_, NaiveExpSet<RsaGroup>> {
+        let c = SetBench::<_, NaiveExpSet<RsaGroup>> {
             inputs: None,
-            params: SetParams {
+            params: SetBenchParams {
                 group: group.clone(),
                 limb_width: 32,
                 n_bits_elem: RSA_SIZE,
@@ -76,8 +76,8 @@ fn main() {
     let hash_params = Bn256PoseidonParams::new::<sapling_crypto::group_hash::Keccak256Hasher>();
 
     // Create a groth16 proof with our parameters.
-    let circuit = Set {
-        inputs: Some(SetInputs::from_counts(
+    let circuit = SetBench {
+        inputs: Some(SetBenchInputs::from_counts(
             0,
             n_swaps,
             n_swaps,
@@ -89,7 +89,7 @@ fn main() {
                 m: BigUint::from_str(RSA_2048).unwrap(),
             },
         )),
-        params: SetParams {
+        params: SetBenchParams {
             group: group.clone(),
             limb_width: 32,
             n_bits_elem: RSA_SIZE,

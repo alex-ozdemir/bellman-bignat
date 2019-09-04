@@ -8,15 +8,15 @@ use bignat::BigNat;
 use group::{CircuitSemiGroup, Gadget, SemiGroup};
 use wesolowski::proof_of_exp;
 
-pub trait ExpSet: Sized {
+pub trait ExpSet<T>: Sized {
     type G: SemiGroup;
 
     /// Create a new `RsaSet` which computes product mod `modulus`.
     fn new(group: Self::G) -> Self;
     /// Add `n` to the set, returning whether `n` is new to the set.
-    fn insert(&mut self, n: BigUint) -> bool;
+    fn insert(&mut self, n: T) -> bool;
     /// Remove `n` from the set, returning whether `n` was present.
-    fn remove(&mut self, n: &BigUint) -> bool;
+    fn remove(&mut self, n: &T) -> bool;
     /// The digest of the current elements (`g` to the product of the elements).
     fn digest(&self) -> <Self::G as SemiGroup>::Elem;
 
@@ -24,23 +24,24 @@ pub trait ExpSet: Sized {
     fn group(&self) -> &Self::G;
 
     /// Add all of the `ns` to the set.
-    fn insert_all<I: IntoIterator<Item = BigUint>>(&mut self, ns: I) {
+    fn insert_all<I: IntoIterator<Item = T>>(&mut self, ns: I) {
         for n in ns {
             self.insert(n);
         }
     }
 
     /// Remove all of the `ns` from the set.
-    fn remove_all<'a, I: IntoIterator<Item = &'a BigUint>>(&mut self, ns: I)
+    fn remove_all<'a, I: IntoIterator<Item = &'a T>>(&mut self, ns: I)
     where
         <Self::G as SemiGroup>::Elem: 'a,
+        T: 'a,
     {
         for n in ns {
             self.remove(n);
         }
     }
 
-    fn new_with<I: IntoIterator<Item = BigUint>>(group: Self::G, items: I) -> Self {
+    fn new_with<I: IntoIterator<Item = T>>(group: Self::G, items: I) -> Self {
         let mut this = Self::new(group);
         this.insert_all(items);
         this
@@ -67,7 +68,7 @@ where
 //    }
 //}
 
-impl<G: SemiGroup> ExpSet for NaiveExpSet<G>
+impl<G: SemiGroup> ExpSet<BigUint> for NaiveExpSet<G>
 where
     G::Elem: Ord,
 {

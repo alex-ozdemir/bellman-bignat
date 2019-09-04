@@ -13,7 +13,7 @@ use hash::{hash_to_prime, hash_to_rsa_element, helper, HashDomain};
 use rsa_set::{CircuitExpSet, ExpSet, NaiveExpSet};
 use OptionExt;
 
-pub struct SetInputs<E: Engine, S: ExpSet> {
+pub struct SetBenchInputs<E: Engine, S: ExpSet<BigUint>> {
     /// The initial state of the set
     pub initial_state: S,
     pub final_digest: BigUint,
@@ -23,7 +23,7 @@ pub struct SetInputs<E: Engine, S: ExpSet> {
     pub to_insert: Vec<Vec<E::Fr>>,
 }
 
-impl SetInputs<Bn256, NaiveExpSet<RsaGroup>> {
+impl SetBenchInputs<Bn256, NaiveExpSet<RsaGroup>> {
     pub fn from_counts(
         n_untouched: usize,
         n_removed: usize,
@@ -114,7 +114,7 @@ impl SetInputs<Bn256, NaiveExpSet<RsaGroup>> {
             .chain(inserted_hashes)
             .fold(group.g.clone(), |g, i| g.modpow(&i, &group.m));
         let set = NaiveExpSet::new_with(group, untouched_hashes.chain(removed_hashes));
-        SetInputs {
+        SetBenchInputs {
             initial_state: set,
             final_digest,
             to_remove: removed,
@@ -124,7 +124,7 @@ impl SetInputs<Bn256, NaiveExpSet<RsaGroup>> {
 }
 
 #[derive(Clone)]
-pub struct SetParams<E: PoseidonEngine> {
+pub struct SetBenchParams<E: PoseidonEngine> {
     pub group: RsaGroup,
     pub limb_width: usize,
     pub n_bits_base: usize,
@@ -136,12 +136,12 @@ pub struct SetParams<E: PoseidonEngine> {
     pub hash: E::Params,
 }
 
-pub struct Set<E: PoseidonEngine<SBox = QuinticSBox<E>>, S: ExpSet> {
-    pub inputs: Option<SetInputs<E, S>>,
-    pub params: SetParams<E>,
+pub struct SetBench<E: PoseidonEngine<SBox = QuinticSBox<E>>, S: ExpSet<BigUint>> {
+    pub inputs: Option<SetBenchInputs<E, S>>,
+    pub params: SetBenchParams<E>,
 }
 
-impl<E: PoseidonEngine<SBox = QuinticSBox<E>>> Circuit<E> for Set<E, NaiveExpSet<RsaGroup>> {
+impl<E: PoseidonEngine<SBox = QuinticSBox<E>>> Circuit<E> for SetBench<E, NaiveExpSet<RsaGroup>> {
     fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
         println!("Constructing Group");
         let raw_group = self.inputs.as_ref().map(|s| s.initial_state.group().clone());
@@ -294,8 +294,8 @@ mod test {
     use test_helpers::*;
 
     circuit_tests! {
-        small_rsa_1_swap: (Set {
-            inputs: Some(SetInputs::new(
+        small_rsa_1_swap: (SetBench {
+            inputs: Some(SetBenchInputs::new(
                 [].to_vec(),
                 [
                     ["0", "1", "2", "3", "4"].iter().map(|s| s.to_string()).collect(),
@@ -310,7 +310,7 @@ mod test {
                     m: BigUint::from_str(RSA_512).unwrap(),
                 },
             )),
-            params: SetParams {
+            params: SetBenchParams {
                 group: RsaGroup {
                     g: BigUint::from(2usize),
                     m: BigUint::from_str(RSA_512).unwrap(),
@@ -325,8 +325,8 @@ mod test {
                 hash: Bn256PoseidonParams::new::<sapling_crypto::group_hash::Keccak256Hasher>(),
             },
         }, true),
-        //small_rsa_5_swaps: (Set {
-        //    inputs: Some(SetInputs::new(
+        //small_rsa_5_swaps: (SetBench {
+        //    inputs: Some(SetBenchInputs::new(
         //        [].to_vec(),
         //        [
         //            ["0", "1", "2", "3", "4"].iter().map(|s| s.to_string()).collect(),
@@ -349,7 +349,7 @@ mod test {
         //            m: BigUint::from_str(RSA_512).unwrap(),
         //        },
         //    )),
-        //    params: SetParams {
+        //    params: SetBenchParams {
         //        group: RsaGroup {
         //            g: BigUint::from(2usize),
         //            m: BigUint::from_str(RSA_512).unwrap(),
@@ -364,8 +364,8 @@ mod test {
         //        hash: Bn256PoseidonParams::new::<sapling_crypto::group_hash::Keccak256Hasher>(),
         //    },
         //}, true),
-        //full_rsa_30_swaps: (Set {
-        //    inputs: Some(SetInputs::from_counts(
+        //full_rsa_30_swaps: (SetBench {
+        //    inputs: Some(SetBenchInputs::from_counts(
         //        0,
         //        30,
         //        30,
@@ -377,7 +377,7 @@ mod test {
         //            m: BigUint::from_str(RSA_2048).unwrap(),
         //        },
         //    )),
-        //    params: SetParams {
+        //    params: SetBenchParams {
         //        group: RsaGroup {
         //            g: BigUint::from(2usize),
         //            m: BigUint::from_str(RSA_2048).unwrap(),
