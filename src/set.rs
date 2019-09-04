@@ -144,10 +144,10 @@ pub struct Set<E: PoseidonEngine<SBox = QuinticSBox<E>>, S: ExpSet> {
 impl<E: PoseidonEngine<SBox = QuinticSBox<E>>> Circuit<E> for Set<E, NaiveExpSet<RsaGroup>> {
     fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
         println!("Constructing Group");
-        let raw_group = self.inputs.grab()?.initial_state.group().clone();
+        let raw_group = self.inputs.as_ref().map(|s| s.initial_state.group().clone());
         let group = CircuitRsaGroup::alloc(
             cs.namespace(|| "group"),
-            Some(&raw_group),
+            raw_group.as_ref(),
             (),
             &CircuitRsaGroupParams {
                 limb_width: self.params.limb_width,
