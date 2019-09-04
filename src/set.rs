@@ -154,6 +154,7 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>> Circuit<E> for Set<E, NaiveExpSet
                 n_limbs: self.params.n_bits_base / self.params.limb_width,
             },
         )?;
+        group.inputize(cs.namespace(|| "group input"))?;
         println!("Constructing Set");
         let set: CircuitExpSet<E, RsaGroup, CircuitRsaGroup<E>> = CircuitExpSet::alloc(
             cs.namespace(|| "set init"),
@@ -161,6 +162,7 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>> Circuit<E> for Set<E, NaiveExpSet
             group,
             &(),
         )?;
+        set.inputize(cs.namespace(|| "initial_state input"))?;
         let hash_domain = HashDomain {
             n_bits: self.params.n_bits_elem,
             n_trailing_ones: 1,
@@ -274,6 +276,7 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>> Circuit<E> for Set<E, NaiveExpSet
         expanded_set
             .digest
             .equal(cs.namespace(|| "check"), &expected_digest)?;
+        expanded_set.inputize(cs.namespace(|| "final_state input"))?;
         Ok(())
     }
 }
