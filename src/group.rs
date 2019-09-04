@@ -7,6 +7,7 @@ use std::fmt::Debug;
 
 use bignat::{BigNat, BigNatParams};
 use bit::{Bit, Bitvector};
+use OptionExt;
 
 pub trait Gadget<E: Engine>: Sized + Clone {
     type Value: Clone;
@@ -19,9 +20,24 @@ pub trait Gadget<E: Engine>: Sized + Clone {
         params: &Self::Params,
     ) -> Result<Self, SynthesisError>;
     fn wires(&self) -> Vec<LinearCombination<E>>;
+    fn wire_values(&self) -> Option<Vec<E::Fr>>;
     fn value(&self) -> Option<&Self::Value>;
     fn access(&self) -> &Self::Access;
     fn params(&self) -> &Self::Params;
+    fn inputize<CS: ConstraintSystem<E>>(&self, mut cs: CS) -> Result<(), SynthesisError> {
+        let values = self.wire_values();
+        for (i, w) in self.wires().into_iter().enumerate() {
+            let mut cs = cs.namespace(|| format!("{}", i));
+            let in_ = cs.alloc_input(|| "in", || Ok(values.as_ref().grab()?[i].clone()))?;
+            cs.enforce(
+                || "eq",
+                |lc| lc,
+                |lc| lc,
+                |lc| lc + in_ - &w,
+            );
+        }
+        Ok(())
+    }
     fn mux<CS: ConstraintSystem<E>>(
         mut cs: CS,
         s: &Bit<E>,
@@ -243,6 +259,11 @@ impl<E: Engine> Gadget<E> for CircuitRsaGroup<E> {
         let mut wires = self.g.wires();
         wires.extend(self.m.wires());
         wires
+    }
+    fn wire_values(&self) -> Option<Vec<E::Fr>> {
+        let mut vs = self.g.wire_values();
+        vs.as_mut().map(|vs| self.m.wire_values().map(|vs2| vs.extend(vs2)));
+        vs
     }
     fn value(&self) -> Option<&Self::Value> {
         self.value.as_ref()

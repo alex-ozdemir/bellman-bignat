@@ -148,6 +148,9 @@ where
     fn wires(&self) -> Vec<LinearCombination<E>> {
         self.digest.wires()
     }
+    fn wire_values(&self) -> Option<Vec<E::Fr>> {
+        self.digest.wire_values()
+    }
     fn value(&self) -> Option<&Self::Value> {
         self.value.as_ref()
     }

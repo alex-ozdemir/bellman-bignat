@@ -702,6 +702,9 @@ impl<E: Engine> Gadget<E> for BigNat<E> {
     fn value(&self) -> Option<&BigUint> {
         self.value.as_ref()
     }
+    fn wire_values(&self) -> Option<Vec<E::Fr>> {
+        self.limb_values.clone()
+    }
     fn params(&self) -> &BigNatParams {
         &self.params
     }
