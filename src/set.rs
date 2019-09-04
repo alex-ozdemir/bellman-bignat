@@ -151,7 +151,7 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>> Circuit<E> for Set<E, NaiveExpSet
             (),
             &CircuitRsaGroupParams {
                 limb_width: self.params.limb_width,
-                n_limbs: self.params.n_bits_base,
+                n_limbs: self.params.n_bits_base / self.params.limb_width,
             },
         )?;
         println!("Constructing Set");
@@ -261,6 +261,8 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>> Circuit<E> for Set<E, NaiveExpSet
         println!("Inserting elements");
         let expanded_set =
             reduced_set.insert(cs.namespace(|| "insert"), &challenge, &insertions)?;
+
+
         let expected_digest = BigNat::alloc_from_nat(
             cs.namespace(|| "expected_digest"),
             || Ok(self.inputs.as_ref().grab()?.final_digest.clone()),
@@ -298,7 +300,7 @@ mod test {
                 [
                     ["0", "1", "2", "3", "5"].iter().map(|s| s.to_string()).collect(),
                 ].to_vec(),
-                &Bn256PoseidonParams::new::<sapling_crypto::group_hash::BlakeHasher>(),
+                &Bn256PoseidonParams::new::<sapling_crypto::group_hash::Keccak256Hasher>(),
                 128,
                 RsaGroup {
                     g: BigUint::from(2usize),
@@ -317,7 +319,7 @@ mod test {
                 item_size: 5,
                 n_inserts: 1,
                 n_removes: 1,
-                hash: Bn256PoseidonParams::new::<sapling_crypto::group_hash::BlakeHasher>(),
+                hash: Bn256PoseidonParams::new::<sapling_crypto::group_hash::Keccak256Hasher>(),
             },
         }, true),
         //small_rsa_5_swaps: (Set {

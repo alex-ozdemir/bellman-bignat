@@ -8,6 +8,7 @@ use sapling_crypto::circuit::boolean::Boolean;
 use std::borrow::Borrow;
 use std::cmp::max;
 use std::convert::From;
+use std::fmt::{Display, Formatter, self};
 use std::rc::Rc;
 
 use bit::{Bit, Bitvector};
@@ -494,6 +495,7 @@ impl<E: Engine> BigNat<E> {
         let right_product = q_poly.alloc_product(cs.namespace(|| "right_product"), &mod_poly)?;
         // q * m + r
         let right = Polynomial::from(right_product).sum(&r_poly);
+
 
         let left_max_word = BigUint::from(std::cmp::min(self.limbs.len(), other.limbs.len()))
             * &self.params.max_word
@@ -1635,5 +1637,19 @@ mod tests {
         //        }),
         //    },
         //    true),
+    }
+}
+
+impl<E: Engine> Display for BigNat<E> {
+
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self.value.as_ref() {
+            Some(n) => {
+                write!(f, "BigNat({})", n)
+            }
+            None => {
+                write!(f, "BigNat(empty)")
+            }
+        }
     }
 }

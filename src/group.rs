@@ -278,4 +278,12 @@ impl<E: Engine> CircuitSemiGroup<E> for CircuitRsaGroup<E> {
     fn identity(&self) -> Self::Elem {
         self.id.clone()
     }
+    fn power<CS: ConstraintSystem<E>>(
+        &self,
+        cs: CS,
+        b: &Self::Elem,
+        e: &BigNat<E>,
+    ) -> Result<Self::Elem, SynthesisError> {
+        b.pow_mod(cs, e, &self.m)
+    }
 }
