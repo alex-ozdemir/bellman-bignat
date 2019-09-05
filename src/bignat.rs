@@ -12,7 +12,7 @@ use std::fmt::{Display, Formatter, self};
 use std::rc::Rc;
 
 use bit::{Bit, Bitvector};
-use group::Gadget;
+use gadget::Gadget;
 use num::Num;
 use poly::Polynomial;
 use OptionExt;

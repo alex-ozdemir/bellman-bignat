@@ -10,9 +10,10 @@ use std::rc::Rc;
 
 use bignat::BigNat;
 use group::{
-    CircuitRsaGroup, CircuitRsaGroupParams, CircuitSemiGroup, Gadget, RsaGroup, SemiGroup,
+    CircuitRsaGroup, CircuitRsaGroupParams, CircuitSemiGroup, RsaGroup, SemiGroup,
 };
 use hash::{hash_to_rsa_element, helper, HashDomain};
+use gadget::Gadget;
 use rsa_set::{CircuitIntSet, IntSet, NaiveExpSet};
 use OptionExt;
 

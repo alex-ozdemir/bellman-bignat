@@ -6,7 +6,8 @@ use std::collections::BTreeSet;
 use std::fmt::Debug;
 
 use bignat::BigNat;
-use group::{CircuitSemiGroup, Gadget, SemiGroup};
+use group::{CircuitSemiGroup, SemiGroup};
+use gadget::Gadget;
 use wesolowski::proof_of_exp;
 
 pub trait IntSet: Sized + Clone + Eq + Debug {
@@ -245,7 +246,7 @@ mod tests {
     use super::*;
     use test_helpers::*;
 
-    use group::{CircuitRsaGroup, CircuitRsaGroupParams, Gadget, RsaGroup};
+    use group::{CircuitRsaGroup, CircuitRsaGroupParams, RsaGroup};
     use OptionExt;
 
     use std::str::FromStr;

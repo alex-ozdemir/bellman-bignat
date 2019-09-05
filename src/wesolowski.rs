@@ -4,7 +4,8 @@ use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
 
 use bignat::BigNat;
-use group::{CircuitSemiGroup, Gadget, SemiGroup};
+use group::{CircuitSemiGroup, SemiGroup};
+use gadget::Gadget;
 use OptionExt;
 
 /// Computes `b ^ (prod(xs) / l) % m`, cleverly.

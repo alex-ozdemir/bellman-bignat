@@ -50,6 +50,7 @@ pub mod hash;
 pub mod set;
 pub mod mimc;
 pub mod group;
+pub mod gadget;
 
 use sapling_crypto::bellman::pairing::ff::{PrimeField, PrimeFieldRepr};
 use num_bigint::BigUint;

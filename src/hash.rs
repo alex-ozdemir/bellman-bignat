@@ -241,7 +241,7 @@ mod test {
     use super::*;
 
     use OptionExt;
-    use group::Gadget;
+    use gadget::Gadget;
 
     use test_helpers::*;
 
