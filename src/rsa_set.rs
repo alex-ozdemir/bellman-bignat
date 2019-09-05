@@ -26,21 +26,25 @@ pub trait IntSet: Sized + Clone + Eq + Debug {
     /// Gets the underlying RSA group
     fn group(&self) -> &Self::G;
 
-    /// Add all of the `ns` to the set.
-    fn insert_all<I: IntoIterator<Item = BigUint>>(&mut self, ns: I) {
+    /// Add all of the `ns` to the set. Returns whether all items were absent
+    fn insert_all<I: IntoIterator<Item = BigUint>>(&mut self, ns: I) -> bool {
+        let mut all_absent = true;
         for n in ns {
-            self.insert(n);
+            all_absent &= self.insert(n);
         }
+        all_absent
     }
 
-    /// Remove all of the `ns` from the set.
-    fn remove_all<'a, I: IntoIterator<Item = &'a BigUint>>(&mut self, ns: I)
+    /// Remove all of the `ns` from the set. Rerturns whether all items were present.
+    fn remove_all<'a, I: IntoIterator<Item = &'a BigUint>>(&mut self, ns: I) -> bool
     where
         <Self::G as SemiGroup>::Elem: 'a,
     {
+        let mut all_present = true;
         for n in ns {
-            self.remove(n);
+            all_present &= self.remove(n);
         }
+        all_present
     }
 }
 
@@ -181,7 +185,7 @@ where
                 .map(|i| i.value.as_ref())
                 .collect::<Option<Vec<&BigUint>>>()
                 .map(|is| {
-                    set.remove_all(is);
+                    assert!(set.remove_all(is));
                     set
                 })
         });
@@ -214,7 +218,7 @@ where
                 .map(|i| i.value.clone())
                 .collect::<Option<Vec<BigUint>>>()
                 .map(|is| {
-                    set.insert_all(is);
+                    assert!(set.insert_all(is));
                     set
                 })
         });

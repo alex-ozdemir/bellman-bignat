@@ -112,20 +112,24 @@ where
     }
 
     /// Add all of the `ns` to the set.
-    pub fn insert_all<I: IntoIterator<Item = Vec<E::Fr>>>(&mut self, ns: I) {
+    pub fn insert_all<I: IntoIterator<Item = Vec<E::Fr>>>(&mut self, ns: I) -> bool {
+        let mut all_absent = true;
         for n in ns {
-            self.insert(n);
+            all_absent &= self.insert(n);
         }
+        all_absent
     }
 
     /// Remove all of the `ns` from the set.
-    pub fn remove_all<'b, I: IntoIterator<Item = &'b [E::Fr]>>(&mut self, ns: I)
+    pub fn remove_all<'b, I: IntoIterator<Item = &'b [E::Fr]>>(&mut self, ns: I) -> bool
     where
         <Inner::G as SemiGroup>::Elem: 'b,
     {
+        let mut all_present = true;
         for n in ns {
-            self.remove(n);
+            all_present &= self.remove(n);
         }
+        all_present
     }
 }
 
@@ -265,7 +269,7 @@ where
                 .collect::<Option<Vec<_>>>();
             is.map(|is| {
                 let mut v = v.clone();
-                v.remove_all(is.iter().map(Vec::as_slice));
+                assert!(v.remove_all(is.iter().map(Vec::as_slice)));
                 v
             })
         });
