@@ -75,6 +75,58 @@ pub trait CircuitSemiGroup: Gadget<Access=()> + Eq {
     fn identity(&self) -> Self::Elem;
     fn group(&self) -> Option<&Self::Group>;
     fn elem_params(p: &<Self as Gadget>::Params) -> <Self::Elem as Gadget>::Params;
+    fn bauer_power_bin_rev_helper<'a, CS: ConstraintSystem<Self::E>>(
+        &self,
+        mut cs: CS,
+        base_powers: &[Self::Elem],
+        k: usize,
+        mut exp_chunks: std::slice::Chunks<'a, Bit<Self::E>>,
+    ) -> Result<Self::Elem, SynthesisError> {
+        if let Some(chunk) = exp_chunks.next_back() {
+            let chunk_len = chunk.len();
+
+            if exp_chunks.len() > 0 {
+                let mut acc = self.bauer_power_bin_rev_helper(cs.namespace(|| "rec"), base_powers, k, exp_chunks)?;
+                // Square once, for each bit in the chunk
+                for j in 0..chunk_len {
+                    acc = self.op(cs.namespace(|| format!("square {}", j)), &acc, &acc)?;
+                }
+                // Select the correct base power
+                let base_power = Gadget::mux_tree(cs.namespace(|| "select"), chunk.into_iter(), &base_powers[..(1<<chunk_len)])?;
+                self.op(cs.namespace(|| "prod"), &acc, &base_power)
+            } else {
+                Gadget::mux_tree(cs.namespace(|| "select"), chunk.into_iter(), &base_powers[..(1<<chunk_len)])
+            }
+        } else {
+            Ok(self.identity())
+        }
+    }
+    fn bauer_power_bin_rev<CS: ConstraintSystem<Self::E>>(
+        &self,
+        mut cs: CS,
+        base: &Self::Elem,
+        exp: Bitvector<Self::E>,
+    ) -> Result<Self::Elem, SynthesisError> {
+        // https://en.wikipedia.org/wiki/Exponentiation_by_squaring#2k-ary_method
+        fn optimal_k(n: usize) -> usize {
+            for k in 1.. {
+                let fk = k as f64;
+                if (n as f64) < (fk * (fk + 1.0) * 2f64.powf(2.0 * fk)) / (2f64.powf(fk + 1.0) - fk - 2.0) + 1.0 {
+                    return k;
+                }
+            }
+            unreachable!()
+        }
+        let k = optimal_k(exp.bits.len());
+        let base_powers = {
+            let mut base_powers = vec![self.identity(), base.clone()];
+            for i in 2..(1<<k) {
+                base_powers.push(self.op(cs.namespace(|| format!("base {}", i)), base_powers.last().unwrap(), base)?);
+            }
+            base_powers
+        };
+        self.bauer_power_bin_rev_helper(cs.namespace(|| "helper"), &base_powers, k, exp.into_bits().chunks(k))
+    }
     fn power_bin_rev<CS: ConstraintSystem<Self::E>>(
         &self,
         mut cs: CS,
@@ -102,7 +154,7 @@ pub trait CircuitSemiGroup: Gadget<Access=()> + Eq {
         e: &BigNat<Self::E>,
     ) -> Result<Self::Elem, SynthesisError> {
         let exp_bin_rev = e.decompose(cs.namespace(|| "exp decomp"))?.reversed();
-        self.power_bin_rev(cs.namespace(|| "binary exp"), &b, exp_bin_rev)
+        self.bauer_power_bin_rev(cs.namespace(|| "binary exp"), &b, exp_bin_rev)
     }
 }
 
@@ -217,3 +269,146 @@ impl<E: Engine> CircuitSemiGroup for CircuitRsaGroup<E> {
         self.id.clone()
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use test_helpers::*;
+    use OptionExt;
+    use std::str::FromStr;
+
+    #[derive(Debug)]
+    pub struct PowerInputs<'a> {
+        pub g: &'a str,
+        pub m: &'a str,
+        pub b: &'a str,
+        pub e: &'a str,
+        pub res: &'a str,
+    }
+
+    pub struct PowerParams {
+        pub limb_width: usize,
+        pub n_limbs_b: usize,
+        pub n_limbs_e: usize,
+    }
+
+    pub struct Power<'a> {
+        inputs: Option<PowerInputs<'a>>,
+        params: PowerParams,
+    }
+
+    impl<'a, E: Engine> Circuit<E> for Power<'a> {
+        fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
+            let ins = self.inputs.grab()?;
+            let group = CircuitRsaGroup::alloc(
+                cs.namespace(|| "group"),
+                Some(
+                    &RsaGroup {
+                        g: BigUint::from_str(ins.g).unwrap(),
+                        m: BigUint::from_str(ins.m).unwrap(),
+                    }
+                ),
+                (),
+                &CircuitRsaGroupParams {
+                    limb_width: self.params.limb_width,
+                    n_limbs: self.params.n_limbs_b,
+                },
+            )?;
+            let b = BigNat::alloc_from_nat(
+                cs.namespace(|| "b"),
+                || Ok(BigUint::from_str(self.inputs.grab()?.b).unwrap()),
+                self.params.limb_width,
+                self.params.n_limbs_b,
+            )?;
+            let e = BigNat::alloc_from_nat(
+                cs.namespace(|| "e"),
+                || Ok(BigUint::from_str(self.inputs.grab()?.e).unwrap()),
+                self.params.limb_width,
+                self.params.n_limbs_e,
+            )?;
+            let res = BigNat::alloc_from_nat(
+                cs.namespace(|| "res"),
+                || Ok(BigUint::from_str(self.inputs.grab()?.res).unwrap()),
+                self.params.limb_width,
+                self.params.n_limbs_b,
+            )?;
+            let actual = group.power(cs.namespace(|| "pow"), &b, &e)?;
+            actual.equal(cs.namespace(|| "check"), &res)?;
+            Ok(())
+        }
+    }
+
+    circuit_tests! {
+        power_1_1: (
+            Power {
+                inputs: Some(PowerInputs {
+                    g: "2",
+                    m: "241",
+                    b: "1",
+                    e: "1",
+                    res: "1",
+                }),
+                params: PowerParams {
+                    limb_width: 4,
+                    n_limbs_b: 2,
+                    n_limbs_e: 12,
+                }
+            },
+            true,
+        ),
+        power_1_0: (
+            Power {
+                inputs: Some(PowerInputs {
+                    g: "2",
+                    m: "241",
+                    b: "1",
+                    e: "0",
+                    res: "1",
+                }),
+                params: PowerParams {
+                    limb_width: 4,
+                    n_limbs_b: 2,
+                    n_limbs_e: 12,
+                }
+            },
+            true,
+        ),
+
+        power_5_12351: (
+            Power {
+                inputs: Some(PowerInputs {
+                    g: "2",
+                    m: "241",
+                    b: "5",
+                    e: "12351",
+                    res: "162",
+                }),
+                params: PowerParams {
+                    limb_width: 4,
+                    n_limbs_b: 2,
+                    n_limbs_e: 12,
+                }
+            },
+            true,
+        ),
+        power_512b_128b: (
+            Power {
+                inputs: Some(PowerInputs {
+                    g: "2",
+                    m: "11834783464130424096695514462778870280264989938857328737807205623069291535525952722847913694296392927890261736769191982212777933726583565708193466779811767",
+                    b: "5",
+                    e: "1",
+                    res: "5",
+                }),
+                params: PowerParams {
+                    limb_width: 32,
+                    n_limbs_b: 16,
+                    n_limbs_e: 4,
+                }
+            },
+            true,
+        ),
+    }
+}
+
+

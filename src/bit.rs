@@ -3,6 +3,8 @@ use sapling_crypto::bellman::pairing::ff::Field;
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
 
+use std::fmt::{self, Formatter, Display};
+
 use OptionExt;
 
 /// A representation of a bit
@@ -60,6 +62,14 @@ impl<E: Engine> Bitvector<E> {
         self.bits.splice(0..0, std::iter::repeat(LinearCombination::zero()).take(i));
         self
     }
+
+    pub fn into_bits(mut self) -> Vec<Bit<E>> {
+        let vs = self.values.take();
+        self.bits.into_iter().enumerate().map(|(i, b)| Bit {
+            bit: b,
+            value: vs.as_ref().map(|vs| vs[i]),
+        }).collect()
+    }
 }
 
 impl<E: Engine> Bit<E> {
@@ -110,5 +120,15 @@ impl<E: Engine> Bit<E> {
                 }
             },
         );
+    }
+}
+
+impl<E: Engine> Display for Bitvector<E> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self.values.as_ref() {
+            Some(vs) =>
+                write!(f, "Bitvector({})", vs.into_iter().map(|b| if *b { "1" } else {"0"}).collect::<Vec<_>>().concat()),
+            None => write!(f, "Bitvector(len {})", self.bits.len()),
+        }
     }
 }

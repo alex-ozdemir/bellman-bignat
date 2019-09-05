@@ -32,6 +32,8 @@ pub trait Gadget: Sized + Clone {
         }
         Ok(())
     }
+
+    /// Returns `i0` if `s` is false, otherwise `i1`.
     fn mux<CS: ConstraintSystem<Self::E>>(
         mut cs: CS,
         s: &Bit<Self::E>,
@@ -64,9 +66,9 @@ pub trait Gadget: Sized + Clone {
         }
         for (i, ((i0w, i1w), out_w)) in i0_wires
             .into_iter()
-            .zip(i1_wires)
-            .zip(out_wires)
-            .enumerate()
+                .zip(i1_wires)
+                .zip(out_wires)
+                .enumerate()
         {
             cs.enforce(
                 || format!("{}", i),
@@ -76,6 +78,28 @@ pub trait Gadget: Sized + Clone {
             );
         }
         Ok(out)
+    }
+    /// Builds a mux tree. The first bit is taken as the highest order.
+    fn mux_tree<'a, CS: ConstraintSystem<Self::E>>(
+        mut cs: CS,
+        mut select_bits: impl Iterator<Item = &'a Bit<Self::E>> + Clone,
+        inputs: &[Self],
+    ) -> Result<Self, SynthesisError> {
+        if let Some(bit) = select_bits.next() {
+            if inputs.len() & 1 != 0 {
+                return Err(SynthesisError::Unsatisfiable);
+            }
+            let left_half = &inputs[..(inputs.len() / 2)];
+            let right_half = &inputs[(inputs.len() / 2)..];
+            let left = Gadget::mux_tree(cs.namespace(|| "left"), select_bits.clone(), left_half)?;
+            let right = Gadget::mux_tree(cs.namespace(|| "right"), select_bits, right_half)?;
+            Gadget::mux(cs.namespace(|| "join"), bit, &left, &right)
+        } else {
+            if inputs.len() != 1 {
+                return Err(SynthesisError::Unsatisfiable);
+            }
+            Ok(inputs[0].clone())
+        }
     }
 
     fn assert_equal<CS: ConstraintSystem<Self::E>>(
