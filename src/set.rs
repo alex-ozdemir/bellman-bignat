@@ -1,64 +1,80 @@
 use num_bigint::BigUint;
-use sapling_crypto::bellman::pairing::bn256::Bn256;
 use sapling_crypto::bellman::pairing::ff::{PrimeField, ScalarEngine};
-use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{Circuit, ConstraintSystem, LinearCombination, SynthesisError};
 use sapling_crypto::circuit::num::AllocatedNum;
-use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
-use sapling_crypto::poseidon::{PoseidonEngine, PoseidonHashParams, QuinticSBox};
+use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
+
+use std::marker::PhantomData;
+use std::rc::Rc;
 
 use bignat::BigNat;
 use group::{
     CircuitRsaGroup, CircuitRsaGroupParams, CircuitSemiGroup, Gadget, RsaGroup, SemiGroup,
 };
 use hash::{hash_to_prime, hash_to_rsa_element, helper, HashDomain};
-use rsa_set::{CircuitExpSet, ExpSet, NaiveExpSet};
-use std::marker::PhantomData;
+use rsa_set::{CircuitIntSet, IntSet, NaiveExpSet};
 use OptionExt;
 
-pub struct Set<
-    'a,
+pub struct Set<E, Inner>
+where
     E: PoseidonEngine<SBox = QuinticSBox<E>>,
-    G: SemiGroup,
-    HParams: 'a,
-    Inner: ExpSet<BigUint, G = G>,
-> {
+    Inner: IntSet,
+{
     pub inner: Inner,
-    pub hash_params: &'a HParams,
+    pub hash_params: Rc<<E as PoseidonEngine>::Params>,
     pub hash_domain: HashDomain,
     // TODO revisit upon the resolution of https://github.com/rust-lang/rust/issues/64155
     pub _phant: PhantomData<E>,
 }
 
-impl<
-        'a,
-        E: PoseidonEngine<SBox = QuinticSBox<E>>,
-        G: SemiGroup + Clone,
-        HParams: 'a,
-        Inner: ExpSet<BigUint, G = G> + Clone,
-    > std::clone::Clone for Set<'a, E, G, HParams, Inner>
+impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> std::clone::Clone
+    for Set<E, Inner>
 {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
             hash_domain: self.hash_domain.clone(),
-            hash_params: self.hash_params,
+            hash_params: self.hash_params.clone(),
             _phant: self._phant,
         }
     }
 }
 
-impl<'a, HParams, E, G, Inner> ExpSet<Vec<E::Fr>> for Set<'a, E, G, HParams, Inner>
-where
-    HParams: PoseidonHashParams<E> + 'a,
-    E: PoseidonEngine<SBox = QuinticSBox<E>, Params = HParams>,
-    G: SemiGroup,
-    Inner: ExpSet<BigUint, G = G>,
-{
-    type G = G;
+impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> Set<E, Inner> {
+    fn new_with<'b>(
+        group: Inner::G,
+        hash_params: Rc<E::Params>,
+        element_bits: usize,
+        items: impl IntoIterator<Item = &'b [E::Fr]>,
+    ) -> Self {
+        let hash_domain = HashDomain {
+            n_bits: element_bits,
+            n_trailing_ones: 1,
+        };
+        let inner = Inner::new_with(
+            group,
+            items.into_iter().map(|slice| {
+                helper::hash_to_prime::<E>(slice, &hash_domain, &hash_params)
+                    .unwrap()
+                    .0
+            }),
+        );
+        Self {
+            inner,
+            hash_domain,
+            hash_params,
+            _phant: PhantomData::default(),
+        }
+    }
+}
 
+impl<E, Inner> Set<E, Inner>
+where
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    Inner: IntSet,
+{
     /// Add `n` to the set, returning whether `n` is new to the set.
-    fn insert(&mut self, n: Vec<E::Fr>) -> bool {
+    pub fn insert(&mut self, n: Vec<E::Fr>) -> bool {
         self.inner.insert(
             helper::hash_to_prime::<E>(&n, &self.hash_domain, &self.hash_params)
                 .expect("Hash to prime failed")
@@ -66,118 +82,238 @@ where
         )
     }
     /// Remove `n` from the set, returning whether `n` was present.
-    fn remove(&mut self, n: &Vec<E::Fr>) -> bool {
+    pub fn remove(&mut self, n: &[E::Fr]) -> bool {
         self.inner.remove(
             &helper::hash_to_prime::<E>(&n, &self.hash_domain, &self.hash_params)
                 .expect("Hash to prime failed")
                 .0,
         )
     }
+
     /// The digest of the current elements (`g` to the product of the elements).
-    fn digest(&self) -> <Self::G as SemiGroup>::Elem {
+    pub fn digest(&self) -> <Inner::G as SemiGroup>::Elem {
         self.inner.digest()
     }
 
     /// Gets the underlying RSA group
-    fn group(&self) -> &Self::G {
+    pub fn group(&self) -> &Inner::G {
         self.inner.group()
     }
-}
 
-pub struct CircuitSet<'a, E, CG, HParams, Inner>
-where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
-    CG: CircuitSemiGroup,
-    HParams: 'a,
-    Inner: ExpSet<BigUint, G = <CG as CircuitSemiGroup>::Group>,
-{
-    pub value: Option<Set<'a, E, <CG as CircuitSemiGroup>::Group, HParams, Inner>>,
-    pub group: CG,
-    pub digest: CG::Elem,
-    pub hash_params: &'a HParams,
-}
+    /// Add all of the `ns` to the set.
+    pub fn insert_all<I: IntoIterator<Item = Vec<E::Fr>>>(&mut self, ns: I) {
+        for n in ns {
+            self.insert(n);
+        }
+    }
 
-impl<'a, E, CG, HParams, Inner> std::clone::Clone for CircuitSet<'a, E, CG, HParams, Inner>
-where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
-    CG: CircuitSemiGroup,
-    HParams: 'a,
-    Inner: ExpSet<BigUint, G = <CG as CircuitSemiGroup>::Group>,
-{
-    fn clone(&self) -> Self {
-        Self {
-            value: self.value.clone(),
-            group: self.group.clone(),
-            digest: self.digest.clone(),
-            hash_params: self.hash_params,
+    /// Remove all of the `ns` from the set.
+    pub fn remove_all<'b, I: IntoIterator<Item = &'b [E::Fr]>>(&mut self, ns: I)
+    where
+        <Inner::G as SemiGroup>::Elem: 'b,
+    {
+        for n in ns {
+            self.remove(n);
         }
     }
 }
 
-impl<'a, E, CG, HParams, Inner> std::cmp::PartialEq for CircuitSet<'a, E, CG, HParams, Inner>
-where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
-    CG: CircuitSemiGroup,
-    HParams: 'a,
-    Inner: ExpSet<BigUint, G = <CG as CircuitSemiGroup>::Group>,
-{
-    fn eq(&self, other: &Self) -> bool {
-        self.digest == other.digest
+pub struct CircuitSetParams<HParams> {
+    hash: Rc<HParams>,
+    n_bits: usize,
+    limb_width: usize,
+}
+
+impl<HParams> CircuitSetParams<HParams> {
+    fn hash_domain(&self) -> HashDomain {
+        HashDomain {
+            n_bits: self.n_bits,
+            n_trailing_ones: 1,
+        }
     }
 }
 
-impl<'a, E, CG, HParams, Inner> Gadget for CircuitSet<'a, E, CG, HParams, Inner>
+impl<HParams> std::clone::Clone for CircuitSetParams<HParams> {
+    fn clone(&self) -> Self {
+        Self {
+            hash: self.hash.clone(),
+            n_bits: self.n_bits,
+            limb_width: self.limb_width,
+        }
+    }
+}
+
+pub struct CircuitSet<E, CG, Inner>
 where
     E: PoseidonEngine<SBox = QuinticSBox<E>>,
-    CG: CircuitSemiGroup<E = E>,
+    CG: CircuitSemiGroup<E = E> + Gadget<E = E, Value = <CG as CircuitSemiGroup>::Group>,
     CG::Elem: Gadget<E = E, Value = <CG::Group as SemiGroup>::Elem, Access = ()>,
-    HParams: 'a,
-    Inner: ExpSet<BigUint, G = <CG as CircuitSemiGroup>::Group>,
+    Inner: IntSet<G = <CG as CircuitSemiGroup>::Group>,
+{
+    pub value: Option<Set<E, Inner>>,
+    pub inner: CircuitIntSet<E, CG, Inner>,
+    pub params: CircuitSetParams<E::Params>,
+}
+
+impl<E, CG, Inner> std::clone::Clone for CircuitSet<E, CG, Inner>
+where
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    CG: CircuitSemiGroup<E = E> + Gadget<E = E, Value = <CG as CircuitSemiGroup>::Group>,
+    CG::Elem: Gadget<E = E, Value = <CG::Group as SemiGroup>::Elem, Access = ()>,
+    Inner: IntSet<G = <CG as CircuitSemiGroup>::Group>,
+{
+    fn clone(&self) -> Self {
+        Self {
+            value: self.value.clone(),
+            inner: self.inner.clone(),
+            params: self.params.clone(),
+        }
+    }
+}
+
+impl<E, CG, Inner> Gadget for CircuitSet<E, CG, Inner>
+where
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    CG: CircuitSemiGroup<E = E> + Gadget<E = E, Value = <CG as CircuitSemiGroup>::Group>,
+    CG::Elem: Gadget<E = E, Value = <CG::Group as SemiGroup>::Elem, Access = ()>,
+    Inner: IntSet<G = <CG as CircuitSemiGroup>::Group>,
 {
     type E = E;
-    type Value = Set<'a, E, <CG as CircuitSemiGroup>::Group, HParams, Inner>;
+    type Value = Set<E, Inner>;
     type Access = CG;
-    type Params = &'a HParams;
+    type Params = CircuitSetParams<E::Params>;
     fn alloc<CS: ConstraintSystem<Self::E>>(
         mut cs: CS,
         value: Option<&Self::Value>,
         access: Self::Access,
         params: &Self::Params,
     ) -> Result<Self, SynthesisError> {
-        let digest: CG::Elem = <CG::Elem as Gadget>::alloc(
-            cs.namespace(|| "digest"),
-            value.map(|s| s.inner.digest()).as_ref(),
-            (),
-            &CG::elem_params(access.params()),
+        let inner = CircuitIntSet::alloc(
+            cs.namespace(|| "int set"),
+            value.as_ref().map(|s| &s.inner),
+            access,
+            &(),
         )?;
-        let group = access;
         Ok(Self {
             value: value.cloned(),
-            digest,
-            group,
-            hash_params: params,
+            inner,
+            params: params.clone(),
         })
     }
     fn wires(&self) -> Vec<LinearCombination<Self::E>> {
-        unimplemented!()
+        self.inner.wires()
     }
     fn wire_values(&self) -> Option<Vec<<Self::E as ScalarEngine>::Fr>> {
-        unimplemented!()
+        self.inner.wire_values()
     }
     fn value(&self) -> Option<&Self::Value> {
-        unimplemented!()
+        self.value.as_ref()
     }
     fn access(&self) -> &Self::Access {
-        unimplemented!()
+        &self.inner.group
     }
     fn params(&self) -> &Self::Params {
-        unimplemented!()
+        &self.params
     }
 }
 
-pub struct SetBenchInputs<E: Engine, S: ExpSet<BigUint>> {
+impl<E, CG, Inner> CircuitSet<E, CG, Inner>
+where
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    CG: CircuitSemiGroup<E = E> + Gadget<E = E, Value = <CG as CircuitSemiGroup>::Group>,
+    CG::Elem: Gadget<E = E, Value = <CG::Group as SemiGroup>::Elem, Access = ()>,
+    Inner: IntSet<G = <CG as CircuitSemiGroup>::Group>,
+{
+    pub fn remove<'b, CS: ConstraintSystem<E>>(
+        self,
+        mut cs: CS,
+        challenge: &BigNat<E>,
+        items: impl IntoIterator<Item = &'b [AllocatedNum<E>]> + Clone,
+    ) -> Result<Self, SynthesisError> {
+        let removals = items
+            .clone()
+            .into_iter()
+            .enumerate()
+            .map(|(i, slice)| -> Result<BigNat<E>, SynthesisError> {
+                hash_to_rsa_element(
+                    cs.namespace(|| format!("hash {}", i)),
+                    &slice,
+                    self.params.limb_width,
+                    &self.params.hash_domain(),
+                    &self.params.hash,
+                )
+            })
+            .collect::<Result<Vec<BigNat<E>>, SynthesisError>>()?;
+        let inner = self
+            .inner
+            .remove(cs.namespace(|| "int removals"), challenge, &removals)?;
+        let value = self.value.as_ref().and_then(|v| {
+            let is: Option<Vec<Vec<E::Fr>>> = items
+                .into_iter()
+                .map(|i| i.iter().map(|n| n.get_value()).collect::<Option<Vec<_>>>())
+                .collect::<Option<Vec<_>>>();
+            is.map(|is| {
+                let mut v = v.clone();
+                v.remove_all(is.iter().map(Vec::as_slice));
+                v
+            })
+        });
+        Ok(Self {
+            value,
+            inner,
+            params: self.params.clone(),
+        })
+    }
+
+    pub fn insert<'b, CS: ConstraintSystem<E>>(
+        self,
+        mut cs: CS,
+        challenge: &BigNat<E>,
+        items: impl IntoIterator<Item = &'b [AllocatedNum<E>]> + Clone,
+    ) -> Result<Self, SynthesisError> {
+        let insertions = items
+            .clone()
+            .into_iter()
+            .enumerate()
+            .map(|(i, slice)| -> Result<BigNat<E>, SynthesisError> {
+                hash_to_rsa_element(
+                    cs.namespace(|| format!("hash {}", i)),
+                    &slice,
+                    self.params.limb_width,
+                    &self.params.hash_domain(),
+                    &self.params.hash,
+                )
+            })
+            .collect::<Result<Vec<BigNat<E>>, SynthesisError>>()?;
+        let inner = self
+            .inner
+            .insert(cs.namespace(|| "int insertions"), challenge, &insertions)?;
+        let value = self.value.as_ref().and_then(|v| {
+            let is: Option<Vec<Vec<E::Fr>>> = items
+                .into_iter()
+                .map(|i| i.iter().map(|n| n.get_value()).collect::<Option<Vec<_>>>())
+                .collect::<Option<Vec<_>>>();
+            is.map(|is| {
+                let mut v = v.clone();
+                v.insert_all(is.into_iter());
+                v
+            })
+        });
+        Ok(Self {
+            value,
+            inner,
+            params: self.params.clone(),
+        })
+    }
+}
+
+pub struct SetBenchInputs<E, Inner>
+where
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    Inner: IntSet,
+{
     /// The initial state of the set
-    pub initial_state: S,
+    pub initial_state: Set<E, Inner>,
     pub final_digest: BigUint,
     /// The items to remove from the set
     pub to_remove: Vec<Vec<E::Fr>>,
@@ -185,13 +321,17 @@ pub struct SetBenchInputs<E: Engine, S: ExpSet<BigUint>> {
     pub to_insert: Vec<Vec<E::Fr>>,
 }
 
-impl SetBenchInputs<Bn256, NaiveExpSet<RsaGroup>> {
+impl<E, Inner> SetBenchInputs<E, Inner>
+where
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    Inner: IntSet<G = RsaGroup>,
+{
     pub fn from_counts(
         n_untouched: usize,
         n_removed: usize,
         n_inserted: usize,
         item_len: usize,
-        hash: &Bn256PoseidonParams,
+        hash: Rc<E::Params>,
         n_bits_elem: usize,
         group: RsaGroup,
     ) -> Self {
@@ -230,33 +370,21 @@ impl SetBenchInputs<Bn256, NaiveExpSet<RsaGroup>> {
         untouched_items: Vec<Vec<String>>,
         removed_items: Vec<Vec<String>>,
         inserted_items: Vec<Vec<String>>,
-        hash: &Bn256PoseidonParams,
+        hash: Rc<E::Params>,
         n_bits_elem: usize,
         group: RsaGroup,
     ) -> Self {
-        let untouched: Vec<Vec<<Bn256 as ScalarEngine>::Fr>> = untouched_items
+        let untouched: Vec<Vec<E::Fr>> = untouched_items
             .iter()
-            .map(|i| {
-                i.iter()
-                    .map(|j| <Bn256 as ScalarEngine>::Fr::from_str(j).unwrap())
-                    .collect()
-            })
+            .map(|i| i.iter().map(|j| E::Fr::from_str(j).unwrap()).collect())
             .collect();
-        let removed: Vec<Vec<<Bn256 as ScalarEngine>::Fr>> = removed_items
+        let removed: Vec<Vec<E::Fr>> = removed_items
             .iter()
-            .map(|i| {
-                i.iter()
-                    .map(|j| <Bn256 as ScalarEngine>::Fr::from_str(j).unwrap())
-                    .collect()
-            })
+            .map(|i| i.iter().map(|j| E::Fr::from_str(j).unwrap()).collect())
             .collect();
-        let inserted: Vec<Vec<<Bn256 as ScalarEngine>::Fr>> = inserted_items
+        let inserted: Vec<Vec<E::Fr>> = inserted_items
             .iter()
-            .map(|i| {
-                i.iter()
-                    .map(|j| <Bn256 as ScalarEngine>::Fr::from_str(j).unwrap())
-                    .collect()
-            })
+            .map(|i| i.iter().map(|j| E::Fr::from_str(j).unwrap()).collect())
             .collect();
         let hash_domain = HashDomain {
             n_bits: n_bits_elem,
@@ -264,20 +392,22 @@ impl SetBenchInputs<Bn256, NaiveExpSet<RsaGroup>> {
         };
         let untouched_hashes = untouched
             .iter()
-            .map(|xs| helper::hash_to_rsa_element::<Bn256>(&xs, &hash_domain, hash));
-        let removed_hashes = removed
-            .iter()
-            .map(|xs| helper::hash_to_rsa_element::<Bn256>(&xs, &hash_domain, hash));
+            .map(|xs| helper::hash_to_rsa_element::<E>(&xs, &hash_domain, &hash));
         let inserted_hashes = inserted
             .iter()
-            .map(|xs| helper::hash_to_rsa_element::<Bn256>(&xs, &hash_domain, hash));
+            .map(|xs| helper::hash_to_rsa_element::<E>(&xs, &hash_domain, &hash));
         let final_digest = untouched_hashes
             .clone()
             .chain(inserted_hashes)
             .fold(group.g.clone(), |g, i| g.modpow(&i, &group.m));
-        let set = NaiveExpSet::new_with(group, untouched_hashes.chain(removed_hashes));
+        let initial_state = Set::new_with(
+            group,
+            hash,
+            n_bits_elem,
+            untouched.iter().chain(&removed).map(|v| v.as_slice()),
+        );
         SetBenchInputs {
-            initial_state: set,
+            initial_state,
             final_digest,
             to_remove: removed,
             to_insert: inserted,
@@ -295,15 +425,22 @@ pub struct SetBenchParams<E: PoseidonEngine> {
     pub item_size: usize,
     pub n_removes: usize,
     pub n_inserts: usize,
-    pub hash: E::Params,
+    pub hash: Rc<E::Params>,
 }
 
-pub struct SetBench<E: PoseidonEngine<SBox = QuinticSBox<E>>, S: ExpSet<BigUint>> {
-    pub inputs: Option<SetBenchInputs<E, S>>,
+pub struct SetBench<E, Inner>
+where
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    Inner: IntSet,
+{
+    pub inputs: Option<SetBenchInputs<E, Inner>>,
     pub params: SetBenchParams<E>,
 }
 
-impl<E: PoseidonEngine<SBox = QuinticSBox<E>>> Circuit<E> for SetBench<E, NaiveExpSet<RsaGroup>> {
+impl<E> Circuit<E> for SetBench<E, NaiveExpSet<RsaGroup>>
+where
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+{
     fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
         println!("Constructing Group");
         let raw_group = self
@@ -321,59 +458,47 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>> Circuit<E> for SetBench<E, NaiveE
         )?;
         group.inputize(cs.namespace(|| "group input"))?;
         println!("Constructing Set");
-        let set: CircuitExpSet<E, CircuitRsaGroup<E>> = CircuitExpSet::alloc(
+        let set: CircuitSet<E, CircuitRsaGroup<E>, NaiveExpSet<RsaGroup>> = CircuitSet::alloc(
             cs.namespace(|| "set init"),
             self.inputs.as_ref().map(|is| &is.initial_state),
             group,
-            &(),
+            &CircuitSetParams {
+                hash: self.params.hash.clone(),
+                n_bits: self.params.n_bits_elem,
+                limb_width: self.params.limb_width,
+            },
         )?;
         set.inputize(cs.namespace(|| "initial_state input"))?;
-        let hash_domain = HashDomain {
-            n_bits: self.params.n_bits_elem,
-            n_trailing_ones: 1,
-        };
-        println!("Hashing Deletions...");
+        println!("Allocating Deletions...");
         let removals = (0..self.params.n_removes)
-            .map(|i| -> Result<BigNat<E>, SynthesisError> {
-                let to_hash = (0..self.params.item_size)
+            .map(|i| {
+                (0..self.params.item_size)
                     .map(|j| {
                         AllocatedNum::alloc(cs.namespace(|| format!("remove {} {}", i, j)), || {
                             Ok(**self.inputs.grab()?.to_remove.get(i).grab()?.get(j).grab()?)
                         })
                     })
-                    .collect::<Result<Vec<_>, _>>()?;
-                hash_to_rsa_element(
-                    cs.namespace(|| format!("hash remove {}", i)),
-                    &to_hash,
-                    self.params.limb_width,
-                    &hash_domain,
-                    &self.params.hash,
-                )
+                    .collect::<Result<Vec<_>, _>>()
             })
-            .collect::<Result<Vec<BigNat<E>>, SynthesisError>>()?;
+            .collect::<Result<Vec<Vec<AllocatedNum<E>>>, SynthesisError>>()?;
 
-        println!("Hashing Insertions...");
+        println!("Allocating Insertions...");
         let insertions = (0..self.params.n_inserts)
-            .map(|i| -> Result<BigNat<E>, SynthesisError> {
-                let to_hash = (0..self.params.item_size)
+            .map(|i| {
+                (0..self.params.item_size)
                     .map(|j| {
-                        AllocatedNum::alloc(cs.namespace(|| format!("inset {} {}", i, j)), || {
+                        AllocatedNum::alloc(cs.namespace(|| format!("insert {} {}", i, j)), || {
                             Ok(**self.inputs.grab()?.to_insert.get(i).grab()?.get(j).grab()?)
                         })
                     })
-                    .collect::<Result<Vec<_>, _>>()?;
-                hash_to_rsa_element(
-                    cs.namespace(|| format!("hash insert {}", i)),
-                    &to_hash,
-                    self.params.limb_width,
-                    &hash_domain,
-                    &self.params.hash,
-                )
+                    .collect::<Result<Vec<_>, _>>()
             })
-            .collect::<Result<Vec<BigNat<E>>, SynthesisError>>()?;
+            .collect::<Result<Vec<Vec<AllocatedNum<E>>>, SynthesisError>>()?;
+
         let mut to_hash_to_challenge: Vec<AllocatedNum<E>> = Vec::new();
         to_hash_to_challenge.extend(
-            set.digest
+            set.inner
+                .digest
                 .as_limbs::<CS>()
                 .into_iter()
                 .enumerate()
@@ -382,34 +507,8 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>> Circuit<E> for SetBench<E, NaiveE
                 })
                 .collect::<Result<Vec<_>, _>>()?,
         );
-        for i in 0..self.params.n_inserts {
-            for j in 0..self.params.item_size {
-                to_hash_to_challenge.push(AllocatedNum::alloc(
-                    cs.namespace(|| format!("chash insert {} {}", i.clone(), j)),
-                    || {
-                        Ok(**self
-                            .inputs
-                            .as_ref()
-                            .and_then(|is| is.to_insert.get(i).and_then(|iss| iss.get(j)))
-                            .grab()?)
-                    },
-                )?)
-            }
-        }
-        for i in 0..self.params.n_removes {
-            for j in 0..self.params.item_size {
-                to_hash_to_challenge.push(AllocatedNum::alloc(
-                    cs.namespace(|| format!("chash remove {} {}", i.clone(), j)),
-                    || {
-                        Ok(**self
-                            .inputs
-                            .as_ref()
-                            .and_then(|is| is.to_remove.get(i).and_then(|iss| iss.get(j)))
-                            .grab()?)
-                    },
-                )?)
-            }
-        }
+        to_hash_to_challenge.extend(insertions.iter().flat_map(|i| i.iter().cloned()));
+        to_hash_to_challenge.extend(removals.iter().flat_map(|i| i.iter().cloned()));
 
         let challenge = hash_to_prime(
             cs.namespace(|| "chash"),
@@ -423,11 +522,11 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>> Circuit<E> for SetBench<E, NaiveE
         )?;
 
         println!("Deleting elements");
-        let reduced_set = set.remove(cs.namespace(|| "remove"), &challenge, &removals)?;
+        let reduced_set = set.remove(cs.namespace(|| "remove"), &challenge, removals.iter().map(Vec::as_slice))?;
 
         println!("Inserting elements");
         let expanded_set =
-            reduced_set.insert(cs.namespace(|| "insert"), &challenge, &insertions)?;
+            reduced_set.insert(cs.namespace(|| "insert"), &challenge, insertions.iter().map(Vec::as_slice))?;
 
         let expected_digest = BigNat::alloc_from_nat(
             cs.namespace(|| "expected_digest"),
@@ -438,6 +537,7 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>> Circuit<E> for SetBench<E, NaiveE
 
         println!("Verifying resulting digest");
         expanded_set
+            .inner
             .digest
             .equal(cs.namespace(|| "check"), &expected_digest)?;
         expanded_set.inputize(cs.namespace(|| "final_state input"))?;
@@ -456,6 +556,8 @@ mod test {
     use super::*;
     use std::str::FromStr;
     use test_helpers::*;
+    use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
+    use sapling_crypto::group_hash::Keccak256Hasher;
 
     circuit_tests! {
         small_rsa_1_swap: (SetBench {
@@ -467,7 +569,7 @@ mod test {
                             [
                             ["0", "1", "2", "3", "5"].iter().map(|s| s.to_string()).collect(),
                             ].to_vec(),
-                            &Bn256PoseidonParams::new::<sapling_crypto::group_hash::Keccak256Hasher>(),
+                            Rc::new(Bn256PoseidonParams::new::<Keccak256Hasher>()),
                             128,
                             RsaGroup {
                                 g: BigUint::from(2usize),
@@ -486,7 +588,7 @@ mod test {
                         item_size: 5,
                         n_inserts: 1,
                         n_removes: 1,
-                        hash: Bn256PoseidonParams::new::<sapling_crypto::group_hash::Keccak256Hasher>(),
+                        hash: Rc::new(Bn256PoseidonParams::new::<Keccak256Hasher>()),
                     },
         }, true),
         //small_rsa_5_swaps: (SetBench {

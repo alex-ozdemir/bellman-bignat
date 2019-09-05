@@ -145,7 +145,7 @@ impl SemiGroup for RsaGroup {
     }
 }
 
-pub trait CircuitSemiGroup: Gadget + Eq {
+pub trait CircuitSemiGroup: Gadget<Access=()> + Eq {
     type Elem: Clone + Gadget<E = Self::E> + Eq;
     type Group: SemiGroup;
     fn op<CS: ConstraintSystem<Self::E>>(

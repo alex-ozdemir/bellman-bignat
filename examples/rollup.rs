@@ -5,13 +5,12 @@ extern crate sapling_crypto;
 
 use bellman_bignat::bignat::nat_to_limbs;
 use bellman_bignat::group::RsaGroup;
-use bellman_bignat::hash::helper::hash_to_prime;
-use bellman_bignat::hash::HashDomain;
-use bellman_bignat::rsa_set::{ExpSet, NaiveExpSet};
+use bellman_bignat::rsa_set::NaiveExpSet;
 use bellman_bignat::set::{SetBench, SetBenchInputs, SetBenchParams};
 use num_bigint::BigUint;
 use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
 
+use std::rc::Rc;
 use std::str::FromStr;
 use std::time::Instant;
 
@@ -28,7 +27,9 @@ fn main() {
         .and_then(|a| usize::from_str(&a).ok())
         .expect("Provide the number of transactions as the first argument");
 
-    let hash = Bn256PoseidonParams::new::<sapling_crypto::group_hash::Keccak256Hasher>();
+    let hash = Rc::new(Bn256PoseidonParams::new::<
+        sapling_crypto::group_hash::Keccak256Hasher,
+    >());
     use rand::thread_rng;
 
     use sapling_crypto::bellman::groth16::{
@@ -44,8 +45,7 @@ fn main() {
     let generate_params_start = Instant::now();
 
     let params = {
-        let hash = Bn256PoseidonParams::new::<sapling_crypto::group_hash::Keccak256Hasher>();
-        let c = SetBench::<_, NaiveExpSet<RsaGroup>> {
+        let c = SetBench::<Bn256, NaiveExpSet<RsaGroup>> {
             inputs: None,
             params: SetBenchParams {
                 group: group.clone(),
@@ -56,7 +56,7 @@ fn main() {
                 item_size: ELEMENT_SIZE,
                 n_inserts: n_swaps,
                 n_removes: n_swaps,
-                hash,
+                hash: hash.clone(),
             },
         };
         let p = generate_random_parameters(c, rng);
@@ -73,7 +73,6 @@ fn main() {
 
     let pvk = prepare_verifying_key(&params.vk);
     println!("Done with key");
-    let hash_params = Bn256PoseidonParams::new::<sapling_crypto::group_hash::Keccak256Hasher>();
 
     // Create a groth16 proof with our parameters.
     let circuit = SetBench {
@@ -82,7 +81,7 @@ fn main() {
             n_swaps,
             n_swaps,
             ELEMENT_SIZE,
-            &hash_params,
+            hash.clone(),
             RSA_SIZE,
             RsaGroup {
                 g: BigUint::from(2usize),
@@ -106,40 +105,8 @@ fn main() {
     let initial_set = ins.initial_state.clone();
     let final_set = {
         let mut t = initial_set.clone();
-        let to_remove = ins
-            .to_remove
-            .iter()
-            .map(|data| -> BigUint {
-                hash_to_prime::<Bn256>(
-                    data.as_slice(),
-                    &HashDomain {
-                        n_bits: circuit.params.n_bits_elem,
-                        n_trailing_ones: 1,
-                    },
-                    &hash_params,
-                )
-                .unwrap()
-                .0
-            })
-            .collect::<Vec<_>>();
-        let to_insert = ins
-            .to_insert
-            .iter()
-            .map(|data| -> BigUint {
-                hash_to_prime::<Bn256>(
-                    data.as_slice(),
-                    &HashDomain {
-                        n_bits: circuit.params.n_bits_elem,
-                        n_trailing_ones: 1,
-                    },
-                    &hash_params,
-                )
-                .unwrap()
-                .0
-            })
-            .collect::<Vec<_>>();
-        t.remove_all(&to_remove);
-        t.insert_all(to_insert);
+        t.remove_all(ins.to_remove.iter().map(Vec::as_slice));
+        t.insert_all(ins.to_insert.clone());
         t
     };
 
@@ -156,10 +123,14 @@ fn main() {
         &group.m, 32, 64,
     ));
     inputs.extend(nat_to_limbs::<<Bn256 as ScalarEngine>::Fr>(
-        &initial_set.digest(), 32, 64,
+        &initial_set.digest(),
+        32,
+        64,
     ));
     inputs.extend(nat_to_limbs::<<Bn256 as ScalarEngine>::Fr>(
-        &final_set.digest(), 32, 64,
+        &final_set.digest(),
+        32,
+        64,
     ));
 
     println!("verified {:?}", verify_proof(&pvk, &proof, &inputs));
