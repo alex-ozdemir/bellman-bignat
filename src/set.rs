@@ -12,7 +12,7 @@ use bignat::BigNat;
 use group::{
     CircuitRsaGroup, CircuitRsaGroupParams, CircuitSemiGroup, Gadget, RsaGroup, SemiGroup,
 };
-use hash::{hash_to_prime, hash_to_rsa_element, helper, HashDomain};
+use hash::{hash_to_rsa_element, helper, HashDomain};
 use rsa_set::{CircuitIntSet, IntSet, NaiveExpSet};
 use OptionExt;
 
@@ -65,9 +65,7 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> Set<E, Inner> {
         let inner = Inner::new_with(
             group,
             items.into_iter().map(|slice| {
-                helper::hash_to_prime::<E>(slice, &hash_domain, &hash_params)
-                    .unwrap()
-                    .0
+                helper::hash_to_rsa_element::<E>(slice, &hash_domain, &hash_params)
             }),
         );
         Self {
@@ -87,17 +85,13 @@ where
     /// Add `n` to the set, returning whether `n` is new to the set.
     pub fn insert(&mut self, n: Vec<E::Fr>) -> bool {
         self.inner.insert(
-            helper::hash_to_prime::<E>(&n, &self.hash_domain, &self.hash_params)
-                .expect("Hash to prime failed")
-                .0,
+            helper::hash_to_rsa_element::<E>(&n, &self.hash_domain, &self.hash_params),
         )
     }
     /// Remove `n` from the set, returning whether `n` was present.
     pub fn remove(&mut self, n: &[E::Fr]) -> bool {
         self.inner.remove(
-            &helper::hash_to_prime::<E>(&n, &self.hash_domain, &self.hash_params)
-                .expect("Hash to prime failed")
-                .0,
+            &helper::hash_to_rsa_element::<E>(&n, &self.hash_domain, &self.hash_params),
         )
     }
 
@@ -525,7 +519,7 @@ where
         to_hash_to_challenge.extend(insertions.iter().flat_map(|i| i.iter().cloned()));
         to_hash_to_challenge.extend(removals.iter().flat_map(|i| i.iter().cloned()));
 
-        let challenge = hash_to_prime(
+        let challenge = hash_to_rsa_element(
             cs.namespace(|| "chash"),
             &to_hash_to_challenge,
             self.params.limb_width,
