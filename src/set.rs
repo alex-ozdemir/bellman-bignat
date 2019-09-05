@@ -5,6 +5,7 @@ use sapling_crypto::circuit::num::AllocatedNum;
 use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
 
 use std::marker::PhantomData;
+use std::fmt::{self,Debug,Formatter};
 use std::rc::Rc;
 
 use bignat::BigNat;
@@ -25,6 +26,16 @@ where
     pub hash_domain: HashDomain,
     // TODO revisit upon the resolution of https://github.com/rust-lang/rust/issues/64155
     pub _phant: PhantomData<E>,
+}
+
+impl<E, Inner> Debug for Set<E, Inner>
+where
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    Inner: IntSet, {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{:?}", self.inner)
+    }
+
 }
 
 impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> std::clone::Clone

@@ -3,12 +3,13 @@ use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
 
 use std::collections::BTreeSet;
+use std::fmt::Debug;
 
 use bignat::BigNat;
 use group::{CircuitSemiGroup, Gadget, SemiGroup};
 use wesolowski::proof_of_exp;
 
-pub trait IntSet: Sized + Clone + Eq {
+pub trait IntSet: Sized + Clone + Eq + Debug {
     type G: SemiGroup;
 
     fn new(group: Self::G) -> Self;

@@ -5,7 +5,7 @@ use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
 
 use std::cmp::Eq;
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 
 use bignat::{BigNat, BigNatParams};
 use bit::{Bit, Bitvector};
@@ -99,8 +99,8 @@ pub trait Gadget: Sized + Clone {
     }
 }
 
-pub trait SemiGroup: Clone + Eq + Debug {
-    type Elem: Clone + Debug + Ord;
+pub trait SemiGroup: Clone + Eq + Debug + Display {
+    type Elem: Clone + Debug + Ord + Display;
     fn op(&self, a: &Self::Elem, b: &Self::Elem) -> Self::Elem;
     fn identity(&self) -> Self::Elem;
     fn generator(&self) -> Self::Elem;
@@ -129,6 +129,12 @@ pub struct RsaGroup {
     pub m: BigUint,
 }
 
+impl Display for RsaGroup {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "RsaGroup(g = {}, m = {})", self.g, self.m)
+    }
+}
+
 impl SemiGroup for RsaGroup {
     type Elem = BigUint;
 
@@ -146,7 +152,7 @@ impl SemiGroup for RsaGroup {
 }
 
 pub trait CircuitSemiGroup: Gadget<Access=()> + Eq {
-    type Elem: Clone + Gadget<E = Self::E> + Eq;
+    type Elem: Clone + Gadget<E = Self::E> + Eq + Display;
     type Group: SemiGroup;
     fn op<CS: ConstraintSystem<Self::E>>(
         &self,
