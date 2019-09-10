@@ -1908,6 +1908,20 @@ mod tests {
                               }),
                           },
                           true),
+        gcd_128b: (
+                          Gcd {
+                              params: GcdParams {
+                                  limb_width: 32,
+                                  n_limbs_a: 4,
+                                  n_limbs_b: 4,
+                              },
+                              inputs: Some(GcdInputs {
+                                  a: "311515013647097972396078794914139832177",
+                                  b: "298937084241820869743410128427022097023",
+                                  gcd: "1",
+                              }),
+                          },
+                          true),
     }
 }
 
