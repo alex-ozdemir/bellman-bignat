@@ -1,4 +1,5 @@
-use num_bigint::BigUint;
+use num_bigint::{BigUint, ToBigInt};
+use num_integer::Integer;
 use num_traits::{One, Pow, ToPrimitive};
 use sapling_crypto::bellman::pairing::ff::{Field, PrimeField};
 use sapling_crypto::bellman::pairing::Engine;
@@ -6,9 +7,9 @@ use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisErro
 use sapling_crypto::circuit::boolean::Boolean;
 
 use std::borrow::Borrow;
-use std::cmp::max;
+use std::cmp::{max, min};
 use std::convert::From;
-use std::fmt::{Display, Formatter, self};
+use std::fmt::{self, Display, Formatter};
 use std::rc::Rc;
 
 use bit::{Bit, Bitvector};
@@ -375,13 +376,16 @@ impl<E: Engine> BigNat<E> {
         mut cs: CS,
         other: &Self,
     ) -> Result<(), SynthesisError> {
-        if self.limbs.len() != other.limbs.len()
-            || self.params.limb_width != other.params.limb_width
-        {
+        if self.params.limb_width != other.params.limb_width {
+            eprintln!(
+                "Limb widths {}, {}, do not agree in equal_when_carried",
+                self.params.limb_width, other.params.limb_width,
+            );
             return Err(SynthesisError::Unsatisfiable);
         }
 
-        let n = self.limbs.len();
+        // We'll propegate carries over the first `n` limbs.
+        let n = min(self.limbs.len(), other.limbs.len());
         let target_base = Pow::pow(&BigUint::from(2usize), self.params.limb_width);
         let mut accumulated_extra = BigUint::from(0usize);
         let max_word = std::cmp::max(&self.params.max_word, &other.params.max_word);
@@ -432,6 +436,23 @@ impl<E: Engine> BigNat<E> {
             }
             carry_in = Num::from(carry);
         }
+
+        for (i, zero_limb) in self.limbs.iter().enumerate().skip(n) {
+            cs.enforce(
+                || format!("zero self {}", i),
+                |lc| lc,
+                |lc| lc,
+                |lc| lc + zero_limb,
+            );
+        }
+        for (i, zero_limb) in other.limbs.iter().enumerate().skip(n) {
+            cs.enforce(
+                || format!("zero other {}", i),
+                |lc| lc,
+                |lc| lc,
+                |lc| lc + zero_limb,
+            );
+        }
         Ok(())
     }
 
@@ -443,9 +464,11 @@ impl<E: Engine> BigNat<E> {
         mut cs: CS,
         other: &Self,
     ) -> Result<(), SynthesisError> {
-        if self.limbs.len() != other.limbs.len()
-            || self.params.limb_width != other.params.limb_width
-        {
+        if self.params.limb_width != other.params.limb_width {
+            eprintln!(
+                "Limb widths {}, {}, do not agree in equal_when_carried_regroup",
+                self.params.limb_width, other.params.limb_width,
+            );
             return Err(SynthesisError::Unsatisfiable);
         }
         let max_word = std::cmp::max(&self.params.max_word, &other.params.max_word);
@@ -456,6 +479,163 @@ impl<E: Engine> BigNat<E> {
         let self_grouped = self.group_limbs(limbs_per_group);
         let other_grouped = other.group_limbs(limbs_per_group);
         self_grouped.equal_when_carried(cs.namespace(|| "grouped"), &other_grouped)
+    }
+
+    // Constrain `self` to divide `other`.
+    pub fn divides<CS: ConstraintSystem<E>>(
+        &self,
+        mut cs: CS,
+        other: &Self,
+    ) -> Result<(), SynthesisError> {
+        if self.params.limb_width != other.params.limb_width {
+            eprintln!(
+                "Limb widths {}, {}, do not agree in divides",
+                self.params.limb_width, other.params.limb_width,
+            );
+            return Err(SynthesisError::Unsatisfiable);
+        }
+        let factor = BigNat::alloc_from_nat(
+            cs.namespace(|| "product"),
+            || {
+                let s = self.value.grab()?;
+                let o = other.value.grab()?;
+                if o.is_multiple_of(s) {
+                    Ok(o / s)
+                } else {
+                    Err(SynthesisError::Unsatisfiable)
+                }
+            },
+            other.params.limb_width,
+            other.params.n_limbs,
+        )?;
+        // Verify that factor is in bounds
+        factor.decompose(cs.namespace(|| "rangecheck"))?;
+        let max_word = BigUint::from(min(self.params.n_limbs, factor.params.n_limbs))
+            * &self.params.max_word
+            * &factor.params.max_word;
+        let poly_prod = Polynomial::from(self.clone())
+            .alloc_product(cs.namespace(|| "poly product"), &Polynomial::from(factor))?;
+        BigNat::from_poly(poly_prod, other.params.limb_width, max_word)
+            .equal_when_carried_regroup(cs.namespace(|| "equal"), other)?;
+        Ok(())
+    }
+
+    pub fn gcd<CS: ConstraintSystem<E>>(
+        &self,
+        mut cs: CS,
+        other: &Self,
+    ) -> Result<BigNat<E>, SynthesisError> {
+        if self.params.limb_width != other.params.limb_width {
+            eprintln!(
+                "Limb widths {}, {}, do not agree in gcd",
+                self.params.limb_width, other.params.limb_width,
+            );
+            return Err(SynthesisError::Unsatisfiable);
+        }
+        let limb_width = self.params.limb_width;
+        let n_limbs = min(self.params.n_limbs, other.params.n_limbs);
+        let gcd = BigNat::alloc(
+            cs.namespace(|| "gcd"),
+            self.value
+                .as_ref()
+                .and_then(|a| other.value.as_ref().map(|b| a.gcd(b)))
+                .as_ref(),
+            (),
+            &BigNatParams {
+                max_word: (BigUint::one() << limb_width) - 1usize,
+                n_limbs,
+                limb_width,
+            },
+        )?;
+        // What to multipy x by to get the gcd, mod y
+        let self_pseudo_inverse = BigNat::alloc(
+            cs.namespace(|| "x pseudo inverse"),
+            self.value
+                .as_ref()
+                .and_then(|a| {
+                    // To compute the bezout coefficients, we do some acrobatics b/c they might be
+                    // negative
+                    other.value.as_ref().map(|b| {
+                        (a.to_bigint()
+                            .unwrap()
+                            .extended_gcd(&b.to_bigint().unwrap())
+                            .x
+                            + b.to_bigint().unwrap())
+                        .to_biguint()
+                        .unwrap()
+                            % b
+                    })
+                })
+                .as_ref(),
+            (),
+            &other.params,
+        )?;
+        self_pseudo_inverse.decompose(cs.namespace(|| "pseudo inverse rangecheck"))?;
+        gcd.divides(cs.namespace(|| "div a"), self)?;
+        gcd.divides(cs.namespace(|| "div b"), &other)?;
+        self.assert_product_mod(
+            cs.namespace(|| "lower bound"),
+            &self_pseudo_inverse,
+            other,
+            &gcd,
+        )?;
+        Ok(gcd)
+    }
+
+    pub fn assert_product_mod<CS: ConstraintSystem<E>>(
+        &self,
+        mut cs: CS,
+        other: &Self,
+        modulus: &Self,
+        remainder: &Self,
+    ) -> Result<BigNat<E>, SynthesisError> {
+        if self.params.limb_width != other.params.limb_width
+            || self.params.limb_width != modulus.params.limb_width
+            || self.params.limb_width != remainder.params.limb_width
+        {
+            eprintln!(
+                "Limb widths {}, {}, {}, {} do not agree in assert_product_mod",
+                self.params.limb_width,
+                other.params.limb_width,
+                modulus.params.limb_width,
+                remainder.params.limb_width
+            );
+            return Err(SynthesisError::Unsatisfiable);
+        }
+        let limb_width = self.params.limb_width;
+        let quotient_limbs = self.limbs.len() + other.limbs.len();
+        let quotient = BigNat::alloc_from_nat(
+            cs.namespace(|| "quotient"),
+            || Ok(self.value.grab()? * other.value.grab()? / modulus.value.grab()?),
+            self.params.limb_width,
+            quotient_limbs,
+        )?;
+        quotient.decompose(cs.namespace(|| "quotient rangecheck"))?;
+        let a_poly = Polynomial::from(self.clone());
+        let b_poly = Polynomial::from(other.clone());
+        let mod_poly = Polynomial::from(modulus.clone());
+        let q_poly = Polynomial::from(BigNat::from(quotient.clone()));
+        let r_poly = Polynomial::from(BigNat::from(remainder.clone()));
+
+        // a * b
+        let left = a_poly.alloc_product(cs.namespace(|| "left"), &b_poly)?;
+        let right_product = q_poly.alloc_product(cs.namespace(|| "right_product"), &mod_poly)?;
+        // q * m + r
+        let right = Polynomial::from(right_product).sum(&r_poly);
+
+        let left_max_word = BigUint::from(min(self.limbs.len(), other.limbs.len()))
+            * &self.params.max_word
+            * &other.params.max_word;
+        let right_max_word =
+            BigUint::from(std::cmp::min(quotient.limbs.len(), modulus.limbs.len()))
+                * &quotient.params.max_word
+                * &modulus.params.max_word
+                + &remainder.params.max_word;
+
+        let left_int = BigNat::from_poly(Polynomial::from(left), limb_width, left_max_word);
+        let right_int = BigNat::from_poly(Polynomial::from(right), limb_width, right_max_word);
+        left_int.equal_when_carried_regroup(cs.namespace(|| "carry"), &right_int)?;
+        Ok(quotient)
     }
 
     /// Compute a `BigNat` contrained to be equal to `self * other % modulus`.
@@ -495,7 +675,6 @@ impl<E: Engine> BigNat<E> {
         let right_product = q_poly.alloc_product(cs.namespace(|| "right_product"), &mod_poly)?;
         // q * m + r
         let right = Polynomial::from(right_product).sum(&r_poly);
-
 
         let left_max_word = BigUint::from(std::cmp::min(self.limbs.len(), other.limbs.len()))
             * &self.params.max_word
@@ -1458,123 +1637,123 @@ mod tests {
 
     circuit_tests! {
         mr_round_7_base_5: (
-            MillerRabinRound {
-                params: MillerRabinRoundParams {
-                    limb_width: 4,
-                    n_limbs: 2,
-                },
-                inputs: Some(MillerRabinRoundInputs {
-                    b: "5",
-                    n: "7",
-                    result: true,
-                }),
-            },
-            true),
-        mr_round_11_base_2: (
-            MillerRabinRound {
-                params: MillerRabinRoundParams {
-                    limb_width: 4,
-                    n_limbs: 2,
-                },
-                inputs: Some(MillerRabinRoundInputs {
-                    b: "2",
-                    n: "11",
-                    result: true,
-                }),
-            },
-            true),
-        mr_round_5_base_2: (
-            MillerRabinRound {
-                params: MillerRabinRoundParams {
-                    limb_width: 4,
-                    n_limbs: 2,
-                },
-                inputs: Some(MillerRabinRoundInputs {
-                    b: "2",
-                    n: "5",
-                    result: true,
-                }),
-            },
-            false),
-        // ~80,000 constraints
-        mr_round_full_base_2: (
-            MillerRabinRound {
-                params: MillerRabinRoundParams {
-                    limb_width: 32,
-                    n_limbs: 4,
-                },
-                inputs: Some(MillerRabinRoundInputs {
-                    b: "2",
-                    n: "262215269494931243253999821294977607927",
-                    result: true,
-                }),
-            },
-            true),
-        mr_round_full_base_3: (
-            MillerRabinRound {
-                params: MillerRabinRoundParams {
-                    limb_width: 32,
-                    n_limbs: 4,
-                },
-                inputs: Some(MillerRabinRoundInputs {
-                    b: "3",
-                    n: "262215269494931243253999821294977607927",
-                    result: true,
-                }),
-            },
-            true),
-        mr_round_full_base_5: (
-            MillerRabinRound {
-                params: MillerRabinRoundParams {
-                    limb_width: 32,
-                    n_limbs: 4,
-                },
-                inputs: Some(MillerRabinRoundInputs {
-                    b: "5",
-                    n: "262215269494931243253999821294977607927",
-                    result: true,
-                }),
-            },
-            true),
-        mr_round_full_base_2_fail: (
-            MillerRabinRound {
-                params: MillerRabinRoundParams {
-                    limb_width: 32,
-                    n_limbs: 4,
-                },
-                inputs: Some(MillerRabinRoundInputs {
-                    b: "2",
-                    n: "304740101182592084246827883024894699479",
-                    result: false,
-                }),
-            },
-            true),
-        mr_round_full_base_3_fail: (
-            MillerRabinRound {
-                params: MillerRabinRoundParams {
-                    limb_width: 32,
-                    n_limbs: 4,
-                },
-                inputs: Some(MillerRabinRoundInputs {
-                    b: "3",
-                    n: "304740101182592084246827883024894699479",
-                    result: false,
-                }),
-            },
-            true),
-        mr_round_full_base_5_fail: (
-            MillerRabinRound {
-                params: MillerRabinRoundParams {
-                    limb_width: 32,
-                    n_limbs: 4,
-                },
-                inputs: Some(MillerRabinRoundInputs {
-                    b: "5",
-                    n: "304740101182592084246827883024894699479",
-                    result: false,
-                }),
-            },
-            true),
+                               MillerRabinRound {
+                                   params: MillerRabinRoundParams {
+                                       limb_width: 4,
+                                       n_limbs: 2,
+                                   },
+                                   inputs: Some(MillerRabinRoundInputs {
+                                       b: "5",
+                                       n: "7",
+                                       result: true,
+                                   }),
+                               },
+                               true),
+                               mr_round_11_base_2: (
+                                   MillerRabinRound {
+                                       params: MillerRabinRoundParams {
+                                           limb_width: 4,
+                                           n_limbs: 2,
+                                       },
+                                       inputs: Some(MillerRabinRoundInputs {
+                                           b: "2",
+                                           n: "11",
+                                           result: true,
+                                       }),
+                                   },
+                                   true),
+                                   mr_round_5_base_2: (
+                                       MillerRabinRound {
+                                           params: MillerRabinRoundParams {
+                                               limb_width: 4,
+                                               n_limbs: 2,
+                                           },
+                                           inputs: Some(MillerRabinRoundInputs {
+                                               b: "2",
+                                               n: "5",
+                                               result: true,
+                                           }),
+                                       },
+                                       false),
+                                       // ~80,000 constraints
+                                       mr_round_full_base_2: (
+                                           MillerRabinRound {
+                                               params: MillerRabinRoundParams {
+                                                   limb_width: 32,
+                                                   n_limbs: 4,
+                                               },
+                                               inputs: Some(MillerRabinRoundInputs {
+                                                   b: "2",
+                                                   n: "262215269494931243253999821294977607927",
+                                                   result: true,
+                                               }),
+                                           },
+                                           true),
+                                           mr_round_full_base_3: (
+                                               MillerRabinRound {
+                                                   params: MillerRabinRoundParams {
+                                                       limb_width: 32,
+                                                       n_limbs: 4,
+                                                   },
+                                                   inputs: Some(MillerRabinRoundInputs {
+                                                       b: "3",
+                                                       n: "262215269494931243253999821294977607927",
+                                                       result: true,
+                                                   }),
+                                               },
+                                               true),
+                                               mr_round_full_base_5: (
+                                                   MillerRabinRound {
+                                                       params: MillerRabinRoundParams {
+                                                           limb_width: 32,
+                                                           n_limbs: 4,
+                                                       },
+                                                       inputs: Some(MillerRabinRoundInputs {
+                                                           b: "5",
+                                                           n: "262215269494931243253999821294977607927",
+                                                           result: true,
+                                                       }),
+                                                   },
+                                                   true),
+                                                   mr_round_full_base_2_fail: (
+                                                       MillerRabinRound {
+                                                           params: MillerRabinRoundParams {
+                                                               limb_width: 32,
+                                                               n_limbs: 4,
+                                                           },
+                                                           inputs: Some(MillerRabinRoundInputs {
+                                                               b: "2",
+                                                               n: "304740101182592084246827883024894699479",
+                                                               result: false,
+                                                           }),
+                                                       },
+                                                       true),
+                                                       mr_round_full_base_3_fail: (
+                                                           MillerRabinRound {
+                                                               params: MillerRabinRoundParams {
+                                                                   limb_width: 32,
+                                                                   n_limbs: 4,
+                                                               },
+                                                               inputs: Some(MillerRabinRoundInputs {
+                                                                   b: "3",
+                                                                   n: "304740101182592084246827883024894699479",
+                                                                   result: false,
+                                                               }),
+                                                           },
+                                                           true),
+                                                           mr_round_full_base_5_fail: (
+                                                               MillerRabinRound {
+                                                                   params: MillerRabinRoundParams {
+                                                                       limb_width: 32,
+                                                                       n_limbs: 4,
+                                                                   },
+                                                                   inputs: Some(MillerRabinRoundInputs {
+                                                                       b: "5",
+                                                                       n: "304740101182592084246827883024894699479",
+                                                                       result: false,
+                                                                   }),
+                                                               },
+                                                               true),
     }
 
     #[derive(Debug)]
@@ -1615,45 +1794,128 @@ mod tests {
 
     circuit_tests! {
         mr_small_251: (
-            MillerRabin {
-                params: MillerRabinParams {
-                    limb_width: 4,
-                    n_limbs: 2,
-                    n_rounds: 8,
-                },
-                inputs: Some(MillerRabinInputs {
-                    n: "251",
-                    result: true,
-                }),
-            },
-            true),
-        // ~640,000 constraints
-        //mr_full: (
-        //    MillerRabin {
-        //        params: MillerRabinParams {
-        //            limb_width: 32,
-        //            n_limbs: 4,
-        //            n_rounds: 8,
-        //        },
-        //        inputs: Some(MillerRabinInputs {
-        //            n: "262215269494931243253999821294977607927",
-        //            result: true,
-        //        }),
-        //    },
-        //    true),
+                          MillerRabin {
+                              params: MillerRabinParams {
+                                  limb_width: 4,
+                                  n_limbs: 2,
+                                  n_rounds: 8,
+                              },
+                              inputs: Some(MillerRabinInputs {
+                                  n: "251",
+                                  result: true,
+                              }),
+                          },
+                          true),
+                          // ~640,000 constraints
+                          //mr_full: (
+                          //    MillerRabin {
+                          //        params: MillerRabinParams {
+                          //            limb_width: 32,
+                          //            n_limbs: 4,
+                          //            n_rounds: 8,
+                          //        },
+                          //        inputs: Some(MillerRabinInputs {
+                          //            n: "262215269494931243253999821294977607927",
+                          //            result: true,
+                          //        }),
+                          //    },
+                          //    true),
+    }
+
+    #[derive(Debug)]
+    pub struct GcdInputs<'a> {
+        pub a: &'a str,
+        pub b: &'a str,
+        pub gcd: &'a str,
+    }
+
+    pub struct GcdParams {
+        pub limb_width: usize,
+        pub n_limbs_a: usize,
+        pub n_limbs_b: usize,
+    }
+
+    pub struct Gcd<'a> {
+        inputs: Option<GcdInputs<'a>>,
+        params: GcdParams,
+    }
+
+    impl<'a, E: Engine> Circuit<E> for Gcd<'a> {
+        fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
+            let a = BigNat::alloc_from_nat(
+                cs.namespace(|| "a"),
+                || Ok(BigUint::from_str(self.inputs.grab()?.a).unwrap()),
+                self.params.limb_width,
+                self.params.n_limbs_a,
+            )?;
+            let b = BigNat::alloc_from_nat(
+                cs.namespace(|| "b"),
+                || Ok(BigUint::from_str(self.inputs.grab()?.b).unwrap()),
+                self.params.limb_width,
+                self.params.n_limbs_b,
+            )?;
+            let gcd = BigNat::alloc_from_nat(
+                cs.namespace(|| "res"),
+                || Ok(BigUint::from_str(self.inputs.grab()?.gcd).unwrap()),
+                self.params.limb_width,
+                min(self.params.n_limbs_b, self.params.n_limbs_a),
+            )?;
+            let act = a.gcd(cs.namespace(|| "gcd"), &b)?;
+            Gadget::assert_equal(cs.namespace(|| "eq"), &gcd, &act)?;
+            Ok(())
+        }
+    }
+    circuit_tests! {
+        gcd_4_5: (
+                          Gcd {
+                              params: GcdParams {
+                                  limb_width: 4,
+                                  n_limbs_a: 1,
+                                  n_limbs_b: 1,
+                              },
+                              inputs: Some(GcdInputs {
+                                  a: "4",
+                                  b: "5",
+                                  gcd: "1",
+                              }),
+                          },
+                          true),
+        gcd_4_5_unequal: (
+                          Gcd {
+                              params: GcdParams {
+                                  limb_width: 4,
+                                  n_limbs_a: 14,
+                                  n_limbs_b: 5,
+                              },
+                              inputs: Some(GcdInputs {
+                                  a: "4",
+                                  b: "5",
+                                  gcd: "1",
+                              }),
+                          },
+                          true),
+        gcd_30_24: (
+                          Gcd {
+                              params: GcdParams {
+                                  limb_width: 4,
+                                  n_limbs_a: 2,
+                                  n_limbs_b: 2,
+                              },
+                              inputs: Some(GcdInputs {
+                                  a: "30",
+                                  b: "24",
+                                  gcd: "6",
+                              }),
+                          },
+                          true),
     }
 }
 
 impl<E: Engine> Display for BigNat<E> {
-
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self.value.as_ref() {
-            Some(n) => {
-                write!(f, "BigNat({})", n)
-            }
-            None => {
-                write!(f, "BigNat(empty)")
-            }
+            Some(n) => write!(f, "BigNat({})", n),
+            None => write!(f, "BigNat(empty)"),
         }
     }
 }

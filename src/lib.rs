@@ -2,6 +2,7 @@ extern crate rand;
 extern crate sapling_crypto;
 extern crate num_bigint;
 extern crate num_traits;
+extern crate num_integer;
 
 #[cfg(test)]
 extern crate quickcheck;
