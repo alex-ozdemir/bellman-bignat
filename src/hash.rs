@@ -10,13 +10,27 @@ use mimc::mimc;
 use num::Num;
 use OptionExt;
 
-const MILLER_RABIN_ROUNDS: usize = 2;
+const MILLER_RABIN_ROUNDS: usize = 3;
+
+pub const PRIMES_8_BIT: [u8; 23] = [
+    0b10000011, 0b10001001, 0b10001011, 0b10010101, 0b10010111, 0b10011101, 0b10100011, 0b10100111,
+    0b10101101, 0b10110011, 0b10110101, 0b10111111, 0b11000001, 0b11000101, 0b11000111, 0b11010011,
+    0b11011111, 0b11100011, 0b11100101, 0b11101001, 0b11101111, 0b11110001, 0b11111011,
+];
 
 /// A representation of the hash of
 #[derive(Clone)]
 pub struct HashDomain {
     pub n_bits: usize,
     pub n_trailing_ones: usize,
+}
+
+impl HashDomain {
+    pub fn nonce_width(&self) -> usize {
+        let n_rounds = -128f64 * 2f64.ln() / (1f64 - 2f64 / self.n_bits as f64).ln();
+        let n_bits = (n_rounds.log2().ceil() + 0.1) as usize;
+        n_bits
+    }
 }
 
 /// Returns whether `n` passes Miller-Rabin checks with the first `rounds` primes as bases
@@ -61,14 +75,22 @@ fn miller_rabin_round(n: &BigUint, b: &BigUint) -> bool {
     return false;
 }
 
+fn miller_rabin_32b(n: &BigUint) -> bool {
+    miller_rabin_round(n, &BigUint::from(2usize))
+        || miller_rabin_round(n, &BigUint::from(7usize))
+        || miller_rabin_round(n, &BigUint::from(61usize))
+}
+
 pub mod helper {
 
+    use super::miller_rabin_32b;
     use super::HashDomain;
     use f_to_nat;
     use mimc::helper::mimc;
     use num_bigint::BigUint;
-    use num_traits::One;
-    use sapling_crypto::bellman::pairing::ff::Field;
+    use num_integer::Integer;
+    use num_traits::{One, Zero};
+    use sapling_crypto::bellman::pairing::ff::{Field, PrimeField};
     use sapling_crypto::poseidon::{
         poseidon_hash, PoseidonEngine, PoseidonHashParams, QuinticSBox,
     };
@@ -109,12 +131,6 @@ pub mod helper {
         acc
     }
 
-    pub fn nonce_width(domain: &HashDomain) -> usize {
-        let n_rounds = -128f64 * 2f64.ln() / (1f64 - 2f64 / domain.n_bits as f64).ln();
-        let n_bits = (n_rounds.log2().ceil() + 0.1) as usize;
-        n_bits
-    }
-
     /// Given hash inputs, and a target domain for the prime hash, computes:
     ///
     ///    * an appropriate bitwidth for a nonce such that there exists a nonce appendable to the
@@ -130,7 +146,7 @@ pub mod helper {
         domain: &HashDomain,
         params: &E::Params,
     ) -> Option<(BigUint, E::Fr, usize)> {
-        let n_bits = nonce_width(domain);
+        let n_bits = domain.nonce_width();
         let mut inputs: Vec<E::Fr> = inputs.iter().copied().collect();
         inputs.push(E::Fr::zero());
         for _ in 0..(1 << n_bits) {
@@ -140,6 +156,174 @@ pub mod helper {
                 return Some((hash, inputs.pop().unwrap(), n_bits));
             }
             // unwrap is safe because of the push above
+            inputs.last_mut().unwrap().add_assign(&E::Fr::one());
+        }
+        None
+    }
+
+    /// Given a target entropy, constructs a plan for how to make a prime number of that
+    /// bitwidth that can be certified using a recursive Pocklington test.
+    /// This is a list a_i such that is s_i is defined by s_0 = 8 + a_0 and s_i = s_{i-1} + a_i
+    /// , then each a_i is less than its s_i, and s_n = 128
+    pub fn pocklington_plan(entropy: usize) -> Vec<usize> {
+        // (entropy, bits, extension)
+        assert!(entropy >= 30);
+        let mut table: Vec<(usize, usize, usize)> = vec![(30, 32, 0)];
+        while table.last().unwrap().0 < entropy {
+            let mut best_bits = std::usize::MAX;
+            let mut extension_size_for_best = 0;
+            let next_entropy = table.last().unwrap().0 + 1;
+            for (prev_entropy, prev_bits, _) in table.as_slice().iter().rev() {
+                let extension_bits = next_entropy - prev_entropy + 1;
+                let total_bits = extension_bits + prev_bits;
+                if extension_bits < *prev_bits {
+                    if total_bits < best_bits {
+                        best_bits = total_bits;
+                        extension_size_for_best = extension_bits;
+                    }
+                } else {
+                    break;
+                }
+            }
+            table.push((next_entropy, best_bits, extension_size_for_best));
+        }
+        assert_eq!(table.last().unwrap().0, entropy);
+        let mut i = table.len() - 1;
+        let mut extensions = Vec::new();
+        while i > 0 {
+            extensions.push(table[i].2);
+            i -= table[i].2 - 1;
+        }
+        extensions.reverse();
+        extensions
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum PocklingtonCertificate {
+        Base(BigUint),
+        Recursive {
+            rec: Box<PocklingtonCertificate>,
+            extension: BigUint,
+            base: BigUint,
+            number: BigUint,
+            nonce: usize,
+        },
+    }
+
+    impl PocklingtonCertificate {
+        pub fn number(&self) -> &BigUint {
+            match &self {
+                PocklingtonCertificate::Base(s) => s,
+                PocklingtonCertificate::Recursive { number, .. } => number,
+            }
+        }
+    }
+
+    pub fn attempt_pocklington_extension(
+        p: PocklingtonCertificate,
+        extension: BigUint,
+    ) -> Result<PocklingtonCertificate, PocklingtonCertificate> {
+        for i in 0..(1 << 10) {
+            let nonced_extension = &extension + 2 * i;
+            let number = p.number() * &nonced_extension + 1usize;
+            let mut base = BigUint::from(2usize);
+            while base < number {
+                let part = base.modpow(&nonced_extension, &number);
+                if part.modpow(p.number(), &number) != BigUint::from(1usize) {
+                    break;
+                }
+                if (part - 1usize).gcd(&number).is_one() {
+                    return Ok(PocklingtonCertificate::Recursive {
+                        rec: Box::new(p),
+                        extension: nonced_extension,
+                        base,
+                        number,
+                        nonce: i,
+                    });
+                }
+                base += 1usize;
+            }
+        }
+        Err(p)
+    }
+
+    pub fn entropy_needed(plan: &[usize]) -> usize {
+        plan.iter().map(|i| i - 1).sum::<usize>() + 4
+    }
+
+    pub struct EntropySource {
+        bits: Vec<bool>,
+    }
+
+    impl EntropySource {
+        pub fn new<F: PrimeField>(hash: F, bits_needed: usize) -> Self {
+            let elems_needed = (bits_needed - 1) / F::CAPACITY as usize + 1;
+            let mut elems = vec![hash];
+            while elems.len() < elems_needed {
+                elems.push(mimc(elems.last().unwrap().clone()));
+            }
+            let mut bits = Vec::new();
+            for (i, hash) in elems.into_iter().enumerate() {
+                let n = f_to_nat(&hash);
+                bits.extend(
+                    n.to_bytes_le()
+                        .into_iter()
+                        .flat_map(|byte| (0..8).map(move |i| (byte >> i) & 1 > 0)),
+                );
+                let ex_len = (i + 1) * (F::CAPACITY as usize);
+                bits.truncate(ex_len);
+                bits.extend(std::iter::repeat(false).take(ex_len - bits.len()));
+            }
+            Self { bits }
+        }
+        pub fn get_bit(&mut self) -> bool {
+            self.bits.pop().unwrap()
+        }
+        pub fn get_bits_as_nat(&mut self, n_bits: usize) -> BigUint {
+            let mut acc = BigUint::zero();
+            for _ in 0..n_bits {
+                acc = (acc << 1)
+                    | if self.get_bit() {
+                        BigUint::one()
+                    } else {
+                        BigUint::zero()
+                    }
+            }
+            acc
+        }
+    }
+
+    pub fn execute_pocklington_plan<F: PrimeField>(
+        hash: F,
+        plan: &[usize],
+    ) -> Option<PocklingtonCertificate> {
+        let mut bits = EntropySource::new(hash, entropy_needed(plan));
+        let base_nat = (BigUint::one() << 31) | (bits.get_bits_as_nat(30) << 1) | BigUint::one();
+        if !miller_rabin_32b(&base_nat) {
+            return None;
+        }
+        let mut certificate = PocklingtonCertificate::Base(base_nat);
+        for extension_bits in plan {
+            let extension = bits.get_bits_as_nat(extension_bits - 1) << 1;
+            certificate = attempt_pocklington_extension(certificate, extension).ok()?;
+        }
+        Some(certificate)
+    }
+
+    pub fn hash_to_pocklington_prime<E: PoseidonEngine<SBox = QuinticSBox<E>>>(
+        inputs: &[E::Fr],
+        entropy: usize,
+        params: &E::Params,
+    ) -> Option<(PocklingtonCertificate, E::Fr)> {
+        let n_bits = 16;
+        let plan = pocklington_plan(entropy);
+        let mut inputs: Vec<E::Fr> = inputs.iter().copied().collect();
+        inputs.push(E::Fr::zero());
+        for _ in 0..(1 << n_bits) {
+            let hash = poseidon_hash::<E>(params, &inputs).pop().unwrap();
+            if let Some(cert) = execute_pocklington_plan(hash, &plan) {
+                return Some((cert, inputs.last().unwrap().clone()));
+            }
             inputs.last_mut().unwrap().add_assign(&E::Fr::one());
         }
         None
@@ -228,7 +412,7 @@ pub fn hash_to_prime<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: ConstraintSys
         nonce.get_value(),
         LinearCombination::zero() + nonce.get_variable(),
     )
-    .fits_in_bits(cs.namespace(|| "nonce bound"), helper::nonce_width(domain))?;
+    .fits_in_bits(cs.namespace(|| "nonce bound"), domain.nonce_width())?;
     inputs.push(nonce);
     let hash = hash_to_rsa_element(cs.namespace(|| "hash"), &inputs, limb_width, domain, params)?;
     let res = hash.miller_rabin(cs.namespace(|| "primeck"), MILLER_RABIN_ROUNDS)?;
@@ -240,8 +424,9 @@ pub fn hash_to_prime<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: ConstraintSys
 mod test {
     use super::*;
 
-    use OptionExt;
     use gadget::Gadget;
+    use sapling_crypto::bellman::pairing::ff::ScalarEngine;
+    use OptionExt;
 
     use test_helpers::*;
 
@@ -441,7 +626,10 @@ mod test {
                 &domain,
                 &self.params.hash,
             )?;
-            assert_eq!(hash.limbs.len() * hash.params.limb_width, self.params.desired_bits);
+            assert_eq!(
+                hash.limbs.len() * hash.params.limb_width,
+                self.params.desired_bits
+            );
             hash.equal(cs.namespace(|| "eq"), &allocated_expected_output)?;
             Ok(())
         }
@@ -458,6 +646,19 @@ mod test {
                     ),
                     params: PrimeHashParams {
                         desired_bits: 128,
+                        hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+                    }
+        }, true),
+        prime_hash_one_32b: (PrimeHash {
+            inputs: Some(
+                        PrimeHashInputs {
+                            inputs: &[
+                                "1",
+                            ],
+                        }
+                    ),
+                    params: PrimeHashParams {
+                        desired_bits: 32,
                         hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
                     }
         }, true),
@@ -482,5 +683,53 @@ mod test {
                         hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
                     }
         }, true),
+    }
+
+    #[test]
+    fn pocklington_plan_128() {
+        assert_eq!(vec![31, 62, 8], helper::pocklington_plan(128));
+    }
+
+    use super::helper::PocklingtonCertificate::*;
+
+    #[test]
+    fn pocklington_extension_0() {
+        let cert = Base(BigUint::from(241usize));
+        let extension = BigUint::from(6usize);
+        let ex = Ok(Recursive {
+            rec: Box::new(cert.clone()),
+            number: BigUint::from(1447usize),
+            base: BigUint::from(2usize),
+            extension: extension.clone(),
+            nonce: 0,
+        });
+        let act = helper::attempt_pocklington_extension(cert, extension);
+        assert_eq!(ex, act);
+    }
+
+    macro_rules! pocklington_hash_tests {
+        ($($name:ident: $value:expr,)*) => {
+            $(
+                #[test]
+                fn $name() {
+                    let (inputs, entropy) = $value;
+                    let input_values: Vec<<Bn256 as ScalarEngine>::Fr> = inputs
+                        .iter()
+                        .map(|s| <Bn256 as ScalarEngine>::Fr::from_str(s).unwrap())
+                        .collect();
+                    let params = Bn256PoseidonParams::new::<Keccak256Hasher>();
+                    let (cert, _nonce) = helper::hash_to_pocklington_prime::<Bn256>(&input_values, entropy, &params).expect("pocklington generation failed");
+                    assert!(miller_rabin(cert.number(), 20));
+                    println!("{}", cert.number());
+                }
+            )*
+        }
+    }
+
+    pocklington_hash_tests! {
+        pocklington_hash_128_1: (&["1"], 128),
+        pocklington_hash_128_2: (&["2"], 128),
+        pocklington_hash_128_3: (&["3"], 128),
+        pocklington_hash_128_4: (&["4"], 128),
     }
 }
