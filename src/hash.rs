@@ -6,7 +6,6 @@ use sapling_crypto::circuit::num::AllocatedNum;
 use sapling_crypto::poseidon::{PoseidonEngine, PoseidonHashParams, QuinticSBox};
 
 use bignat::BigNat;
-use mimc::mimc;
 use num::Num;
 use OptionExt;
 
@@ -119,7 +118,7 @@ pub mod helper {
         let mut sum_of_hashes = low_k_bits(&f_to_nat(&hash), bits_per_hash);
         let mut perm = hash;
         for i in 1..n_hashes {
-            perm = mimc(perm);
+            perm.add_assign(&E::Fr::one());
             let low_bits = low_k_bits(&f_to_nat(&perm), bits_per_hash);
             sum_of_hashes += low_bits << (bits_per_hash * i);
         }
@@ -225,7 +224,12 @@ pub mod helper {
     ) -> Result<PocklingtonCertificate, PocklingtonCertificate> {
         let nonce_bits = 10;
         for i in 0..(1 << nonce_bits) {
-            let nonced_extension = &extension + 2usize * low_k_bits(&f_to_nat(&mimc(F::from_str(&format!("{}", i)).unwrap())), nonce_bits);
+            let nonced_extension = &extension
+                + 2usize
+                    * low_k_bits(
+                        &f_to_nat(&mimc(F::from_str(&format!("{}", i)).unwrap())),
+                        nonce_bits,
+                    );
             let number = p.number() * &nonced_extension + 1usize;
             let mut base = BigUint::from(2usize);
             while base < number {
@@ -360,7 +364,19 @@ pub fn hash_to_rsa_element<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: Constra
     // Then we extend with MiMC
     let mut perm = hash.clone();
     for i in 0..(n_hashes - 1) {
-        perm = mimc(cs.namespace(|| format!("mimc {}", i)), perm)?;
+        let new = AllocatedNum::alloc(cs.namespace(|| format!("perm {}", i)), || {
+            Ok({
+                let mut t = perm.get_value().grab()?.clone();
+                t.add_assign(&E::Fr::one());
+                t
+            })
+        })?;
+        cs.enforce(|| format!("correct perm {}", i),
+            |lc| lc,
+            |lc| lc,
+            |lc| lc + new.get_variable() - perm.get_variable() - CS::one(),
+        );
+        perm = new;
         let low_bits: Vec<Boolean> = {
             let mut b = perm.into_bits_le_strict(cs.namespace(|| format!("bitify {}", i)))?;
             b.truncate(bits_per_hash);
@@ -721,8 +737,6 @@ mod test {
                     let params = Bn256PoseidonParams::new::<Keccak256Hasher>();
                     let (cert, _nonce) = helper::hash_to_pocklington_prime::<Bn256>(&input_values, entropy, &params).expect("pocklington generation failed");
                     assert!(miller_rabin(cert.number(), 20));
-                    println!("{}", cert.number());
-                    println!("{:?}", cert);
                 }
             )*
         }
