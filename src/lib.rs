@@ -41,6 +41,7 @@ mod test_helpers {
 }
 
 pub mod bit;
+pub mod exp;
 pub mod num;
 pub mod poly;
 pub mod bignat;

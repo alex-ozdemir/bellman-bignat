@@ -136,12 +136,10 @@ pub mod allocated_num {
             return Err(SynthesisError::Unsatisfiable);
         }
         let res = Num::alloc(cs.namespace(|| "res"), || {
-            let res = nat_to_f(
+            Ok(nat_to_f(
                 &(f_to_nat(num.get_value().grab()?) & ((BigUint::one() << n_bits) - 1usize)),
             )
-            .unwrap();
-            println!("{} -> {}", num.get_value().grab()?, &res);
-            Ok(res)
+            .unwrap())
         })?;
         cs.enforce(
             || "sum",

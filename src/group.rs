@@ -8,6 +8,7 @@ use std::fmt::{Debug, Display};
 
 use bignat::{BigNat, BigNatParams};
 use bit::{Bit, Bitvector};
+use exp::optimal_k;
 use gadget::Gadget;
 
 pub trait SemiGroup: Clone + Eq + Debug + Display {
@@ -108,15 +109,6 @@ pub trait CircuitSemiGroup: Gadget<Access=()> + Eq {
         exp: Bitvector<Self::E>,
     ) -> Result<Self::Elem, SynthesisError> {
         // https://en.wikipedia.org/wiki/Exponentiation_by_squaring#2k-ary_method
-        fn optimal_k(n: usize) -> usize {
-            for k in 1.. {
-                let fk = k as f64;
-                if (n as f64) < (fk * (fk + 1.0) * 2f64.powf(2.0 * fk)) / (2f64.powf(fk + 1.0) - fk - 2.0) + 1.0 {
-                    return k;
-                }
-            }
-            unreachable!()
-        }
         let k = optimal_k(exp.bits.len());
         let base_powers = {
             let mut base_powers = vec![self.identity(), base.clone()];
@@ -210,13 +202,7 @@ impl<E: Engine> Gadget for CircuitRsaGroup<E> {
         )?;
         m.enforce_full_bits(cs.namespace(|| "m is full"))?;
 
-        let one = BigUint::one();
-        let id = <BigNat<E> as Gadget>::alloc(
-            cs.namespace(|| "id"),
-            value.as_ref().map(|_| &one),
-            (),
-            &BigNatParams::new(params.limb_width, params.n_limbs),
-        )?;
+        let id = BigNat::identity::<CS>(params.limb_width);
         Ok(Self {
             g,
             m,
