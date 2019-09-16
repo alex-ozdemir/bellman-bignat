@@ -40,13 +40,14 @@ pub fn nat_to_limbs<'a, F: PrimeField>(
 ) -> Result<Vec<F>, SynthesisError> {
     let mask = (BigUint::from(1usize) << limb_width) - 1usize;
     if nat.bits() <= n_limbs * limb_width {
-        Ok(
-            (0..n_limbs)
-                .map(|limb_i| nat_to_f(&(&mask & (nat >> (limb_i * limb_width)))).unwrap())
-                .collect(),
-        )
+        Ok((0..n_limbs)
+            .map(|limb_i| nat_to_f(&(&mask & (nat >> (limb_i * limb_width)))).unwrap())
+            .collect())
     } else {
-        eprintln!("nat {} does not fit in {} limbs of width {}", nat, n_limbs, limb_width);
+        eprintln!(
+            "nat {} does not fit in {} limbs of width {}",
+            nat, n_limbs, limb_width
+        );
         Err(SynthesisError::Unsatisfiable)
     }
 }
@@ -378,28 +379,47 @@ impl<E: Engine> BigNat<E> {
         nat.group_limbs(limb_width)
     }
 
-    pub fn enforce_full_bits<CS: ConstraintSystem<E>>(&mut self, mut cs: CS) -> Result<(), SynthesisError> {
-        let value = self.limb_values.as_ref().map(|vs| vs.last().unwrap().clone());
+    pub fn enforce_full_bits<CS: ConstraintSystem<E>>(
+        &mut self,
+        mut cs: CS,
+    ) -> Result<(), SynthesisError> {
+        let value = self
+            .limb_values
+            .as_ref()
+            .map(|vs| vs.last().unwrap().clone());
         let lc = self.limbs.last().unwrap().clone();
-        Num::new(value, lc).fits_in_bits(cs.namespace(|| "decomp"), self.params.limb_width)?.into_bits().last().unwrap().constrain_value(cs.namespace(|| "1"), true);
+        Num::new(value, lc)
+            .fits_in_bits(cs.namespace(|| "decomp"), self.params.limb_width)?
+            .into_bits()
+            .last()
+            .unwrap()
+            .constrain_value(cs.namespace(|| "1"), true);
         self.params.min_bits = self.params.limb_width * self.params.n_limbs;
         Ok(())
     }
 
-    pub fn enforce_min_bits<CS: ConstraintSystem<E>>(&mut self, mut cs: CS, min_bits: usize) -> Result<(), SynthesisError> {
+    pub fn enforce_min_bits<CS: ConstraintSystem<E>>(
+        &mut self,
+        mut cs: CS,
+        min_bits: usize,
+    ) -> Result<(), SynthesisError> {
         let bits = self.decompose(cs.namespace(|| "decomp"))?.into_bits();
         let upper_bits: Vec<Bit<E>> = bits.into_iter().skip(min_bits - 1).collect();
-        let inverse = cs.alloc(|| "inverse",
-                               || Ok({
-                                   let mut sum = E::Fr::zero();
-                                   for b in &upper_bits {
-                                       if *b.value.grab()? {
-                                           sum.add_assign(&E::Fr::one());
-                                       }
-                                   }
-                                   sum.inverse();
-                                   sum
-                               }))?;
+        let inverse = cs.alloc(
+            || "inverse",
+            || {
+                Ok({
+                    let mut sum = E::Fr::zero();
+                    for b in &upper_bits {
+                        if *b.value.grab()? {
+                            sum.add_assign(&E::Fr::one());
+                        }
+                    }
+                    sum.inverse();
+                    sum
+                })
+            },
+        )?;
         cs.enforce(
             || "inverse exists",
             |lc| lc + inverse,
@@ -409,7 +429,6 @@ impl<E: Engine> BigNat<E> {
                     sum = sum + &b.bit;
                 }
                 sum
-
             },
             |lc| lc + CS::one(),
         );
@@ -581,7 +600,8 @@ impl<E: Engine> BigNat<E> {
         assert!(self.limbs.len() > 0);
         let mut new = self.clone();
         assert!(new.limbs.len() > 0);
-        new.limbs[0] = std::mem::replace(&mut new.limbs[0], LinearCombination::zero()) + (constant, CS::one());
+        new.limbs[0] =
+            std::mem::replace(&mut new.limbs[0], LinearCombination::zero()) + (constant, CS::one());
         if let Some(vs) = new.limb_values.as_mut() {
             vs[0].add_assign(&constant);
         }
@@ -1037,7 +1057,18 @@ impl<E: Engine> BigNat<E> {
         exp: &Self,
         modulus: &Self,
     ) -> Result<BigNat<E>, SynthesisError> {
-        let exp_bin_rev = exp.decompose(cs.namespace(|| "exp decomp"))?.reversed();
+        let exp_bin_rev = if exp.params.max_word >= BigUint::one() << exp.params.limb_width {
+            let exp_carried = BigNat::alloc_from_nat(
+                cs.namespace(|| "exp carried"),
+                || Ok(exp.value.grab()?.clone()),
+                exp.params.limb_width,
+                exp.params.n_limbs,
+            )?;
+            exp_carried.equal_when_carried_regroup(cs.namespace(|| "carry check"), &exp)?;
+            exp_carried.decompose(cs.namespace(|| "exp decomp"))?.reversed()
+        } else {
+            exp.decompose(cs.namespace(|| "exp decomp"))?.reversed()
+        };
         self.pow_mod_bin_rev(cs.namespace(|| "binary exp"), exp_bin_rev, modulus)
     }
 

@@ -262,12 +262,6 @@ pub mod helper {
                     break;
                 }
                 if (&part - 1usize).gcd(&number).is_one() {
-                    println!("helper base: {}", base);
-                    println!("helper number: {}", number);
-                    println!("helper nonce: {}", nonce);
-                    println!("helper mimcd_nonce: {}", mimcd_nonce);
-                    println!("helper nonced_extension: {}", nonced_extension);
-                    println!("helper part: {}", part);
                     p.extensions.push(PocklingtonExtension {
                         extension,
                         base,
@@ -296,8 +290,6 @@ pub mod helper {
         if !miller_rabin_32b(&base_nat) {
             return None;
         }
-        println!("helper bits: {:b}", base_nat);
-        println!("helper base_prime: {}", base_nat);
         let mut certificate = PocklingtonCertificate {
             base_prime: base_nat,
             base_nonce: nonce,
@@ -309,7 +301,6 @@ pub mod helper {
                 trailing_ones: 0,
                 leading_ones: 0,
             });
-            println!("helper Extension: {}", extension);
             certificate = attempt_pocklington_extension::<F>(certificate, extension).ok()?;
         }
         Some(certificate)
@@ -326,7 +317,6 @@ pub mod helper {
         for nonce in 0..(1 << NONCE_BITS) {
             let hash = poseidon_hash::<E>(params, &inputs).pop().unwrap();
             if let Some(cert) = execute_pocklington_plan(hash, &plan, nonce) {
-                println!("helper hash: {:?}", hash);
                 return Some(cert);
             }
             inputs.last_mut().unwrap().add_assign(&E::Fr::one());
@@ -463,7 +453,6 @@ pub fn hash_to_pocklington_prime<
     let hash = poseidon_hash::<E, _>(cs.namespace(|| "base hash"), &inputs, params)?
         .pop()
         .unwrap();
-    println!("actual hash: {:?}", hash.get_value());
     let mut entropy_source =
         EntropySource::alloc(cs.namespace(|| "entropy source"), Some(&()), hash, &entropy)?;
 
@@ -475,7 +464,6 @@ pub fn hash_to_pocklington_prime<
         },
         limb_width,
     );
-    println!("actual base_prime: {}", prime);
     let mr_res = &prime.miller_rabin_32b(cs.namespace(|| "base check"))?;
     Boolean::enforce_equal(
         cs.namespace(|| "MR passes"),
@@ -497,7 +485,6 @@ pub fn hash_to_pocklington_prime<
                 min_bits: 0,
             },
         );
-        println!("actual mimcd_nonce: {}", mimcd_nonce);
         let extension = entropy_source.get_bits_as_nat::<CS>(
             NatTemplate {
                 random_bits: extension_bits - 1,
@@ -506,7 +493,6 @@ pub fn hash_to_pocklington_prime<
             },
             limb_width,
         );
-        println!("actual extension: {}", extension);
         let nonced_extension = extension.add::<CS>(&mimcd_nonce)?.scale::<CS>(usize_to_f(2usize));
         let base = BigNat::alloc_from_nat(
             cs.namespace(|| "base"),
@@ -518,14 +504,9 @@ pub fn hash_to_pocklington_prime<
             limb_width,
             1, // TODO allow larger bases
         )?;
-        println!("actual base: {}", base);
-        println!("actual nonced_extension: {}", nonced_extension);
-        println!("actual prime: {}", prime);
         let n_less_one = nonced_extension.mult(cs.namespace(|| "n - 1"), &prime)?;
         let n = n_less_one.shift::<CS>(E::Fr::one());
-        println!("actual n: {}", n);
         let part = base.pow_mod(cs.namespace(|| "a^r"), &nonced_extension, &n)?;
-        println!("actual part: {}", part);
         let one = BigNat::one(cs.namespace(|| "one"), prime.params().limb_width)?;
         let part_less_one = part.sub(cs.namespace(|| "a^r - 1"), &one)?;
         part_less_one.enforce_coprime(cs.namespace(|| "coprime"), &n)?;
@@ -881,7 +862,6 @@ mod test {
             )
             .expect("pocklington hash failed");
             let plan = super::helper::PocklingtonPlan::new(self.params.entropy);
-            println!("{:#?}", plan);
             let allocated_expected_output = BigNat::alloc_from_nat(
                 cs.namespace(|| "output"),
                 || Ok(cert.number().clone()),
@@ -963,6 +943,18 @@ mod test {
                 }),
                 params: PockHashParams {
                     entropy: 128,
+                    hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+                },
+            },
+            true,
+        ),
+        pocklington_hash_160_1: (
+            PockHash {
+                inputs: Some(PockHashInputs {
+                    inputs: &["1","2","3","4","5","6","7","8","9","10"],
+                }),
+                params: PockHashParams {
+                    entropy: 160,
                     hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
                 },
             },
