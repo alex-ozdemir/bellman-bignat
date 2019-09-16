@@ -128,3 +128,169 @@ pub fn hash_to_prime<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: ConstraintSys
     Boolean::enforce_equal(cs.namespace(|| "result"), &Boolean::constant(true), &res)?;
     Ok(hash)
 }
+
+#[cfg(test)]
+mod test {
+    use num_bigint::BigUint;
+    use sapling_crypto::bellman::pairing::ff::{PrimeField};
+    use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
+    use sapling_crypto::circuit::num::AllocatedNum;
+    use sapling_crypto::group_hash::Keccak256Hasher;
+    use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
+    use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
+
+    use super::{hash_to_prime, helper};
+
+    use OptionExt;
+    use bignat::BigNat;
+    use hash::HashDomain;
+
+    use test_helpers::*;
+
+
+    #[test]
+    fn mr_11() {
+        assert_eq!(
+            helper::miller_rabin(&BigUint::from(11usize), 3),
+            true
+        );
+    }
+
+    #[test]
+    fn mr_12() {
+        assert_eq!(
+            helper::miller_rabin(&BigUint::from(12usize), 3),
+            false
+        );
+    }
+
+    #[test]
+    fn mr_251() {
+        assert_eq!(
+            helper::miller_rabin(&BigUint::from(251usize), 11),
+            true
+        );
+    }
+
+    #[test]
+    fn mr_15() {
+        assert_eq!(
+            helper::miller_rabin(&BigUint::from(15usize), 3),
+            false
+        );
+    }
+
+    #[derive(Debug)]
+    pub struct PrimeHashInputs<'a> {
+        pub inputs: &'a [&'a str],
+    }
+
+    #[derive(Debug)]
+    pub struct PrimeHashParams<E: PoseidonEngine<SBox = QuinticSBox<E>>> {
+        pub desired_bits: usize,
+        pub hash: E::Params,
+    }
+
+    pub struct PrimeHash<'a, E: PoseidonEngine<SBox = QuinticSBox<E>>> {
+        inputs: Option<PrimeHashInputs<'a>>,
+        params: PrimeHashParams<E>,
+    }
+
+    impl<'a, E: PoseidonEngine<SBox = QuinticSBox<E>>> Circuit<E> for PrimeHash<'a, E> {
+        fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
+            let input_values: Vec<E::Fr> = self
+                .inputs
+                .grab()?
+                .inputs
+                .iter()
+                .map(|s| E::Fr::from_str(s).unwrap())
+                .collect();
+            let domain = HashDomain {
+                n_bits: self.params.desired_bits,
+                n_trailing_ones: 2,
+            };
+            let (expected_ouput, _, _) = helper::hash_to_prime::<E>(
+                &input_values,
+                &domain,
+                &self.params.hash,
+            )
+            .unwrap();
+            let allocated_expected_output = BigNat::alloc_from_nat(
+                cs.namespace(|| "output"),
+                || Ok(expected_ouput),
+                32,
+                self.params.desired_bits / 32,
+            )?;
+            let allocated_inputs: Vec<AllocatedNum<E>> = input_values
+                .into_iter()
+                .enumerate()
+                .map(|(i, value)| {
+                    AllocatedNum::alloc(cs.namespace(|| format!("input {}", i)), || Ok(value))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let hash = hash_to_prime(
+                cs.namespace(|| "hash"),
+                &allocated_inputs,
+                32,
+                &domain,
+                &self.params.hash,
+            )?;
+            assert_eq!(
+                hash.limbs.len() * hash.params.limb_width,
+                self.params.desired_bits
+            );
+            hash.equal(cs.namespace(|| "eq"), &allocated_expected_output)?;
+            Ok(())
+        }
+    }
+
+    circuit_tests! {
+        prime_hash_one: (PrimeHash {
+            inputs: Some(
+                        PrimeHashInputs {
+                            inputs: &[
+                                "1",
+                            ],
+                        }
+                    ),
+                    params: PrimeHashParams {
+                        desired_bits: 128,
+                        hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+                    }
+        }, true),
+        prime_hash_one_32b: (PrimeHash {
+            inputs: Some(
+                        PrimeHashInputs {
+                            inputs: &[
+                                "1",
+                            ],
+                        }
+                    ),
+                    params: PrimeHashParams {
+                        desired_bits: 32,
+                        hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+                    }
+        }, true),
+        prime_hash_ten: (PrimeHash {
+            inputs: Some(
+                        PrimeHashInputs {
+                            inputs: &[
+                                "0",
+                                "1",
+                                "2",
+                                "3",
+                                "5",
+                                "6",
+                                "7",
+                                "8",
+                                "9",
+                            ],
+                        }
+                    ),
+                    params: PrimeHashParams {
+                        desired_bits: 128,
+                        hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+                    }
+        }, true),
+    }
+}
