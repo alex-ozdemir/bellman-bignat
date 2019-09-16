@@ -35,138 +35,16 @@ mod test {
     use sapling_crypto::bellman::pairing::ff::{PrimeField};
     use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
     use sapling_crypto::circuit::num::AllocatedNum;
+    use sapling_crypto::group_hash::Keccak256Hasher;
+    use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
     use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
 
     use bignat::BigNat;
-    use gadget::Gadget;
     use sapling_crypto::bellman::pairing::ff::ScalarEngine;
     use OptionExt;
 
     use test_helpers::*;
 
-    #[derive(Debug)]
-    pub struct RsaHashInputs<'a> {
-        pub inputs: &'a [&'a str],
-    }
-
-    #[derive(Debug)]
-    pub struct RsaHashParams<E: PoseidonEngine<SBox = QuinticSBox<E>>> {
-        pub desired_bits: usize,
-        pub hash: E::Params,
-    }
-
-    pub struct RsaHash<'a, E: PoseidonEngine<SBox = QuinticSBox<E>>> {
-        inputs: Option<RsaHashInputs<'a>>,
-        params: RsaHashParams<E>,
-    }
-
-    impl<'a, E: PoseidonEngine<SBox = QuinticSBox<E>>> Circuit<E> for RsaHash<'a, E> {
-        fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
-            let input_values: Vec<E::Fr> = self
-                .inputs
-                .grab()?
-                .inputs
-                .iter()
-                .map(|s| E::Fr::from_str(s).unwrap())
-                .collect();
-
-            let expected_ouput = super::rsa::helper::hash_to_rsa_element::<E>(
-                &input_values,
-                &HashDomain {
-                    n_bits: self.params.desired_bits,
-                    n_trailing_ones: 1,
-                },
-                &self.params.hash,
-            );
-            let allocated_expected_output = BigNat::alloc_from_nat(
-                cs.namespace(|| "output"),
-                || Ok(expected_ouput),
-                32,
-                self.params.desired_bits / 32,
-            )?;
-            let allocated_inputs: Vec<AllocatedNum<E>> = input_values
-                .into_iter()
-                .enumerate()
-                .map(|(i, value)| {
-                    AllocatedNum::alloc(cs.namespace(|| format!("input {}", i)), || Ok(value))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let hash = super::rsa::hash_to_rsa_element(
-                cs.namespace(|| "hash"),
-                &allocated_inputs,
-                32,
-                &HashDomain {
-                    n_bits: self.params.desired_bits,
-                    n_trailing_ones: 1,
-                },
-                &self.params.hash,
-            )?;
-            assert_eq!(
-                hash.limbs.len() * hash.params().limb_width,
-                self.params.desired_bits
-            );
-            hash.equal(cs.namespace(|| "eq"), &allocated_expected_output)?;
-            Ok(())
-        }
-    }
-
-    use sapling_crypto::group_hash::Keccak256Hasher;
-    use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
-
-    circuit_tests! {
-        hash_one: (RsaHash {
-            inputs: Some(
-                        RsaHashInputs {
-                            inputs: &[
-                                "1",
-                            ],
-                        }
-                    ),
-                    params: RsaHashParams {
-                        desired_bits: 1024,
-                        hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
-                    }
-        }, true),
-        hash_ten: (RsaHash {
-            inputs: Some(
-                        RsaHashInputs {
-                            inputs: &[
-                                "1", "2", "3", "4", "5", "6", "7", "8", "9", "10",
-                            ],
-                        }
-                    ),
-                    params: RsaHashParams {
-                        desired_bits: 1024,
-                        hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
-                    }
-        }, true),
-        hash_ten_bit_flip: (RsaHash {
-            inputs: Some(
-                        RsaHashInputs {
-                            inputs: &[
-                                "1", "2", "3", "4", "5", "6", "7", "8", "9", "9",
-                            ],
-                        }
-                    ),
-                    params: RsaHashParams {
-                        desired_bits: 1024,
-                        hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
-                    }
-        }, true),
-        hash_ten_2048: (RsaHash {
-            inputs: Some(
-                        RsaHashInputs {
-                            inputs: &[
-                                "1", "2", "3", "4", "5", "6", "7", "8", "9", "10",
-                            ],
-                        }
-                    ),
-                    params: RsaHashParams {
-                        desired_bits: 2048,
-                        hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
-                    }
-        }, true),
-    }
 
     #[test]
     fn mr_11() {
