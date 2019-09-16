@@ -1,12 +1,13 @@
-use super::HashDomain;
-use bignat::BigNat;
-use num::Num;
 use sapling_crypto::bellman::pairing::ff::Field;
 use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
 use sapling_crypto::circuit::boolean::Boolean;
 use sapling_crypto::circuit::num::AllocatedNum;
 use sapling_crypto::poseidon::{PoseidonEngine, PoseidonHashParams, QuinticSBox};
+
+use bignat::BigNat;
+use num::Num;
 use OptionExt;
+use super::HashDomain;
 
 pub mod helper {
     use f_to_nat;
