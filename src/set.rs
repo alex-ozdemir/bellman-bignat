@@ -11,8 +11,7 @@ use std::rc::Rc;
 use bignat::BigNat;
 use gadget::Gadget;
 use group::{CircuitRsaGroup, CircuitRsaGroupParams, CircuitSemiGroup, RsaGroup, SemiGroup};
-use hash::rsa;
-use hash::HashDomain;
+use hash::{rsa, pocklington, HashDomain};
 use rsa_set::{CircuitIntSet, IntSet, NaiveExpSet};
 use OptionExt;
 
@@ -521,14 +520,11 @@ where
         to_hash_to_challenge.extend(insertions.iter().flat_map(|i| i.iter().cloned()));
         to_hash_to_challenge.extend(removals.iter().flat_map(|i| i.iter().cloned()));
 
-        let challenge = rsa::hash_to_rsa_element(
+        let challenge = pocklington::hash_to_pocklington_prime(
             cs.namespace(|| "chash"),
             &to_hash_to_challenge,
             self.params.limb_width,
-            &HashDomain {
-                n_bits: self.params.n_bits_challenge,
-                n_trailing_ones: 2,
-            },
+            self.params.n_bits_challenge,
             &self.params.hash,
         )?;
 

@@ -279,7 +279,7 @@ pub fn hash_to_pocklington_prime<
 
 #[cfg(test)]
 mod test {
-    use super::{NONCE_BITS,helper, hash_to_pocklington_prime};
+    use super::{helper, hash_to_pocklington_prime};
     use sapling_crypto::bellman::pairing::ff::{PrimeField};
     use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
     use sapling_crypto::circuit::num::AllocatedNum;
