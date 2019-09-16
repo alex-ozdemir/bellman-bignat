@@ -4,16 +4,15 @@ use sapling_crypto::bellman::{Circuit, ConstraintSystem, LinearCombination, Synt
 use sapling_crypto::circuit::num::AllocatedNum;
 use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
 
+use std::fmt::{self, Debug, Formatter};
 use std::marker::PhantomData;
-use std::fmt::{self,Debug,Formatter};
 use std::rc::Rc;
 
 use bignat::BigNat;
-use group::{
-    CircuitRsaGroup, CircuitRsaGroupParams, CircuitSemiGroup, RsaGroup, SemiGroup,
-};
-use hash::{hash_to_rsa_element, helper, HashDomain};
 use gadget::Gadget;
+use group::{CircuitRsaGroup, CircuitRsaGroupParams, CircuitSemiGroup, RsaGroup, SemiGroup};
+use hash::rsa;
+use hash::HashDomain;
 use rsa_set::{CircuitIntSet, IntSet, NaiveExpSet};
 use OptionExt;
 
@@ -32,16 +31,14 @@ where
 impl<E, Inner> Debug for Set<E, Inner>
 where
     E: PoseidonEngine<SBox = QuinticSBox<E>>,
-    Inner: IntSet, {
+    Inner: IntSet,
+{
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "{:?}", self.inner)
     }
-
 }
 
-impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> std::clone::Clone
-    for Set<E, Inner>
-{
+impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> std::clone::Clone for Set<E, Inner> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
@@ -66,7 +63,7 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> Set<E, Inner> {
         let inner = Inner::new_with(
             group,
             items.into_iter().map(|slice| {
-                helper::hash_to_rsa_element::<E>(slice, &hash_domain, &hash_params)
+                rsa::helper::hash_to_rsa_element::<E>(slice, &hash_domain, &hash_params)
             }),
         );
         Self {
@@ -85,15 +82,19 @@ where
 {
     /// Add `n` to the set, returning whether `n` is new to the set.
     pub fn insert(&mut self, n: Vec<E::Fr>) -> bool {
-        self.inner.insert(
-            helper::hash_to_rsa_element::<E>(&n, &self.hash_domain, &self.hash_params),
-        )
+        self.inner.insert(rsa::helper::hash_to_rsa_element::<E>(
+            &n,
+            &self.hash_domain,
+            &self.hash_params,
+        ))
     }
     /// Remove `n` from the set, returning whether `n` was present.
     pub fn remove(&mut self, n: &[E::Fr]) -> bool {
-        self.inner.remove(
-            &helper::hash_to_rsa_element::<E>(&n, &self.hash_domain, &self.hash_params),
-        )
+        self.inner.remove(&rsa::helper::hash_to_rsa_element::<E>(
+            &n,
+            &self.hash_domain,
+            &self.hash_params,
+        ))
     }
 
     /// The digest of the current elements (`g` to the product of the elements).
@@ -245,7 +246,7 @@ where
             .into_iter()
             .enumerate()
             .map(|(i, slice)| -> Result<BigNat<E>, SynthesisError> {
-                hash_to_rsa_element(
+                rsa::hash_to_rsa_element(
                     cs.namespace(|| format!("hash {}", i)),
                     &slice,
                     self.params.limb_width,
@@ -286,7 +287,7 @@ where
             .into_iter()
             .enumerate()
             .map(|(i, slice)| -> Result<BigNat<E>, SynthesisError> {
-                hash_to_rsa_element(
+                rsa::hash_to_rsa_element(
                     cs.namespace(|| format!("hash {}", i)),
                     &slice,
                     self.params.limb_width,
@@ -402,10 +403,10 @@ where
         };
         let untouched_hashes = untouched
             .iter()
-            .map(|xs| helper::hash_to_rsa_element::<E>(&xs, &hash_domain, &hash));
+            .map(|xs| rsa::helper::hash_to_rsa_element::<E>(&xs, &hash_domain, &hash));
         let inserted_hashes = inserted
             .iter()
-            .map(|xs| helper::hash_to_rsa_element::<E>(&xs, &hash_domain, &hash));
+            .map(|xs| rsa::helper::hash_to_rsa_element::<E>(&xs, &hash_domain, &hash));
         let final_digest = untouched_hashes
             .clone()
             .chain(inserted_hashes)
@@ -520,7 +521,7 @@ where
         to_hash_to_challenge.extend(insertions.iter().flat_map(|i| i.iter().cloned()));
         to_hash_to_challenge.extend(removals.iter().flat_map(|i| i.iter().cloned()));
 
-        let challenge = hash_to_rsa_element(
+        let challenge = rsa::hash_to_rsa_element(
             cs.namespace(|| "chash"),
             &to_hash_to_challenge,
             self.params.limb_width,
@@ -532,11 +533,18 @@ where
         )?;
 
         println!("Deleting elements");
-        let reduced_set = set.remove(cs.namespace(|| "remove"), &challenge, removals.iter().map(Vec::as_slice))?;
+        let reduced_set = set.remove(
+            cs.namespace(|| "remove"),
+            &challenge,
+            removals.iter().map(Vec::as_slice),
+        )?;
 
         println!("Inserting elements");
-        let expanded_set =
-            reduced_set.insert(cs.namespace(|| "insert"), &challenge, insertions.iter().map(Vec::as_slice))?;
+        let expanded_set = reduced_set.insert(
+            cs.namespace(|| "insert"),
+            &challenge,
+            insertions.iter().map(Vec::as_slice),
+        )?;
 
         let expected_digest = BigNat::alloc_from_nat(
             cs.namespace(|| "expected_digest"),
@@ -564,10 +572,10 @@ mod test {
     const RSA_512: &str = "11834783464130424096695514462778870280264989938857328737807205623069291535525952722847913694296392927890261736769191982212777933726583565708193466779811767";
 
     use super::*;
+    use sapling_crypto::group_hash::Keccak256Hasher;
+    use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
     use std::str::FromStr;
     use test_helpers::*;
-    use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
-    use sapling_crypto::group_hash::Keccak256Hasher;
 
     circuit_tests! {
         small_rsa_1_swap: (SetBench {
