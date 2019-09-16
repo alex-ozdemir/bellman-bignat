@@ -1,9 +1,9 @@
-use sapling_crypto::bellman::pairing::ff::{Field, PrimeField};
+use sapling_crypto::bellman::pairing::ff::Field;
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
 
 use std::cmp::max;
-use std::fmt::{self, Debug, Display, Formatter};
+use std::fmt::{self, Debug, Formatter};
 
 use usize_to_f;
 use OptionExt;
@@ -189,21 +189,15 @@ mod tests {
         let circuit = PolynomialMultiplier {
             a: [1, 1, 1]
                 .into_iter()
-                .map(|i| Fr::from_str(&format!("{}", i)).unwrap())
+                .map(|i| usize_to_f::<Fr>(*i))
                 .collect(),
             b: [1, 1]
                 .into_iter()
-                .map(|i| Fr::from_str(&format!("{}", i)).unwrap())
+                .map(|i| usize_to_f::<Fr>(*i))
                 .collect(),
         };
 
         circuit.synthesize(&mut cs).expect("synthesis failed");
-        dbg!(Fr::CAPACITY);
-        use sapling_crypto::poseidon::PoseidonHashParams;
-        dbg!(sapling_crypto::poseidon::bn256::Bn256PoseidonParams::new::<
-            sapling_crypto::group_hash::Keccak256Hasher,
-        >()
-        .output_len());
 
         if let Some(token) = cs.which_is_unsatisfied() {
             eprintln!("Error: {} is unsatisfied", token);
