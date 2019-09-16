@@ -118,20 +118,20 @@ fn main() {
     println!("Done with proof, duration: {:?}", prover_end - prover_start);
     use sapling_crypto::bellman::pairing::bn256::Bn256;
     use sapling_crypto::bellman::pairing::ff::ScalarEngine;
-    let mut inputs: Vec<<Bn256 as ScalarEngine>::Fr> = nat_to_limbs(&group.g, 32, 64);
+    let mut inputs: Vec<<Bn256 as ScalarEngine>::Fr> = nat_to_limbs(&group.g, 32, 64).unwrap();
     inputs.extend(nat_to_limbs::<<Bn256 as ScalarEngine>::Fr>(
         &group.m, 32, 64,
-    ));
+    ).unwrap());
     inputs.extend(nat_to_limbs::<<Bn256 as ScalarEngine>::Fr>(
         &initial_set.digest(),
         32,
         64,
-    ));
+    ).unwrap());
     inputs.extend(nat_to_limbs::<<Bn256 as ScalarEngine>::Fr>(
         &final_set.digest(),
         32,
         64,
-    ));
+    ).unwrap());
 
     println!("verified {:?}", verify_proof(&pvk, &proof, &inputs));
 }

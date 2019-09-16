@@ -52,6 +52,7 @@ pub mod set;
 pub mod mimc;
 pub mod group;
 pub mod gadget;
+pub mod entropy;
 
 use sapling_crypto::bellman::pairing::ff::{PrimeField, PrimeFieldRepr};
 use num_bigint::BigUint;

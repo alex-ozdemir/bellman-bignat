@@ -1,9 +1,11 @@
-use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
-use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::pairing::ff::{Field, PrimeField};
+use sapling_crypto::bellman::pairing::Engine;
+use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
 
 use std::cmp::max;
+use std::fmt::{self, Debug, Display, Formatter};
 
+use usize_to_f;
 use OptionExt;
 
 pub struct Polynomial<E: Engine> {
@@ -11,7 +13,28 @@ pub struct Polynomial<E: Engine> {
     pub values: Option<Vec<E::Fr>>,
 }
 
+impl<E: Engine> Debug for Polynomial<E> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        f.debug_struct("Polynomial")
+            .field("values", &self.values)
+            .finish()
+    }
+}
+
 impl<E: Engine> Polynomial<E> {
+    pub fn evaluate_at(&self, x: E::Fr) -> Option<E::Fr> {
+        self.values.as_ref().map(|vs| {
+            let mut v = E::Fr::one();
+            let mut acc = E::Fr::zero();
+            for coeff in vs {
+                let mut t = coeff.clone();
+                t.mul_assign(&v);
+                acc.add_assign(&t);
+                v.mul_assign(&x);
+            }
+            acc
+        })
+    }
     pub fn alloc_product<CS: ConstraintSystem<E>>(
         &self,
         mut cs: CS,
@@ -44,12 +67,15 @@ impl<E: Engine> Polynomial<E> {
             values,
         };
         for x in 1..(n_product_coeffs + 1) {
+            let mut a = self.evaluate_at(usize_to_f(x)).unwrap();
+            a.mul_assign(&other.evaluate_at(usize_to_f(x)).unwrap());
+            assert_eq!(a, product.evaluate_at(usize_to_f(x)).unwrap());
             cs.enforce(
                 || format!("pointwise product @ {}", x),
                 |lc| {
                     (0..self.coefficients.len()).fold(lc, |lc, i| {
                         lc + (
-                            E::Fr::from_str(&format!("{}", x)).unwrap().pow(&[i as u64]),
+                            usize_to_f::<E::Fr>(x).pow(&[i as u64]),
                             &self.coefficients[i],
                         )
                     })
@@ -57,7 +83,7 @@ impl<E: Engine> Polynomial<E> {
                 |lc| {
                     (0..other.coefficients.len()).fold(lc, |lc, i| {
                         lc + (
-                            E::Fr::from_str(&format!("{}", x)).unwrap().pow(&[i as u64]),
+                            usize_to_f::<E::Fr>(x).pow(&[i as u64]),
                             &other.coefficients[i],
                         )
                     })
@@ -65,7 +91,7 @@ impl<E: Engine> Polynomial<E> {
                 |lc| {
                     (0..product.coefficients.len()).fold(lc, |lc, i| {
                         lc + (
-                            E::Fr::from_str(&format!("{}", x)).unwrap().pow(&[i as u64]),
+                            usize_to_f::<E::Fr>(x).pow(&[i as u64]),
                             &product.coefficients[i],
                         )
                     })
@@ -115,8 +141,8 @@ impl<E: Engine> Polynomial<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sapling_crypto::bellman::Circuit;
     use sapling_crypto::bellman::pairing::bn256::{Bn256, Fr};
+    use sapling_crypto::bellman::Circuit;
     use sapling_crypto::circuit::test::TestConstraintSystem;
 
     pub struct PolynomialMultiplier<E: Engine> {
@@ -131,7 +157,10 @@ mod tests {
                     .a
                     .iter()
                     .enumerate()
-                    .map(|(i, x)| Ok(LinearCombination::zero() + cs.alloc(|| format!("coeff_a {}", i), || Ok(*x))?))
+                    .map(|(i, x)| {
+                        Ok(LinearCombination::zero()
+                            + cs.alloc(|| format!("coeff_a {}", i), || Ok(*x))?)
+                    })
                     .collect::<Result<Vec<LinearCombination<E>>, SynthesisError>>()?,
                 values: Some(self.a),
             };
@@ -140,7 +169,10 @@ mod tests {
                     .b
                     .iter()
                     .enumerate()
-                    .map(|(i, x)| Ok(LinearCombination::zero() + cs.alloc(|| format!("coeff_b {}", i), || Ok(*x))?))
+                    .map(|(i, x)| {
+                        Ok(LinearCombination::zero()
+                            + cs.alloc(|| format!("coeff_b {}", i), || Ok(*x))?)
+                    })
                     .collect::<Result<Vec<LinearCombination<E>>, SynthesisError>>()?,
                 values: Some(self.b),
             };
@@ -168,7 +200,10 @@ mod tests {
         circuit.synthesize(&mut cs).expect("synthesis failed");
         dbg!(Fr::CAPACITY);
         use sapling_crypto::poseidon::PoseidonHashParams;
-        dbg!(sapling_crypto::poseidon::bn256::Bn256PoseidonParams::new::<sapling_crypto::group_hash::Keccak256Hasher>().output_len());
+        dbg!(sapling_crypto::poseidon::bn256::Bn256PoseidonParams::new::<
+            sapling_crypto::group_hash::Keccak256Hasher,
+        >()
+        .output_len());
 
         if let Some(token) = cs.which_is_unsatisfied() {
             eprintln!("Error: {} is unsatisfied", token);

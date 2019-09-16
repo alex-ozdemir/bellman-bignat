@@ -9,7 +9,7 @@ use sapling_crypto::circuit::boolean::Boolean;
 use std::borrow::Borrow;
 use std::cmp::{max, min};
 use std::convert::From;
-use std::fmt::{self, Display, Formatter};
+use std::fmt::{self, Debug, Display, Formatter};
 use std::rc::Rc;
 
 use bit::{Bit, Bitvector};
@@ -33,15 +33,27 @@ pub fn limbs_to_nat<F: PrimeField, B: Borrow<F>, I: Iterator<Item = B>>(
 
 /// Compute the limbs encoding a natural number.
 /// The limbs are assumed to be based the `limb_width` power of 2.
-pub fn nat_to_limbs<'a, F: PrimeField>(nat: &BigUint, limb_width: usize, n_limbs: usize) -> Vec<F> {
+pub fn nat_to_limbs<'a, F: PrimeField>(
+    nat: &BigUint,
+    limb_width: usize,
+    n_limbs: usize,
+) -> Result<Vec<F>, SynthesisError> {
     let mask = (BigUint::from(1usize) << limb_width) - 1usize;
-    (0..n_limbs)
-        .map(|limb_i| nat_to_f(&(&mask & (nat >> (limb_i * limb_width)))).unwrap())
-        .collect()
+    if nat.bits() <= n_limbs * limb_width {
+        Ok(
+            (0..n_limbs)
+                .map(|limb_i| nat_to_f(&(&mask & (nat >> (limb_i * limb_width)))).unwrap())
+                .collect(),
+        )
+    } else {
+        eprintln!("nat {} does not fit in {} limbs of width {}", nat, n_limbs, limb_width);
+        Err(SynthesisError::Unsatisfiable)
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct BigNatParams {
+    pub min_bits: usize,
     pub max_word: BigUint,
     pub limb_width: usize,
     pub n_limbs: usize,
@@ -53,6 +65,7 @@ impl BigNatParams {
             max_word: (BigUint::one() << limb_width) - 1usize,
             n_limbs,
             limb_width,
+            min_bits: 0,
         }
     }
 }
@@ -136,6 +149,7 @@ impl<E: Engine> BigNat<E> {
             limb_values,
             limbs,
             params: BigNatParams {
+                min_bits: 0,
                 n_limbs,
                 max_word: max_word
                     .unwrap_or_else(|| Pow::pow(&BigUint::from(2usize), limb_width) - 1usize),
@@ -156,6 +170,7 @@ impl<E: Engine> BigNat<E> {
         let max_word = (BigUint::from(1usize) << limb_width) - 1usize;
         Self {
             params: BigNatParams {
+                min_bits: 0,
                 n_limbs: limbs.len(),
                 max_word,
                 limb_width,
@@ -183,7 +198,7 @@ impl<E: Engine> BigNat<E> {
         F: FnOnce() -> Result<BigUint, SynthesisError>,
     {
         let all_values_cell = crate::lazy::LazyCell::new(|| {
-            f().map(|v| (nat_to_limbs::<E::Fr>(&v, limb_width, n_limbs), v))
+            f().and_then(|v| Ok((nat_to_limbs::<E::Fr>(&v, limb_width, n_limbs)?, v)))
                 .map_err(Rc::new)
         });
         let mut value = None;
@@ -220,6 +235,15 @@ impl<E: Engine> BigNat<E> {
             limbs,
             params: BigNatParams::new(limb_width, n_limbs),
         })
+    }
+
+    pub fn from_num(n: Num<E>, params: BigNatParams) -> Self {
+        Self {
+            value: n.value.as_ref().map(|n| f_to_nat(n)),
+            limb_values: n.value.map(|v| vec![v]),
+            limbs: vec![n.num],
+            params,
+        }
     }
 
     pub fn as_limbs<CS: ConstraintSystem<E>>(&self) -> Vec<Num<E>> {
@@ -336,7 +360,7 @@ impl<E: Engine> BigNat<E> {
         Ok(Bitvector { bits, values })
     }
 
-    fn recompose(bv: &Bitvector<E>, limb_width: usize) -> Self {
+    pub fn recompose(bv: &Bitvector<E>, limb_width: usize) -> Self {
         let nat = BigNat::from_limbs(
             bv.bits
                 .iter()
@@ -354,9 +378,49 @@ impl<E: Engine> BigNat<E> {
         nat.group_limbs(limb_width)
     }
 
+    pub fn enforce_full_bits<CS: ConstraintSystem<E>>(&mut self, mut cs: CS) -> Result<(), SynthesisError> {
+        let value = self.limb_values.as_ref().map(|vs| vs.last().unwrap().clone());
+        let lc = self.limbs.last().unwrap().clone();
+        Num::new(value, lc).fits_in_bits(cs.namespace(|| "decomp"), self.params.limb_width)?.into_bits().last().unwrap().constrain_value(cs.namespace(|| "1"), true);
+        self.params.min_bits = self.params.limb_width * self.params.n_limbs;
+        Ok(())
+    }
+
+    pub fn enforce_min_bits<CS: ConstraintSystem<E>>(&mut self, mut cs: CS, min_bits: usize) -> Result<(), SynthesisError> {
+        let bits = self.decompose(cs.namespace(|| "decomp"))?.into_bits();
+        let upper_bits: Vec<Bit<E>> = bits.into_iter().skip(min_bits - 1).collect();
+        let inverse = cs.alloc(|| "inverse",
+                               || Ok({
+                                   let mut sum = E::Fr::zero();
+                                   for b in &upper_bits {
+                                       if *b.value.grab()? {
+                                           sum.add_assign(&E::Fr::one());
+                                       }
+                                   }
+                                   sum.inverse();
+                                   sum
+                               }))?;
+        cs.enforce(
+            || "inverse exists",
+            |lc| lc + inverse,
+            |lc| {
+                let mut sum = lc;
+                for b in &upper_bits {
+                    sum = sum + &b.bit;
+                }
+                sum
+
+            },
+            |lc| lc + CS::one(),
+        );
+        self.params.min_bits = min_bits;
+        Ok(())
+    }
+
     pub fn from_poly(poly: Polynomial<E>, limb_width: usize, max_word: BigUint) -> Self {
         Self {
             params: BigNatParams {
+                min_bits: 0,
                 max_word,
                 n_limbs: poly.coefficients.len(),
                 limb_width,
@@ -510,13 +574,226 @@ impl<E: Engine> BigNat<E> {
         )?;
         // Verify that factor is in bounds
         factor.decompose(cs.namespace(|| "rangecheck"))?;
-        let max_word = BigUint::from(min(self.params.n_limbs, factor.params.n_limbs))
+        self.verify_mult(cs.namespace(|| "multcheck"), &factor, &other)
+    }
+
+    pub fn shift<CS: ConstraintSystem<E>>(&self, constant: E::Fr) -> BigNat<E> {
+        assert!(self.limbs.len() > 0);
+        let mut new = self.clone();
+        assert!(new.limbs.len() > 0);
+        new.limbs[0] = std::mem::replace(&mut new.limbs[0], LinearCombination::zero()) + (constant, CS::one());
+        if let Some(vs) = new.limb_values.as_mut() {
+            vs[0].add_assign(&constant);
+        }
+        if let Some(v) = new.value.as_mut() {
+            *v += f_to_nat(&constant);
+        }
+        new.params.max_word += f_to_nat(&constant);
+        assert!(new.params.max_word <= (BigUint::one() << (E::Fr::CAPACITY as usize)));
+        new
+    }
+
+    pub fn scale<CS: ConstraintSystem<E>>(&self, constant: E::Fr) -> BigNat<E> {
+        let mut new = self.clone();
+        for limb in &mut new.limbs {
+            *limb = LinearCombination::zero() + (constant, &*limb);
+        }
+        if let Some(vs) = new.limb_values.as_mut() {
+            for v in vs {
+                v.mul_assign(&constant);
+            }
+        }
+        if let Some(v) = new.value.as_mut() {
+            *v *= f_to_nat(&constant);
+        }
+        new.params.max_word *= f_to_nat(&constant);
+        assert!(new.params.max_word <= (BigUint::one() << (E::Fr::CAPACITY as usize)));
+        new
+    }
+
+    pub fn sub<CS: ConstraintSystem<E>>(
+        &self,
+        mut cs: CS,
+        other: &Self,
+    ) -> Result<BigNat<E>, SynthesisError> {
+        let diff = BigNat::alloc_from_nat(
+            cs.namespace(|| "diff"),
+            || {
+                let s = self.value.grab()?;
+                let o = other.value.grab()?;
+                Ok(s - o)
+            },
+            self.params.limb_width,
+            self.params.n_limbs,
+        )?;
+        let sum = other.add::<CS>(&diff)?;
+        self.equal_when_carried_regroup(cs.namespace(|| "eq"), &sum)?;
+        Ok(diff)
+    }
+    pub fn one<CS: ConstraintSystem<E>>(
+        cs: CS,
+        limb_width: usize,
+    ) -> Result<BigNat<E>, SynthesisError> {
+        BigNat::alloc_from_nat(cs, || Ok(BigUint::one()), limb_width, 1)
+    }
+
+    pub fn mult<CS: ConstraintSystem<E>>(
+        &self,
+        mut cs: CS,
+        other: &Self,
+    ) -> Result<BigNat<E>, SynthesisError> {
+        if self.params.limb_width != other.params.limb_width {
+            eprintln!(
+                "Limb widths {}, {}, do not agree in divides",
+                self.params.limb_width, other.params.limb_width,
+            );
+            return Err(SynthesisError::Unsatisfiable);
+        }
+
+        let prod = BigNat::alloc_from_nat(
+            cs.namespace(|| "product"),
+            || {
+                let s = self.value.grab()?;
+                let o = other.value.grab()?;
+                Ok(s * o)
+            },
+            other.params.limb_width,
+            other.params.n_limbs + self.params.n_limbs,
+        )?;
+
+        prod.decompose(cs.namespace(|| "rangecheck"))?;
+
+        // Verify that factor is in bounds
+        self.verify_mult(cs.namespace(|| "multcheck"), &other, &prod)?;
+        Ok(prod)
+    }
+
+    pub fn add<CS: ConstraintSystem<E>>(&self, other: &Self) -> Result<BigNat<E>, SynthesisError> {
+        if self.params.limb_width != other.params.limb_width {
+            eprintln!(
+                "Limb widths {}, {}, do not agree in divides",
+                self.params.limb_width, other.params.limb_width,
+            );
+            return Err(SynthesisError::Unsatisfiable);
+        }
+        let n_limbs = max(self.params.n_limbs, other.params.n_limbs);
+        let max_word = &self.params.max_word + &other.params.max_word;
+        let limbs: Vec<LinearCombination<E>> = (0..n_limbs)
+            .map(|i| match (self.limbs.get(i), other.limbs.get(i)) {
+                (Some(a), Some(b)) => a.clone() + b,
+                (Some(a), None) => a.clone(),
+                (None, Some(b)) => b.clone(),
+                (None, None) => unreachable!(),
+            })
+            .collect();
+        let limb_values: Option<Vec<E::Fr>> = self.limb_values.as_ref().and_then(|x| {
+            other.limb_values.as_ref().map(|y| {
+                (0..n_limbs)
+                    .map(|i| match (x.get(i), y.get(i)) {
+                        (Some(a), Some(b)) => {
+                            let mut t = a.clone();
+                            t.add_assign(b);
+                            t
+                        }
+                        (Some(a), None) => a.clone(),
+                        (None, Some(a)) => a.clone(),
+                        (None, None) => unreachable!(),
+                    })
+                    .collect()
+            })
+        });
+        let value = self
+            .value
+            .as_ref()
+            .and_then(|x| other.value.as_ref().map(|y| x + y));
+        Ok(Self {
+            limb_values,
+            value,
+            limbs,
+            params: BigNatParams {
+                min_bits: max(self.params.min_bits, other.params.min_bits),
+                n_limbs,
+                max_word,
+                limb_width: self.params.limb_width,
+            },
+        })
+    }
+
+    fn verify_mult<CS: ConstraintSystem<E>>(
+        &self,
+        mut cs: CS,
+        other: &Self,
+        prod: &Self,
+    ) -> Result<(), SynthesisError> {
+        if self.params.limb_width != other.params.limb_width
+            || self.params.limb_width != prod.params.limb_width
+        {
+            eprintln!(
+                "Limb widths {}, {}, {} do not agree in verify_mult",
+                self.params.limb_width, other.params.limb_width, prod.params.limb_width
+            );
+            return Err(SynthesisError::Unsatisfiable);
+        }
+        // Verify that factor is in bounds
+        let max_word = BigUint::from(min(self.params.n_limbs, other.params.n_limbs))
             * &self.params.max_word
-            * &factor.params.max_word;
-        let poly_prod = Polynomial::from(self.clone())
-            .alloc_product(cs.namespace(|| "poly product"), &Polynomial::from(factor))?;
+            * &other.params.max_word;
+        let poly_prod = Polynomial::from(self.clone()).alloc_product(
+            cs.namespace(|| "poly product"),
+            &Polynomial::from(other.clone()),
+        )?;
         BigNat::from_poly(poly_prod, other.params.limb_width, max_word)
-            .equal_when_carried_regroup(cs.namespace(|| "equal"), other)?;
+            .equal_when_carried_regroup(cs.namespace(|| "equal"), prod)?;
+        Ok(())
+    }
+
+    pub fn enforce_coprime<CS: ConstraintSystem<E>>(
+        &self,
+        mut cs: CS,
+        other: &Self,
+    ) -> Result<(), SynthesisError> {
+        let one = Self::one(cs.namespace(|| "one"), other.params.limb_width)?;
+        self.enforce_gcd(cs, other, &one)
+    }
+
+    fn enforce_gcd<CS: ConstraintSystem<E>>(
+        &self,
+        mut cs: CS,
+        other: &Self,
+        gcd: &Self,
+    ) -> Result<(), SynthesisError> {
+        // What to multipy x by to get the gcd, mod y
+        let self_pseudo_inverse = BigNat::alloc(
+            cs.namespace(|| "x pseudo inverse"),
+            self.value
+                .as_ref()
+                .and_then(|a| {
+                    // To compute the bezout coefficients, we do some acrobatics b/c they might be
+                    // negative
+                    other.value.as_ref().map(|b| {
+                        (a.to_bigint()
+                            .unwrap()
+                            .extended_gcd(&b.to_bigint().unwrap())
+                            .x
+                            + b.to_bigint().unwrap())
+                        .to_biguint()
+                        .unwrap()
+                            % b
+                    })
+                })
+                .as_ref(),
+            (),
+            &other.params,
+        )?;
+        self_pseudo_inverse.decompose(cs.namespace(|| "pseudo inverse rangecheck"))?;
+        self.assert_product_mod(
+            cs.namespace(|| "lower bound"),
+            &self_pseudo_inverse,
+            other,
+            &gcd,
+        )?;
+        gcd.divides(cs.namespace(|| "div a"), self)?;
+        gcd.divides(cs.namespace(|| "div b"), &other)?;
         Ok(())
     }
 
@@ -542,43 +819,14 @@ impl<E: Engine> BigNat<E> {
                 .as_ref(),
             (),
             &BigNatParams {
+                min_bits: 1,
                 max_word: (BigUint::one() << limb_width) - 1usize,
                 n_limbs,
                 limb_width,
             },
         )?;
-        // What to multipy x by to get the gcd, mod y
-        let self_pseudo_inverse = BigNat::alloc(
-            cs.namespace(|| "x pseudo inverse"),
-            self.value
-                .as_ref()
-                .and_then(|a| {
-                    // To compute the bezout coefficients, we do some acrobatics b/c they might be
-                    // negative
-                    other.value.as_ref().map(|b| {
-                        (a.to_bigint()
-                            .unwrap()
-                            .extended_gcd(&b.to_bigint().unwrap())
-                            .x
-                            + b.to_bigint().unwrap())
-                        .to_biguint()
-                        .unwrap()
-                            % b
-                    })
-                })
-                .as_ref(),
-            (),
-            &other.params,
-        )?;
-        self_pseudo_inverse.decompose(cs.namespace(|| "pseudo inverse rangecheck"))?;
-        gcd.divides(cs.namespace(|| "div a"), self)?;
-        gcd.divides(cs.namespace(|| "div b"), &other)?;
-        self.assert_product_mod(
-            cs.namespace(|| "lower bound"),
-            &self_pseudo_inverse,
-            other,
-            &gcd,
-        )?;
+        gcd.decompose(cs.namespace(|| "gcd rangecheck"))?;
+        self.enforce_gcd(cs.namespace(|| "enforce"), other, &gcd)?;
         Ok(gcd)
     }
 
@@ -649,7 +897,8 @@ impl<E: Engine> BigNat<E> {
             return Err(SynthesisError::Unsatisfiable);
         }
         let limb_width = self.params.limb_width;
-        let quotient_limbs = self.limbs.len() + other.limbs.len() - modulus.limbs.len();
+        let quotient_bits = self.n_bits() + other.n_bits() - modulus.params.min_bits;
+        let quotient_limbs = (quotient_bits - 1) / limb_width + 1;
         let quotient = BigNat::alloc_from_nat(
             cs.namespace(|| "quotient"),
             || Ok(self.value.grab()? * other.value.grab()? / modulus.value.grab()?),
@@ -672,6 +921,7 @@ impl<E: Engine> BigNat<E> {
 
         // a * b
         let left = a_poly.alloc_product(cs.namespace(|| "left"), &b_poly)?;
+        //println!("{:#?} {:#?}", quotient, modulus);
         let right_product = q_poly.alloc_product(cs.namespace(|| "right_product"), &mod_poly)?;
         // q * m + r
         let right = Polynomial::from(right_product).sum(&r_poly);
@@ -725,6 +975,7 @@ impl<E: Engine> BigNat<E> {
             * &self.params.max_word;
         BigNat {
             params: BigNatParams {
+                min_bits: self.params.min_bits,
                 limb_width: self.params.limb_width * limbs_per_group,
                 n_limbs: limbs.len(),
                 max_word,
@@ -760,6 +1011,7 @@ impl<E: Engine> BigNat<E> {
                     v
                 },
                 params: BigNatParams {
+                    min_bits: 1,
                     n_limbs: self.limbs.len(),
                     limb_width: self.params.limb_width,
                     max_word: BigUint::from(1usize),
@@ -772,7 +1024,7 @@ impl<E: Engine> BigNat<E> {
                 value: exp.values.as_mut().map(|vs| vs.pop().unwrap()),
                 bit: exp.bits.pop().unwrap(),
             };
-            let rec = square.pow_mod_bin_rev(cs.namespace(|| "rec"), exp, modulus)?;
+            let rec = square.pow_mod_bin_rev(cs.namespace(|| "rec"), exp.clone(), modulus)?;
             let prod = rec.mult_mod(cs.namespace(|| "prod"), &self, modulus)?.1;
             Gadget::mux(cs.namespace(|| "mux"), &select_bit, &rec, &prod)
         }
@@ -791,7 +1043,7 @@ impl<E: Engine> BigNat<E> {
 
     /// Assuming that the input is equivalent to 3 modulo 4, does a round of Miller-Rabin to check
     /// for primality
-    pub fn miller_rabin_round<CS: ConstraintSystem<E>>(
+    fn miller_rabin_round<CS: ConstraintSystem<E>>(
         &self,
         mut cs: CS,
         base: &Self,
@@ -824,26 +1076,14 @@ impl<E: Engine> BigNat<E> {
         Ok(Boolean::and(cs.namespace(|| "or"), &is_1.not(), &is_neg_1.not())?.not())
     }
 
-    pub fn miller_rabin<CS: ConstraintSystem<E>>(
+    fn miller_rabin_rounds<CS: ConstraintSystem<E>>(
         &self,
         mut cs: CS,
-        n_rounds: usize,
+        bases: &[usize],
     ) -> Result<Boolean, SynthesisError> {
-        fn primes(n: usize) -> Vec<usize> {
-            let mut ps = vec![2];
-            let mut next = 3;
-            while ps.len() < n {
-                if !ps.iter().any(|p| next % p == 0) {
-                    ps.push(next);
-                }
-                next += 1;
-            }
-            ps
-        }
-        let ps = primes(n_rounds);
         let mut rolling = Boolean::Constant(true);
-        for p in ps {
-            let big_p = BigUint::from(p);
+        for p in bases {
+            let big_p = BigUint::from(*p);
             if big_p.bits() > self.params.limb_width * self.limbs.len() {
                 return Err(SynthesisError::Unsatisfiable);
             }
@@ -858,6 +1098,38 @@ impl<E: Engine> BigNat<E> {
             rolling = Boolean::and(cs.namespace(|| format!("and {}", p)), &rolling, &round)?;
         }
         Ok(rolling)
+    }
+
+    pub fn miller_rabin<CS: ConstraintSystem<E>>(
+        &self,
+        cs: CS,
+        n_rounds: usize,
+    ) -> Result<Boolean, SynthesisError> {
+        fn primes(n: usize) -> Vec<usize> {
+            let mut ps = vec![2];
+            let mut next = 3;
+            while ps.len() < n {
+                if !ps.iter().any(|p| next % p == 0) {
+                    ps.push(next);
+                }
+                next += 1;
+            }
+            ps
+        }
+        let ps = primes(n_rounds);
+        self.miller_rabin_rounds(cs, &ps)
+    }
+
+    pub fn miller_rabin_32b<CS: ConstraintSystem<E>>(
+        &self,
+        cs: CS,
+    ) -> Result<Boolean, SynthesisError> {
+        self.miller_rabin_rounds(cs, &[2, 7, 61])
+    }
+
+    pub fn n_bits(&self) -> usize {
+        assert!(self.params.n_limbs > 0);
+        self.params.limb_width * (self.params.n_limbs - 1) + self.params.max_word.bits()
     }
 }
 
@@ -913,6 +1185,7 @@ impl<E: Engine> Gadget for BigNat<E> {
             value,
             (),
             &BigNatParams {
+                min_bits: min(i0.params.min_bits, i1.params.min_bits),
                 max_word: max(i0.params.max_word.clone(), i1.params.max_word.clone()),
                 limb_width: i0.params.limb_width,
                 n_limbs: i0.params.n_limbs,
@@ -1121,12 +1394,13 @@ mod tests {
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
-            let m = BigNat::alloc_from_nat(
+            let mut m = BigNat::alloc_from_nat(
                 cs.namespace(|| "m"),
                 || Ok(self.inputs.grab()?.m.clone()),
                 self.params.limb_width,
                 self.params.n_limbs_m,
             )?;
+            m.enforce_full_bits(cs.namespace(|| "m is full"))?;
             let q = BigNat::alloc_from_nat(
                 cs.namespace(|| "q"),
                 || Ok(self.inputs.grab()?.q.clone()),
@@ -1930,6 +2204,35 @@ impl<E: Engine> Display for BigNat<E> {
         match self.value.as_ref() {
             Some(n) => write!(f, "BigNat({})", n),
             None => write!(f, "BigNat(empty)"),
+        }
+    }
+}
+
+impl Debug for BigNatParams {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        f.debug_struct("BigNatParams")
+            .field("limb_width", &self.limb_width)
+            .field("n_limbs", &self.n_limbs)
+            .field("min_bits", &self.min_bits)
+            .field("max_word", &format_args!("{}", &self.max_word))
+            .finish()
+    }
+}
+
+impl<E: Engine> Debug for BigNat<E> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        if f.alternate() {
+            write!(
+                f,
+                "BigNat(\n\tparams = {:#?},\n\tlimbs = {:#?},\n\tvalue = {}\n)",
+                self.params, self.limb_values, self
+            )
+        } else {
+            write!(
+                f,
+                "BigNat(params = {:?},limbs = {:?},value = {})",
+                self.params, self.limb_values, self
+            )
         }
     }
 }

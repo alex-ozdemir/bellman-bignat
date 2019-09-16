@@ -202,12 +202,14 @@ impl<E: Engine> Gadget for CircuitRsaGroup<E> {
             (),
             &BigNatParams::new(params.limb_width, params.n_limbs),
         )?;
-        let m = <BigNat<E> as Gadget>::alloc(
+        let mut m = <BigNat<E> as Gadget>::alloc(
             cs.namespace(|| "m"),
             value.as_ref().map(|v| &v.m),
             (),
             &BigNatParams::new(params.limb_width, params.n_limbs),
         )?;
+        m.enforce_full_bits(cs.namespace(|| "m is full"))?;
+
         let one = BigUint::one();
         let id = <BigNat<E> as Gadget>::alloc(
             cs.namespace(|| "id"),

@@ -2,15 +2,13 @@ use sapling_crypto::bellman::pairing::ff::ScalarEngine;
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
 
-use std::cmp::Eq;
-
 use bit::Bit;
 use OptionExt;
 
 pub trait Gadget: Sized + Clone {
     type E: Engine;
     type Value: Clone;
-    type Access: Clone + Eq;
+    type Access: Clone;
     type Params: Clone;
     fn alloc<CS: ConstraintSystem<Self::E>>(
         cs: CS,
@@ -49,10 +47,6 @@ pub trait Gadget: Sized + Clone {
         let value: Option<&Self::Value> = s
             .value
             .and_then(|b| if b { i1.value() } else { i0.value() });
-        if i0.access() != i1.access() {
-            eprintln!("mux error: Accesses differ!");
-            return Err(SynthesisError::Unsatisfiable);
-        }
         let out: Self = Self::alloc(
             cs.namespace(|| "out"),
             value,
