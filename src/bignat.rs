@@ -42,8 +42,8 @@ pub fn nat_to_limbs<'a, F: PrimeField>(
     let mask = (BigUint::from(1usize) << limb_width) - 1usize;
     if nat.bits() <= n_limbs * limb_width {
         Ok((0..n_limbs)
-           .map(|limb_i| nat_to_f(&(&mask & (nat >> (limb_i * limb_width)))).unwrap())
-           .collect())
+            .map(|limb_i| nat_to_f(&(&mask & (nat >> (limb_i * limb_width)))).unwrap())
+            .collect())
     } else {
         eprintln!(
             "nat {} does not fit in {} limbs of width {}",
@@ -138,26 +138,26 @@ impl<E: Engine> BigNat<E> {
                         }
                         // Hack b/c SynthesisError and io::Error don't implement Clone
                         Err(ref e) => Err(SynthesisError::from(std::io::Error::new(
-                                    std::io::ErrorKind::Other,
-                                    format!("{}", e),
+                            std::io::ErrorKind::Other,
+                            format!("{}", e),
                         ))),
                     },
-                    )
-                        .map(|v| LinearCombination::zero() + v)
+                )
+                .map(|v| LinearCombination::zero() + v)
             })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(Self {
-        value,
-        limb_values,
-        limbs,
-        params: BigNatParams {
-            min_bits: 0,
-            n_limbs,
-            max_word: max_word
-                .unwrap_or_else(|| Pow::pow(&BigUint::from(2usize), limb_width) - 1usize),
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            value,
+            limb_values,
+            limbs,
+            params: BigNatParams {
+                min_bits: 0,
+                n_limbs,
+                max_word: max_word
+                    .unwrap_or_else(|| Pow::pow(&BigUint::from(2usize), limb_width) - 1usize),
                 limb_width,
-        },
-    })
+            },
+        })
     }
 
     /// Creates a `BigNat` in the circuit from the given limbs.
@@ -219,24 +219,24 @@ impl<E: Engine> BigNat<E> {
                         }
                         // Hack b/c SynthesisError and io::Error don't implement Clone
                         Err(ref e) => Err(SynthesisError::from(std::io::Error::new(
-                                    std::io::ErrorKind::Other,
-                                    format!("{}", e),
+                            std::io::ErrorKind::Other,
+                            format!("{}", e),
                         ))),
                     },
                 )
-                    .map(|v| LinearCombination::zero() + v)
+                .map(|v| LinearCombination::zero() + v)
             })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(Self {
-        value,
-        limb_values: if limb_values.len() > 0 {
-            Some(limb_values)
-        } else {
-            None
-        },
-        limbs,
-        params: BigNatParams::new(limb_width, n_limbs),
-    })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            value,
+            limb_values: if limb_values.len() > 0 {
+                Some(limb_values)
+            } else {
+                None
+            },
+            limbs,
+            params: BigNatParams::new(limb_width, n_limbs),
+        })
     }
 
     pub fn from_num(n: Num<E>, params: BigNatParams) -> Self {
@@ -252,8 +252,8 @@ impl<E: Engine> BigNat<E> {
         let mut limbs = Vec::new();
         for (i, lc) in self.limbs.iter().enumerate() {
             limbs.push(Num::new(
-                    self.limb_values.as_ref().map(|vs| vs[i].clone()),
-                    lc.clone(),
+                self.limb_values.as_ref().map(|vs| vs[i].clone()),
+                lc.clone(),
             ));
         }
         limbs
@@ -274,11 +274,10 @@ impl<E: Engine> BigNat<E> {
         mut cs: CS,
         other: &Self,
     ) -> Result<(), SynthesisError> {
-        if self.limbs.len() != other.limbs.len()
-            || self.params.limb_width != other.params.limb_width
-        {
+        if self.limbs.len() != other.limbs.len() {
             return Err(SynthesisError::Unsatisfiable);
         }
+        self.enforce_limb_width_agreement(other, "equal")?;
         let n = self.limbs.len();
         for i in 0..n {
             cs.enforce(
@@ -298,11 +297,10 @@ impl<E: Engine> BigNat<E> {
     ) -> Result<Boolean, SynthesisError> {
         use sapling_crypto::circuit::num::{AllocatedNum, Num};
         let mut rolling = Boolean::Constant(true);
-        if self.limbs.len() != other.limbs.len()
-            || self.params.limb_width != other.params.limb_width
-        {
+        if self.limbs.len() != other.limbs.len() {
             return Err(SynthesisError::Unsatisfiable);
         }
+        self.enforce_limb_width_agreement(other, "is_equal")?;
         let n = self.limbs.len();
         for i in 0..n {
             let self_limb = AllocatedNum::alloc(cs.namespace(|| format!("self {}", i)), || {
@@ -351,30 +349,30 @@ impl<E: Engine> BigNat<E> {
                     self.params.limb_width,
                 )
             })
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut bits = Vec::new();
-    let mut values = Vec::new();
-    for bv in bitvectors {
-        bits.extend(bv.bits);
-        bv.values.map(|vs| values.extend(vs));
-    }
-    let values = if values.len() > 0 { Some(values) } else { None };
-    Ok(Bitvector { bits, values })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut bits = Vec::new();
+        let mut values = Vec::new();
+        for bv in bitvectors {
+            bits.extend(bv.bits);
+            bv.values.map(|vs| values.extend(vs));
+        }
+        let values = if values.len() > 0 { Some(values) } else { None };
+        Ok(Bitvector { bits, values })
     }
 
     pub fn recompose(bv: &Bitvector<E>, limb_width: usize) -> Self {
         let nat = BigNat::from_limbs(
             bv.bits
-            .iter()
-            .enumerate()
-            .map(|(i, bit)| {
-                let val =
-                    bv.values
-                    .as_ref()
-                    .map(|v| if v[i] { E::Fr::one() } else { E::Fr::zero() });
-                Num::new(val, bit.clone())
-            })
-            .collect(),
+                .iter()
+                .enumerate()
+                .map(|(i, bit)| {
+                    let val =
+                        bv.values
+                            .as_ref()
+                            .map(|v| if v[i] { E::Fr::one() } else { E::Fr::zero() });
+                    Num::new(val, bit.clone())
+                })
+                .collect(),
             1,
         );
         nat.group_limbs(limb_width)
@@ -437,6 +435,24 @@ impl<E: Engine> BigNat<E> {
         Ok(())
     }
 
+    pub fn enforce_limb_width_agreement(
+        &self,
+        other: &Self,
+        location: &str,
+    ) -> Result<(), SynthesisError> {
+        if self.params.limb_width == other.params.limb_width {
+            return Ok(());
+        } else {
+            eprintln!(
+                "Limb widths {}, {}, do not agree at {}",
+                self.params.limb_width, other.params.limb_width, location
+            );
+            return Err(SynthesisError::Unsatisfiable);
+        }
+    }
+
+    //pub fn concat(&self, other: &Self) -> Self {}
+
     pub fn from_poly(poly: Polynomial<E>, limb_width: usize, max_word: BigUint) -> Self {
         Self {
             params: BigNatParams {
@@ -450,7 +466,7 @@ impl<E: Engine> BigNat<E> {
                 .values
                 .as_ref()
                 .map(|limb_values| limbs_to_nat::<E::Fr, _, _>(limb_values.iter(), limb_width)),
-                limb_values: poly.values,
+            limb_values: poly.values,
         }
     }
 
@@ -460,13 +476,7 @@ impl<E: Engine> BigNat<E> {
         mut cs: CS,
         other: &Self,
     ) -> Result<(), SynthesisError> {
-        if self.params.limb_width != other.params.limb_width {
-            eprintln!(
-                "Limb widths {}, {}, do not agree in equal_when_carried",
-                self.params.limb_width, other.params.limb_width,
-            );
-            return Err(SynthesisError::Unsatisfiable);
-        }
+        self.enforce_limb_width_agreement(other, "equal_when_carried")?;
 
         // We'll propegate carries over the first `n` limbs.
         let n = min(self.limbs.len(), other.limbs.len());
@@ -475,19 +485,19 @@ impl<E: Engine> BigNat<E> {
         let max_word = std::cmp::max(&self.params.max_word, &other.params.max_word);
         let carry_bits =
             (((max_word.to_f64().unwrap() * 2.0).log2() - self.params.limb_width as f64).ceil()
-             + 0.1) as usize;
+                + 0.1) as usize;
         let mut carry_in = Num::new(Some(E::Fr::zero()), LinearCombination::zero());
 
         for i in 0..n {
             let carry = Num::alloc(cs.namespace(|| format!("carry value {}", i)), || {
                 Ok(nat_to_f(
-                        &((f_to_nat(&self.limb_values.grab()?[i])
-                           + f_to_nat(&carry_in.value.unwrap())
-                           + max_word
-                           - f_to_nat(&other.limb_values.grab()?[i]))
-                          / &target_base),
+                    &((f_to_nat(&self.limb_values.grab()?[i])
+                        + f_to_nat(&carry_in.value.unwrap())
+                        + max_word
+                        - f_to_nat(&other.limb_values.grab()?[i]))
+                        / &target_base),
                 )
-                    .unwrap())
+                .unwrap())
             })?;
             accumulated_extra += max_word;
 
@@ -548,17 +558,11 @@ impl<E: Engine> BigNat<E> {
         mut cs: CS,
         other: &Self,
     ) -> Result<(), SynthesisError> {
-        if self.params.limb_width != other.params.limb_width {
-            eprintln!(
-                "Limb widths {}, {}, do not agree in equal_when_carried_regroup",
-                self.params.limb_width, other.params.limb_width,
-            );
-            return Err(SynthesisError::Unsatisfiable);
-        }
+        self.enforce_limb_width_agreement(other, "equal_when_carried_regroup")?;
         let max_word = std::cmp::max(&self.params.max_word, &other.params.max_word);
         let carry_bits =
             (((max_word.to_f64().unwrap() * 2.0).log2() - self.params.limb_width as f64).ceil()
-             + 0.1) as usize;
+                + 0.1) as usize;
         let limbs_per_group = (E::Fr::CAPACITY as usize - carry_bits) / self.params.limb_width;
         let self_grouped = self.group_limbs(limbs_per_group);
         let other_grouped = other.group_limbs(limbs_per_group);
@@ -571,13 +575,7 @@ impl<E: Engine> BigNat<E> {
         mut cs: CS,
         other: &Self,
     ) -> Result<(), SynthesisError> {
-        if self.params.limb_width != other.params.limb_width {
-            eprintln!(
-                "Limb widths {}, {}, do not agree in divides",
-                self.params.limb_width, other.params.limb_width,
-            );
-            return Err(SynthesisError::Unsatisfiable);
-        }
+        self.enforce_limb_width_agreement(other, "divides")?;
         let factor = BigNat::alloc_from_nat(
             cs.namespace(|| "product"),
             || {
@@ -663,13 +661,7 @@ impl<E: Engine> BigNat<E> {
         mut cs: CS,
         other: &Self,
     ) -> Result<BigNat<E>, SynthesisError> {
-        if self.params.limb_width != other.params.limb_width {
-            eprintln!(
-                "Limb widths {}, {}, do not agree in divides",
-                self.params.limb_width, other.params.limb_width,
-            );
-            return Err(SynthesisError::Unsatisfiable);
-        }
+        self.enforce_limb_width_agreement(other, "mult")?;
 
         let prod = BigNat::alloc_from_nat(
             cs.namespace(|| "product"),
@@ -690,13 +682,7 @@ impl<E: Engine> BigNat<E> {
     }
 
     pub fn add<CS: ConstraintSystem<E>>(&self, other: &Self) -> Result<BigNat<E>, SynthesisError> {
-        if self.params.limb_width != other.params.limb_width {
-            eprintln!(
-                "Limb widths {}, {}, do not agree in divides",
-                self.params.limb_width, other.params.limb_width,
-            );
-            return Err(SynthesisError::Unsatisfiable);
-        }
+        self.enforce_limb_width_agreement(other, "add")?;
         let n_limbs = max(self.params.n_limbs, other.params.n_limbs);
         let max_word = &self.params.max_word + &other.params.max_word;
         let limbs: Vec<LinearCombination<E>> = (0..n_limbs)
@@ -706,38 +692,38 @@ impl<E: Engine> BigNat<E> {
                 (None, Some(b)) => b.clone(),
                 (None, None) => unreachable!(),
             })
-        .collect();
-    let limb_values: Option<Vec<E::Fr>> = self.limb_values.as_ref().and_then(|x| {
-        other.limb_values.as_ref().map(|y| {
-            (0..n_limbs)
-                .map(|i| match (x.get(i), y.get(i)) {
-                    (Some(a), Some(b)) => {
-                        let mut t = a.clone();
-                        t.add_assign(b);
-                        t
-                    }
-                    (Some(a), None) => a.clone(),
-                    (None, Some(a)) => a.clone(),
-                    (None, None) => unreachable!(),
-                })
-            .collect()
+            .collect();
+        let limb_values: Option<Vec<E::Fr>> = self.limb_values.as_ref().and_then(|x| {
+            other.limb_values.as_ref().map(|y| {
+                (0..n_limbs)
+                    .map(|i| match (x.get(i), y.get(i)) {
+                        (Some(a), Some(b)) => {
+                            let mut t = a.clone();
+                            t.add_assign(b);
+                            t
+                        }
+                        (Some(a), None) => a.clone(),
+                        (None, Some(a)) => a.clone(),
+                        (None, None) => unreachable!(),
+                    })
+                    .collect()
+            })
+        });
+        let value = self
+            .value
+            .as_ref()
+            .and_then(|x| other.value.as_ref().map(|y| x + y));
+        Ok(Self {
+            limb_values,
+            value,
+            limbs,
+            params: BigNatParams {
+                min_bits: max(self.params.min_bits, other.params.min_bits),
+                n_limbs,
+                max_word,
+                limb_width: self.params.limb_width,
+            },
         })
-    });
-    let value = self
-        .value
-        .as_ref()
-        .and_then(|x| other.value.as_ref().map(|y| x + y));
-    Ok(Self {
-        limb_values,
-        value,
-        limbs,
-        params: BigNatParams {
-            min_bits: max(self.params.min_bits, other.params.min_bits),
-            n_limbs,
-            max_word,
-            limb_width: self.params.limb_width,
-        },
-    })
     }
 
     fn verify_mult<CS: ConstraintSystem<E>>(
@@ -746,15 +732,8 @@ impl<E: Engine> BigNat<E> {
         other: &Self,
         prod: &Self,
     ) -> Result<(), SynthesisError> {
-        if self.params.limb_width != other.params.limb_width
-            || self.params.limb_width != prod.params.limb_width
-        {
-            eprintln!(
-                "Limb widths {}, {}, {} do not agree in verify_mult",
-                self.params.limb_width, other.params.limb_width, prod.params.limb_width
-            );
-            return Err(SynthesisError::Unsatisfiable);
-        }
+        self.enforce_limb_width_agreement(other, "verify_mult, other")?;
+        self.enforce_limb_width_agreement(prod, "verify_mult, prod")?;
         // Verify that factor is in bounds
         let max_word = BigUint::from(min(self.params.n_limbs, other.params.n_limbs))
             * &self.params.max_word
@@ -787,35 +766,35 @@ impl<E: Engine> BigNat<E> {
         let self_pseudo_inverse = BigNat::alloc(
             cs.namespace(|| "x pseudo inverse"),
             self.value
-            .as_ref()
-            .and_then(|a| {
-                // To compute the bezout coefficients, we do some acrobatics b/c they might be
-                // negative
-                other.value.as_ref().map(|b| {
-                    (a.to_bigint()
-                     .unwrap()
-                     .extended_gcd(&b.to_bigint().unwrap())
-                     .x
-                     + b.to_bigint().unwrap())
+                .as_ref()
+                .and_then(|a| {
+                    // To compute the bezout coefficients, we do some acrobatics b/c they might be
+                    // negative
+                    other.value.as_ref().map(|b| {
+                        (a.to_bigint()
+                            .unwrap()
+                            .extended_gcd(&b.to_bigint().unwrap())
+                            .x
+                            + b.to_bigint().unwrap())
                         .to_biguint()
                         .unwrap()
-                        % b
+                            % b
+                    })
                 })
-            })
-            .as_ref(),
+                .as_ref(),
             (),
             &other.params,
-            )?;
-            self_pseudo_inverse.decompose(cs.namespace(|| "pseudo inverse rangecheck"))?;
-            self.assert_product_mod(
-                cs.namespace(|| "lower bound"),
-                &self_pseudo_inverse,
-                other,
-                &gcd,
-            )?;
-            gcd.divides(cs.namespace(|| "div a"), self)?;
-            gcd.divides(cs.namespace(|| "div b"), &other)?;
-            Ok(())
+        )?;
+        self_pseudo_inverse.decompose(cs.namespace(|| "pseudo inverse rangecheck"))?;
+        self.assert_product_mod(
+            cs.namespace(|| "lower bound"),
+            &self_pseudo_inverse,
+            other,
+            &gcd,
+        )?;
+        gcd.divides(cs.namespace(|| "div a"), self)?;
+        gcd.divides(cs.namespace(|| "div b"), &other)?;
+        Ok(())
     }
 
     pub fn gcd<CS: ConstraintSystem<E>>(
@@ -823,21 +802,15 @@ impl<E: Engine> BigNat<E> {
         mut cs: CS,
         other: &Self,
     ) -> Result<BigNat<E>, SynthesisError> {
-        if self.params.limb_width != other.params.limb_width {
-            eprintln!(
-                "Limb widths {}, {}, do not agree in gcd",
-                self.params.limb_width, other.params.limb_width,
-            );
-            return Err(SynthesisError::Unsatisfiable);
-        }
+        self.enforce_limb_width_agreement(other, "gcd")?;
         let limb_width = self.params.limb_width;
         let n_limbs = min(self.params.n_limbs, other.params.n_limbs);
         let gcd = BigNat::alloc(
             cs.namespace(|| "gcd"),
             self.value
-            .as_ref()
-            .and_then(|a| other.value.as_ref().map(|b| a.gcd(b)))
-            .as_ref(),
+                .as_ref()
+                .and_then(|a| other.value.as_ref().map(|b| a.gcd(b)))
+                .as_ref(),
             (),
             &BigNatParams {
                 min_bits: 1,
@@ -858,19 +831,9 @@ impl<E: Engine> BigNat<E> {
         modulus: &Self,
         remainder: &Self,
     ) -> Result<BigNat<E>, SynthesisError> {
-        if self.params.limb_width != other.params.limb_width
-            || self.params.limb_width != modulus.params.limb_width
-                || self.params.limb_width != remainder.params.limb_width
-        {
-            eprintln!(
-                "Limb widths {}, {}, {}, {} do not agree in assert_product_mod",
-                self.params.limb_width,
-                other.params.limb_width,
-                modulus.params.limb_width,
-                remainder.params.limb_width
-            );
-            return Err(SynthesisError::Unsatisfiable);
-        }
+        self.enforce_limb_width_agreement(other, "assert_product_mod, other")?;
+        self.enforce_limb_width_agreement(modulus, "assert_product_mod, modulus")?;
+        self.enforce_limb_width_agreement(remainder, "assert_product_mod, remainder")?;
         let limb_width = self.params.limb_width;
         let quotient_limbs = self.limbs.len() + other.limbs.len();
         let quotient = BigNat::alloc_from_nat(
@@ -897,9 +860,9 @@ impl<E: Engine> BigNat<E> {
             * &other.params.max_word;
         let right_max_word =
             BigUint::from(std::cmp::min(quotient.limbs.len(), modulus.limbs.len()))
-            * &quotient.params.max_word
-            * &modulus.params.max_word
-            + &remainder.params.max_word;
+                * &quotient.params.max_word
+                * &modulus.params.max_word
+                + &remainder.params.max_word;
 
         let left_int = BigNat::from_poly(Polynomial::from(left), limb_width, left_max_word);
         let right_int = BigNat::from_poly(Polynomial::from(right), limb_width, right_max_word);
@@ -914,9 +877,7 @@ impl<E: Engine> BigNat<E> {
         other: &Self,
         modulus: &Self,
     ) -> Result<(BigNat<E>, BigNat<E>), SynthesisError> {
-        if self.params.limb_width != other.params.limb_width {
-            return Err(SynthesisError::Unsatisfiable);
-        }
+        self.enforce_limb_width_agreement(other, "mult_mod")?;
         let limb_width = self.params.limb_width;
         let quotient_bits = self.n_bits() + other.n_bits() - modulus.params.min_bits;
         let quotient_limbs = (quotient_bits - 1) / limb_width + 1;
@@ -952,9 +913,9 @@ impl<E: Engine> BigNat<E> {
             * &other.params.max_word;
         let right_max_word =
             BigUint::from(std::cmp::min(quotient.limbs.len(), modulus.limbs.len()))
-            * &quotient.params.max_word
-            * &modulus.params.max_word
-            + &remainder.params.max_word;
+                * &quotient.params.max_word
+                * &modulus.params.max_word
+                + &remainder.params.max_word;
 
         let left_int = BigNat::from_poly(Polynomial::from(left), limb_width, left_max_word);
         let right_int = BigNat::from_poly(Polynomial::from(right), limb_width, right_max_word);
@@ -980,8 +941,8 @@ impl<E: Engine> BigNat<E> {
         let limbs = {
             let mut limbs: Vec<LinearCombination<E>> =
                 std::iter::repeat_with(LinearCombination::zero)
-                .take(n_groups)
-                .collect();
+                    .take(n_groups)
+                    .collect();
             for (i, limb) in self.limbs.iter().enumerate() {
                 let b = E::Fr::from_str("2")
                     .unwrap()
@@ -1019,22 +980,40 @@ impl<E: Engine> BigNat<E> {
             base_powers: &[BigNat<E>],
             k: usize,
             mut exp_chunks: std::slice::Chunks<'a, Bit<E>>,
-            modulus: &BigNat<E>
+            modulus: &BigNat<E>,
         ) -> Result<BigNat<E>, SynthesisError> {
             if let Some(chunk) = exp_chunks.next_back() {
                 let chunk_len = chunk.len();
 
                 if exp_chunks.len() > 0 {
-                    let mut acc = bauer_power_bin_rev_helper(cs.namespace(|| "rec"), base_powers, k, exp_chunks, modulus)?;
+                    let mut acc = bauer_power_bin_rev_helper(
+                        cs.namespace(|| "rec"),
+                        base_powers,
+                        k,
+                        exp_chunks,
+                        modulus,
+                    )?;
                     // Square once, for each bit in the chunk
                     for j in 0..chunk_len {
-                        acc = acc.mult_mod(cs.namespace(|| format!("square {}", j)), &acc, &modulus)?.1;
+                        acc = acc
+                            .mult_mod(cs.namespace(|| format!("square {}", j)), &acc, &modulus)?
+                            .1;
                     }
                     // Select the correct base power
-                    let base_power = Gadget::mux_tree(cs.namespace(|| "select"), chunk.into_iter(), &base_powers[..(1<<chunk_len)])?;
-                    Ok(acc.mult_mod(cs.namespace(|| "prod"), &base_power, &modulus)?.1)
+                    let base_power = Gadget::mux_tree(
+                        cs.namespace(|| "select"),
+                        chunk.into_iter(),
+                        &base_powers[..(1 << chunk_len)],
+                    )?;
+                    Ok(acc
+                        .mult_mod(cs.namespace(|| "prod"), &base_power, &modulus)?
+                        .1)
                 } else {
-                    Gadget::mux_tree(cs.namespace(|| "select"), chunk.into_iter(), &base_powers[..(1<<chunk_len)])
+                    Gadget::mux_tree(
+                        cs.namespace(|| "select"),
+                        chunk.into_iter(),
+                        &base_powers[..(1 << chunk_len)],
+                    )
                 }
             } else {
                 Ok(BigNat::identity::<CS>(modulus.params.limb_width))
@@ -1042,13 +1021,28 @@ impl<E: Engine> BigNat<E> {
         }
         let k = optimal_k(exp.bits.len());
         let base_powers = {
-            let mut base_powers = vec![BigNat::identity::<CS>(modulus.params.limb_width), self.clone()];
-            for i in 2..(1<<k) {
-                base_powers.push(base_powers.last().unwrap().mult_mod(cs.namespace(|| format!("base {}", i)), self, modulus)?.1);
+            let mut base_powers = vec![
+                BigNat::identity::<CS>(modulus.params.limb_width),
+                self.clone(),
+            ];
+            for i in 2..(1 << k) {
+                base_powers.push(
+                    base_powers
+                        .last()
+                        .unwrap()
+                        .mult_mod(cs.namespace(|| format!("base {}", i)), self, modulus)?
+                        .1,
+                );
             }
             base_powers
         };
-        bauer_power_bin_rev_helper(cs.namespace(|| "helper"), &base_powers, k, exp.into_bits().chunks(k), modulus)
+        bauer_power_bin_rev_helper(
+            cs.namespace(|| "helper"),
+            &base_powers,
+            k,
+            exp.into_bits().chunks(k),
+            modulus,
+        )
     }
 
     /// Computes a `BigNat` constrained to be equal to `self ** exp % modulus`.
@@ -1265,17 +1259,17 @@ impl<E: Engine> Gadget for BigNat<E> {
         let out_wires = out.wires();
         for (i, ((i0w, i1w), out_w)) in i0_wires
             .into_iter()
-                .zip(i1_wires)
-                .zip(out_wires)
-                .enumerate()
-            {
-                cs.enforce(
-                    || format!("{}", i),
-                    |lc| lc + &s.bit,
-                    |lc| lc + &i1w - &i0w,
-                    |lc| lc + &out_w - &i0w,
-                );
-            }
+            .zip(i1_wires)
+            .zip(out_wires)
+            .enumerate()
+        {
+            cs.enforce(
+                || format!("{}", i),
+                |lc| lc + &s.bit,
+                |lc| lc + &i1w - &i0w,
+                |lc| lc + &out_w - &i0w,
+            );
+        }
         Ok(out)
     }
 }
@@ -1392,15 +1386,15 @@ mod tests {
                 cs.namespace(|| "a"),
                 || {
                     Ok(self
-                       .inputs
-                       .as_ref()
-                       .grab()?
-                       .a
-                       .iter()
-                       .rev()
-                       .copied()
-                       .map(usize_to_f)
-                       .collect())
+                        .inputs
+                        .as_ref()
+                        .grab()?
+                        .a
+                        .iter()
+                        .rev()
+                        .copied()
+                        .map(usize_to_f)
+                        .collect())
                 },
                 Some(BigUint::from(self.params.max_word)),
                 self.params.limb_width,
@@ -1410,15 +1404,15 @@ mod tests {
                 cs.namespace(|| "b"),
                 || {
                     Ok(self
-                       .inputs
-                       .as_ref()
-                       .grab()?
-                       .b
-                       .iter()
-                       .rev()
-                       .copied()
-                       .map(usize_to_f)
-                       .collect())
+                        .inputs
+                        .as_ref()
+                        .grab()?
+                        .b
+                        .iter()
+                        .rev()
+                        .copied()
+                        .map(usize_to_f)
+                        .collect())
                 },
                 Some(BigUint::from(self.params.max_word)),
                 self.params.limb_width,
@@ -1971,8 +1965,8 @@ mod tests {
                 self.params.n_limbs,
             )?;
             let expected_res = Boolean::Is(AllocatedBit::alloc(
-                    cs.namespace(|| "bit"),
-                    self.inputs.map(|o| o.result),
+                cs.namespace(|| "bit"),
+                self.inputs.map(|o| o.result),
             )?);
             let actual_res = n.miller_rabin_round(cs.namespace(|| "mr"), &b)?;
             Boolean::enforce_equal(cs.namespace(|| "eq"), &expected_res, &actual_res)?;
@@ -2128,8 +2122,8 @@ mod tests {
                 self.params.n_limbs,
             )?;
             let expected_res = Boolean::Is(AllocatedBit::alloc(
-                    cs.namespace(|| "bit"),
-                    self.inputs.map(|o| o.result),
+                cs.namespace(|| "bit"),
+                self.inputs.map(|o| o.result),
             )?);
             let actual_res = n.miller_rabin(cs.namespace(|| "mr"), self.params.n_rounds)?;
             Boolean::enforce_equal(cs.namespace(|| "eq"), &expected_res, &actual_res)?;

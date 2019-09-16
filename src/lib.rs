@@ -30,7 +30,10 @@ mod test_helpers {
                     if is_sat && !cs.is_satisfied() {
                         println!("UNSAT: {:#?}", cs.which_is_unsatisfied())
                     }
-                    println!(concat!("Unconstrained in {}: {}"), stringify!($name), cs.find_unconstrained());
+                    let unconstrained = cs.find_unconstrained();
+                    if unconstrained.len() > 0 {
+                        println!(concat!("Unconstrained in {}: {}"), stringify!($name), cs.find_unconstrained());
+                    }
 
                     assert_eq!(cs.is_satisfied(), is_sat);
                 }
