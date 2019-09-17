@@ -12,7 +12,7 @@ use OptionExt;
 const MILLER_RABIN_ROUNDS: usize = 3;
 
 pub mod helper {
-    use hash::rsa::helper::hash_to_rsa_element;
+    use hash::rsa::helper::hash_to_integer;
     use hash::HashDomain;
     use num_bigint::BigUint;
     use sapling_crypto::bellman::pairing::ff::Field;
@@ -85,7 +85,7 @@ pub mod helper {
         let mut inputs: Vec<E::Fr> = inputs.iter().copied().collect();
         inputs.push(E::Fr::zero());
         for _ in 0..(1 << n_bits) {
-            let hash = hash_to_rsa_element::<E>(&inputs, domain, params);
+            let hash = hash_to_integer::<E>(&inputs, domain, params);
             if miller_rabin(&hash, 30) {
                 // unwrap is safe because of the push above
                 return Some((hash, inputs.pop().unwrap(), n_bits));

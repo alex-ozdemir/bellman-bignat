@@ -3,7 +3,7 @@ pub mod pocklington;
 pub mod rsa;
 
 /// A representation of an integer domain to hash to
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct HashDomain {
     pub n_bits: usize,
     pub n_trailing_ones: usize,

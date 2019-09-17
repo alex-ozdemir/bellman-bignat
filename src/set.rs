@@ -23,6 +23,7 @@ where
     pub inner: Inner,
     pub hash_params: Rc<<E as PoseidonEngine>::Params>,
     pub hash_domain: HashDomain,
+    pub limb_width: usize,
     // TODO revisit upon the resolution of https://github.com/rust-lang/rust/issues/64155
     pub _phant: PhantomData<E>,
 }
@@ -43,6 +44,7 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> std::clone::Clone 
             inner: self.inner.clone(),
             hash_domain: self.hash_domain.clone(),
             hash_params: self.hash_params.clone(),
+            limb_width: self.limb_width.clone(),
             _phant: self._phant,
         }
     }
@@ -53,6 +55,7 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> Set<E, Inner> {
         group: Inner::G,
         hash_params: Rc<E::Params>,
         element_bits: usize,
+        limb_width: usize,
         items: impl IntoIterator<Item = &'b [E::Fr]>,
     ) -> Self {
         let hash_domain = HashDomain {
@@ -62,13 +65,14 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> Set<E, Inner> {
         let inner = Inner::new_with(
             group,
             items.into_iter().map(|slice| {
-                rsa::helper::hash_to_rsa_element::<E>(slice, &hash_domain, &hash_params)
+                rsa::helper::hash_to_rsa_element::<E>(slice, &hash_domain, limb_width, &hash_params)
             }),
         );
         Self {
             inner,
             hash_domain,
             hash_params,
+            limb_width,
             _phant: PhantomData::default(),
         }
     }
@@ -84,6 +88,7 @@ where
         self.inner.insert(rsa::helper::hash_to_rsa_element::<E>(
             &n,
             &self.hash_domain,
+            self.limb_width,
             &self.hash_params,
         ))
     }
@@ -92,6 +97,7 @@ where
         self.inner.remove(&rsa::helper::hash_to_rsa_element::<E>(
             &n,
             &self.hash_domain,
+            self.limb_width,
             &self.hash_params,
         ))
     }
@@ -343,6 +349,7 @@ where
         item_len: usize,
         hash: Rc<E::Params>,
         n_bits_elem: usize,
+        limb_width: usize,
         group: RsaGroup,
     ) -> Self {
         let untouched_items: Vec<Vec<String>> = (0..n_untouched)
@@ -373,6 +380,7 @@ where
             inserted_items,
             hash,
             n_bits_elem,
+            limb_width,
             group,
         )
     }
@@ -382,6 +390,7 @@ where
         inserted_items: Vec<Vec<String>>,
         hash: Rc<E::Params>,
         n_bits_elem: usize,
+        limb_width: usize,
         group: RsaGroup,
     ) -> Self {
         let untouched: Vec<Vec<E::Fr>> = untouched_items
@@ -402,10 +411,10 @@ where
         };
         let untouched_hashes = untouched
             .iter()
-            .map(|xs| rsa::helper::hash_to_rsa_element::<E>(&xs, &hash_domain, &hash));
+            .map(|xs| rsa::helper::hash_to_rsa_element::<E>(&xs, &hash_domain, limb_width, &hash));
         let inserted_hashes = inserted
             .iter()
-            .map(|xs| rsa::helper::hash_to_rsa_element::<E>(&xs, &hash_domain, &hash));
+            .map(|xs| rsa::helper::hash_to_rsa_element::<E>(&xs, &hash_domain, limb_width, &hash));
         let final_digest = untouched_hashes
             .clone()
             .chain(inserted_hashes)
@@ -414,6 +423,7 @@ where
             group,
             hash,
             n_bits_elem,
+            limb_width,
             untouched.iter().chain(&removed).map(|v| v.as_slice()),
         );
         SetBenchInputs {
@@ -585,6 +595,7 @@ mod test {
                             ].to_vec(),
                             Rc::new(Bn256PoseidonParams::new::<Keccak256Hasher>()),
                             128,
+                            32,
                             RsaGroup {
                                 g: BigUint::from(2usize),
                                 m: BigUint::from_str(RSA_512).unwrap(),

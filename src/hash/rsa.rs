@@ -4,23 +4,28 @@ use sapling_crypto::circuit::boolean::Boolean;
 use sapling_crypto::circuit::num::AllocatedNum;
 use sapling_crypto::poseidon::{PoseidonEngine, PoseidonHashParams, QuinticSBox};
 
+use std::cmp::min;
+
+use OptionExt;
 use bignat::BigNat;
 use num::Num;
-use OptionExt;
 use super::HashDomain;
+use usize_to_f;
+use bit::{Bit, Bitvector};
 
 pub mod helper {
     use f_to_nat;
     use hash::helper::low_k_bits;
     use hash::HashDomain;
     use num_bigint::BigUint;
-    use num_traits::One;
+    use num_traits::{One, Zero};
     use sapling_crypto::bellman::pairing::ff::Field;
     use sapling_crypto::poseidon::{
         poseidon_hash, PoseidonEngine, PoseidonHashParams, QuinticSBox,
     };
+    use std::cmp::min;
 
-    pub fn hash_to_rsa_element<E: PoseidonEngine<SBox = QuinticSBox<E>>>(
+    pub fn hash_to_integer<E: PoseidonEngine<SBox = QuinticSBox<E>>>(
         inputs: &[E::Fr],
         domain: &HashDomain,
         params: &E::Params,
@@ -50,9 +55,60 @@ pub mod helper {
         acc |= BigUint::one() << (domain.n_bits - 1);
         acc
     }
+
+    pub fn hash_to_rsa_element<E: PoseidonEngine<SBox = QuinticSBox<E>>>(
+        inputs: &[E::Fr],
+        domain: &HashDomain,
+        limb_width: usize,
+        params: &E::Params,
+    ) -> BigUint {
+        assert_eq!(params.output_len(), 1);
+        assert_eq!(params.security_level(), 126);
+        let bits_per_hash = params.security_level() as usize * 2;
+        assert!(domain.n_bits % limb_width == 0);
+        let limbs_per_hash = bits_per_hash / limb_width;
+        let n_limbs = domain.n_bits / limb_width;
+        let n_chunks = (n_limbs - 1) / limbs_per_hash + 1;
+
+        let base_nat = {
+            // First we hash the inputs, with poseidon
+            let hash: E::Fr = sapling_crypto::poseidon::poseidon_hash::<E>(params, &inputs)
+                .pop()
+                .unwrap();
+            let bits_from_base_hash =
+                min(limbs_per_hash * limb_width, domain.n_bits) - 1 - domain.n_trailing_ones;
+            let hash_bits = low_k_bits(&f_to_nat(&hash), bits_from_base_hash);
+
+            // Then we extract some bits
+            let mut acc = BigUint::zero();
+            acc |= (BigUint::one() << domain.n_trailing_ones) - 1usize;
+            acc |= hash_bits << domain.n_trailing_ones;
+            acc |= BigUint::one() << (domain.n_trailing_ones + bits_from_base_hash);
+            acc
+        };
+
+        let mut acc = base_nat.clone();
+        let n_limbs_last_chunk = if n_limbs % limbs_per_hash == 0 {
+            limbs_per_hash
+        } else {
+            n_limbs % limbs_per_hash
+        };
+        if n_chunks > 2 {
+            for i in 0..(n_chunks - 2) {
+                let next = &base_nat + i + 1usize;
+                acc = (acc << (limbs_per_hash * limb_width)) | next;
+            }
+        }
+        if n_chunks > 1 {
+            let next = low_k_bits(&base_nat, limb_width * n_limbs_last_chunk);
+            acc = (acc << (n_limbs_last_chunk * limb_width)) | next;
+        }
+
+        acc
+    }
 }
 
-pub fn hash_to_rsa_element<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: ConstraintSystem<E>>(
+pub fn hash_to_integer<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: ConstraintSystem<E>>(
     mut cs: CS,
     input: &[AllocatedNum<E>],
     limb_width: usize,
@@ -123,6 +179,72 @@ pub fn hash_to_rsa_element<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: Constra
     Ok(nat.group_limbs(limb_width))
 }
 
+pub fn hash_to_rsa_element<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: ConstraintSystem<E>>(
+    mut cs: CS,
+    input: &[AllocatedNum<E>],
+    limb_width: usize,
+    domain: &HashDomain,
+    params: &E::Params,
+) -> Result<BigNat<E>, SynthesisError> {
+    if params.output_len() != 1 && params.security_level() != 126 {
+        return Err(SynthesisError::Unsatisfiable);
+    }
+    let bits_per_hash = params.security_level() as usize * 2;
+    assert!(domain.n_bits % limb_width == 0);
+    let limbs_per_hash = bits_per_hash / limb_width;
+    let n_limbs = domain.n_bits / limb_width;
+    let n_chunks = (n_limbs - 1) / limbs_per_hash + 1;
+
+    let base_nat = {
+        // First we hash the inputs, with poseidon
+        let hash = sapling_crypto::circuit::poseidon_hash::poseidon_hash(
+            cs.namespace(|| "inputs"),
+            &input,
+            params,
+        )?
+        .pop()
+        .unwrap();
+        let hash_bits = hash.into_bits_le_strict(cs.namespace(|| "bitify"))?;
+
+        // Then we extract some bits
+        let bits_from_base_hash =
+            min(limbs_per_hash * limb_width, domain.n_bits) - 1 - domain.n_trailing_ones;
+        let mut bits = Vec::new();
+        bits.extend(std::iter::repeat(Boolean::Constant(true)).take(domain.n_trailing_ones));
+        bits.extend(hash_bits.into_iter().take(bits_from_base_hash));
+        bits.push(Boolean::Constant(true));
+        let mut base = BigNat::<E>::recompose(
+            &Bitvector::from_bits(
+                bits.into_iter()
+                    .map(|b| Bit::from_sapling::<CS>(b))
+                    .collect(),
+            ),
+            limb_width,
+        );
+        base.params.min_bits = base.params.limb_width * base.params.n_limbs;
+        base
+    };
+
+    let mut acc = base_nat.clone();
+    let n_limbs_last_chunk = if n_limbs % limbs_per_hash == 0 {
+        limbs_per_hash
+    } else {
+        n_limbs % limbs_per_hash
+    };
+    if n_chunks > 2 {
+        for i in 0..(n_chunks - 2) {
+            let next = base_nat.shift::<CS>(usize_to_f(i + 1));
+            acc = acc.concat(&next)?;
+        }
+    }
+    if n_chunks > 1 {
+        let next = base_nat.truncate_limbs(n_limbs_last_chunk);
+        acc = acc.concat(&next)?;
+    }
+    assert_eq!(acc.params.n_limbs, n_limbs);
+    Ok(acc)
+}
+
 #[cfg(test)]
 mod test {
     use hash::HashDomain;
@@ -148,6 +270,7 @@ mod test {
     #[derive(Debug)]
     pub struct RsaHashParams<E: PoseidonEngine<SBox = QuinticSBox<E>>> {
         pub desired_bits: usize,
+        pub limb_width: usize,
         pub hash: E::Params,
     }
 
@@ -172,6 +295,7 @@ mod test {
                     n_bits: self.params.desired_bits,
                     n_trailing_ones: 1,
                 },
+                self.params.limb_width,
                 &self.params.hash,
             );
             let allocated_expected_output = BigNat::alloc_from_nat(
@@ -201,12 +325,26 @@ mod test {
                 hash.limbs.len() * hash.params().limb_width,
                 self.params.desired_bits
             );
-            hash.equal(cs.namespace(|| "eq"), &allocated_expected_output)?;
+            hash.equal_when_carried_regroup(cs.namespace(|| "eq"), &allocated_expected_output)?;
             Ok(())
         }
     }
 
     circuit_tests! {
+        hash_one_small: (RsaHash {
+            inputs: Some(
+                        RsaHashInputs {
+                            inputs: &[
+                                "1",
+                            ],
+                        }
+                    ),
+                    params: RsaHashParams {
+                        desired_bits: 512,
+                        limb_width: 32,
+                        hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+                    }
+        }, true),
         hash_one: (RsaHash {
             inputs: Some(
                         RsaHashInputs {
@@ -217,6 +355,7 @@ mod test {
                     ),
                     params: RsaHashParams {
                         desired_bits: 1024,
+                        limb_width: 32,
                         hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
                     }
         }, true),
@@ -230,6 +369,7 @@ mod test {
                     ),
                     params: RsaHashParams {
                         desired_bits: 1024,
+                        limb_width: 32,
                         hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
                     }
         }, true),
@@ -243,6 +383,7 @@ mod test {
                     ),
                     params: RsaHashParams {
                         desired_bits: 1024,
+                        limb_width: 32,
                         hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
                     }
         }, true),
@@ -256,6 +397,7 @@ mod test {
                     ),
                     params: RsaHashParams {
                         desired_bits: 2048,
+                        limb_width: 32,
                         hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
                     }
         }, true),
