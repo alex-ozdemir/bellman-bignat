@@ -439,9 +439,9 @@ impl<E: Engine> BigNat<E> {
         &self,
         other: &Self,
         location: &str,
-    ) -> Result<(), SynthesisError> {
+    ) -> Result<usize, SynthesisError> {
         if self.params.limb_width == other.params.limb_width {
-            return Ok(());
+            return Ok(self.params.limb_width);
         } else {
             eprintln!(
                 "Limb widths {}, {}, do not agree at {}",
@@ -451,7 +451,57 @@ impl<E: Engine> BigNat<E> {
         }
     }
 
-    //pub fn concat(&self, other: &Self) -> Self {}
+    /// Concatenate two numbers. `self` becomes the high-order part.
+    pub fn concat(&self, other: &Self) -> Result<Self, SynthesisError> {
+        let limb_width = self.enforce_limb_width_agreement(other, "concat")?;
+        let min_bits = if self.params.min_bits > 0 {
+            self.params.min_bits + other.params.limb_width * other.params.n_limbs
+        } else {
+            other.params.min_bits
+        };
+        let mut limbs = other.limbs.clone();
+        limbs.extend(self.limbs.iter().cloned());
+        let mut limb_values = other.limb_values.clone();
+        limb_values
+            .as_mut()
+            .map(|x| self.limb_values.as_ref().map(|y| x.extend(y.iter().cloned())));
+        let value = self.value.clone().and_then(|sv| {
+            other
+                .value
+                .as_ref()
+                .map(|ov| (sv << (other.params.limb_width * other.params.n_limbs)) + ov)
+        });
+        Ok(Self {
+            params: BigNatParams {
+                min_bits,
+                max_word: max(&self.params.max_word, &other.params.max_word).clone(),
+                n_limbs: self.params.n_limbs + other.params.n_limbs,
+                limb_width,
+            },
+            limb_values,
+            limbs,
+            value,
+        })
+    }
+
+    /// Produces the natural number with the low-order `n_limbs` of `self`.
+    pub fn truncate_limbs(&self, n_limbs: usize) -> Self {
+        let mut new = self.clone();
+        if n_limbs < new.limbs.len() {
+            while new.limbs.len() > n_limbs {
+                new.limbs.pop();
+                if let Some(limb_value) = new.limb_values.as_mut().map(|lvs| lvs.pop().unwrap()) {
+                    *new.value.as_mut().unwrap() -=
+                        f_to_nat(&limb_value) << (new.limbs.len() * new.params.limb_width);
+                }
+            }
+            new.params.n_limbs = n_limbs;
+            if new.params.min_bits > new.params.n_limbs * new.params.limb_width {
+                new.params.min_bits = 0;
+            }
+        }
+        new
+    }
 
     pub fn from_poly(poly: Polynomial<E>, limb_width: usize, max_word: BigUint) -> Self {
         Self {
