@@ -2336,18 +2336,10 @@ impl Debug for BigNatParams {
 
 impl<E: Engine> Debug for BigNat<E> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        if f.alternate() {
-            write!(
-                f,
-                "BigNat(\n\tparams = {:#?},\n\tlimbs = {:#?},\n\tvalue = {}\n)",
-                self.params, self.limb_values, self
-            )
-        } else {
-            write!(
-                f,
-                "BigNat(params = {:?},limbs = {:?},value = {})",
-                self.params, self.limb_values, self
-            )
-        }
+        f.debug_struct("BigNat")
+            .field("params", &self.params)
+            .field("limb_values", &self.limb_values)
+            .field("value", &format_args!("{}", &self))
+            .finish()
     }
 }
