@@ -776,6 +776,20 @@ impl<E: Engine> BigNat<E> {
         })
     }
 
+    pub fn min<CS: ConstraintSystem<E>>(
+        &self,
+        mut cs: CS,
+        other: &Self,
+    ) -> Result<Self, SynthesisError> {
+        let select = Bit::alloc(
+            cs.namespace(|| "select"),
+            self.value.as_ref().and_then(|s| other.value.as_ref().map(|o| o < s)),
+        )?;
+        let (lesser, greater) = Gadget::switch(cs.namespace(|| "switch"), &select, self, other)?;
+        let _diff = greater.sub(cs.namespace(|| "difference"), other)?;
+        Ok(lesser)
+    }
+
     fn verify_mult<CS: ConstraintSystem<E>>(
         &self,
         mut cs: CS,
