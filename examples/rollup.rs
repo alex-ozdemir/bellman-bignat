@@ -83,6 +83,7 @@ fn main() {
             ELEMENT_SIZE,
             hash.clone(),
             RSA_SIZE,
+            32,
             RsaGroup {
                 g: BigUint::from(2usize),
                 m: BigUint::from_str(RSA_2048).unwrap(),
