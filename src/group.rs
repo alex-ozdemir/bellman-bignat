@@ -3,8 +3,8 @@ use num_traits::One;
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
 
-use std::cmp::Eq;
-use std::fmt::{Debug, Display};
+use std::cmp::{min, PartialEq, Eq};
+use std::fmt::{self, Formatter, Debug, Display};
 
 use bignat::{BigNat, BigNatParams};
 use bit::{Bit, Bitvector};
@@ -35,15 +35,27 @@ pub trait SemiGroup: Clone + Eq + Debug + Display {
 }
 
 // TODO (aozdemir) mod out by the <-1> subgroup.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct RsaGroup {
     pub g: BigUint,
     pub m: BigUint,
 }
 
+impl Debug for RsaGroup {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        f.debug_struct("RsaGroup")
+            .field("g", &format_args!("{}", &self.g))
+            .field("m", &format_args!("{}", &self.m))
+            .finish()
+    }
+}
+
 impl Display for RsaGroup {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "RsaGroup(g = {}, m = {})", self.g, self.m)
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        f.debug_struct("RsaGroup")
+            .field("g", &format_args!("{}", &self.g))
+            .field("m", &format_args!("{}", &self.m))
+            .finish()
     }
 }
 
@@ -52,6 +64,48 @@ impl SemiGroup for RsaGroup {
 
     fn op(&self, a: &BigUint, b: &BigUint) -> BigUint {
         a * b % &self.m
+    }
+
+    fn identity(&self) -> BigUint {
+        BigUint::one()
+    }
+
+    fn generator(&self) -> BigUint {
+        self.g.clone()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct RsaQuotientGroup {
+    pub g: BigUint,
+    pub m: BigUint,
+}
+
+impl Debug for RsaQuotientGroup {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        f.debug_struct("RsaQuotientGroup")
+            .field("g", &format_args!("{}", &self.g))
+            .field("m", &format_args!("{}", &self.m))
+            .finish()
+    }
+}
+
+impl Display for RsaQuotientGroup {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        f.debug_struct("RsaQuotientGroup")
+            .field("g", &format_args!("{}", &self.g))
+            .field("m", &format_args!("{}", &self.m))
+            .finish()
+    }
+}
+
+impl SemiGroup for RsaQuotientGroup {
+    type Elem = BigUint;
+
+    fn op(&self, a: &BigUint, b: &BigUint) -> BigUint {
+        let x = a * b % &self.m;
+        let y = &self.m - &x;
+        min(x, y)
     }
 
     fn identity(&self) -> BigUint {
@@ -165,7 +219,7 @@ pub struct CircuitRsaGroup<E: Engine> {
     pub params: CircuitRsaGroupParams,
 }
 
-impl<E: Engine> std::cmp::PartialEq for CircuitRsaGroup<E> {
+impl<E: Engine> PartialEq for CircuitRsaGroup<E> {
     fn eq(&self, other: &Self) -> bool {
         self.g == other.g
             && self.m == other.m
@@ -174,7 +228,7 @@ impl<E: Engine> std::cmp::PartialEq for CircuitRsaGroup<E> {
             && self.params == other.params
     }
 }
-impl<E: Engine> std::cmp::Eq for CircuitRsaGroup<E> {}
+impl<E: Engine> Eq for CircuitRsaGroup<E> {}
 
 impl<E: Engine> Gadget for CircuitRsaGroup<E> {
     type E = E;
@@ -243,6 +297,111 @@ impl<E: Engine> CircuitSemiGroup for CircuitRsaGroup<E> {
         b: &BigNat<E>,
     ) -> Result<Self::Elem, SynthesisError> {
         a.mult_mod(cs, b, &self.m).map(|(_, r)| r)
+    }
+    fn elem_params(p: &<Self as Gadget>::Params) -> <Self::Elem as Gadget>::Params {
+        BigNatParams::new(p.limb_width, p.n_limbs)
+    }
+    fn group(&self) -> Option<&Self::Group> {
+        self.value.as_ref()
+    }
+    fn generator(&self) -> Self::Elem {
+        self.g.clone()
+    }
+    fn identity(&self) -> Self::Elem {
+        self.id.clone()
+    }
+}
+
+#[derive(Clone)]
+pub struct CircuitRsaQuotientGroup<E: Engine> {
+    pub g: BigNat<E>,
+    pub m: BigNat<E>,
+    pub id: BigNat<E>,
+    pub value: Option<RsaQuotientGroup>,
+    pub params: CircuitRsaGroupParams,
+}
+
+impl<E: Engine> PartialEq for CircuitRsaQuotientGroup<E> {
+    fn eq(&self, other: &Self) -> bool {
+        self.g == other.g
+            && self.m == other.m
+            && self.id == other.id
+            && self.value == other.value
+            && self.params == other.params
+    }
+}
+
+impl<E: Engine> Eq for CircuitRsaQuotientGroup<E> {}
+
+impl<E: Engine> Gadget for CircuitRsaQuotientGroup<E> {
+    type E = E;
+    type Value = RsaQuotientGroup;
+    type Params = CircuitRsaGroupParams;
+    type Access = ();
+    fn alloc<CS: ConstraintSystem<E>>(
+        mut cs: CS,
+        value: Option<&Self::Value>,
+        _access: (),
+        params: &Self::Params,
+    ) -> Result<Self, SynthesisError> {
+        let value = value.cloned();
+        let g = <BigNat<E> as Gadget>::alloc(
+            cs.namespace(|| "g"),
+            value.as_ref().map(|v| &v.g),
+            (),
+            &BigNatParams::new(params.limb_width, params.n_limbs),
+        )?;
+        let mut m = <BigNat<E> as Gadget>::alloc(
+            cs.namespace(|| "m"),
+            value.as_ref().map(|v| &v.m),
+            (),
+            &BigNatParams::new(params.limb_width, params.n_limbs),
+        )?;
+        m.enforce_full_bits(cs.namespace(|| "m is full"))?;
+
+        let id = BigNat::identity::<CS>(params.limb_width);
+        Ok(Self {
+            g,
+            m,
+            id,
+            value,
+            params: params.clone(),
+        })
+    }
+    fn wires(&self) -> Vec<LinearCombination<E>> {
+        let mut wires = self.g.wires();
+        wires.extend(self.m.wires());
+        wires
+    }
+    fn wire_values(&self) -> Option<Vec<E::Fr>> {
+        let mut vs = self.g.wire_values();
+        vs.as_mut()
+            .map(|vs| self.m.wire_values().map(|vs2| vs.extend(vs2)));
+        vs
+    }
+    fn value(&self) -> Option<&Self::Value> {
+        self.value.as_ref()
+    }
+    fn params(&self) -> &Self::Params {
+        &self.params
+    }
+    fn access(&self) -> &() {
+        &()
+    }
+}
+
+impl<E: Engine> CircuitSemiGroup for CircuitRsaQuotientGroup<E> {
+    type Elem = BigNat<E>;
+    type Group = RsaQuotientGroup;
+    fn op<CS: ConstraintSystem<E>>(
+        &self,
+        mut cs: CS,
+        a: &BigNat<E>,
+        b: &BigNat<E>,
+    ) -> Result<Self::Elem, SynthesisError> {
+        let x = a.mult_mod(cs.namespace(|| "mult"), b, &self.m).map(|(_, r)| r)?;
+        let y = self.m.sub(cs.namespace(|| "sub"), &x)?;
+        x.min(cs.namespace(|| "min"), &y)
     }
     fn elem_params(p: &<Self as Gadget>::Params) -> <Self::Elem as Gadget>::Params {
         BigNatParams::new(p.limb_width, p.n_limbs)
