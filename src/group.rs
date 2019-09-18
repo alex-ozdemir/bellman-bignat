@@ -556,6 +556,95 @@ mod test {
             true,
         ),
     }
+
+    #[derive(Debug)]
+    pub struct RsaQuotientOpInputs<'a> {
+        pub m: &'a str,
+        pub a: &'a str,
+        pub b: &'a str,
+    }
+
+    pub struct RsaQuotientOpParams {
+        pub limb_width: usize,
+        pub n_limbs: usize,
+    }
+
+    pub struct RsaQuotientOp<'a> {
+        inputs: Option<RsaQuotientOpInputs<'a>>,
+        params: RsaQuotientOpParams,
+    }
+
+    impl<'a, E: Engine> Circuit<E> for RsaQuotientOp<'a> {
+        fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
+            let ins = self.inputs.grab()?;
+            let group = CircuitRsaQuotientGroup::alloc(
+                cs.namespace(|| "group"),
+                Some(
+                    &RsaQuotientGroup {
+                        g: BigUint::from_str("2").unwrap(),
+                        m: BigUint::from_str(ins.m).unwrap(),
+                    }
+                ),
+                (),
+                &CircuitRsaGroupParams {
+                    limb_width: self.params.limb_width,
+                    n_limbs: self.params.n_limbs,
+                },
+            )?;
+            let b = BigNat::alloc_from_nat(
+                cs.namespace(|| "b"),
+                || Ok(BigUint::from_str(self.inputs.grab()?.b).unwrap()),
+                self.params.limb_width,
+                self.params.n_limbs,
+            )?;
+            let a = BigNat::alloc_from_nat(
+                cs.namespace(|| "a"),
+                || Ok(BigUint::from_str(self.inputs.grab()?.a).unwrap()),
+                self.params.limb_width,
+                self.params.n_limbs,
+            )?;
+            let res = BigNat::alloc_from_nat(
+                cs.namespace(|| "res"),
+                || Ok(group.group().grab()?.op(a.value.grab()?, b.value.grab()?)),
+                self.params.limb_width,
+                self.params.n_limbs,
+            )?;
+            let actual = group.op(cs.namespace(|| "pow"), &a, &b)?;
+            actual.equal(cs.namespace(|| "check"), &res)?;
+            Ok(())
+        }
+    }
+
+    circuit_tests! {
+        quotient_op_1_1: (
+            RsaQuotientOp {
+                inputs: Some(RsaQuotientOpInputs {
+                    m: "241",
+                    a: "1",
+                    b: "1",
+                }),
+                params: RsaQuotientOpParams {
+                    limb_width: 4,
+                    n_limbs: 2,
+                }
+            },
+            true,
+        ),
+        quotient_op_15_27: (
+            RsaQuotientOp {
+                inputs: Some(RsaQuotientOpInputs {
+                    m: "241",
+                    a: "15",
+                    b: "27",
+                }),
+                params: RsaQuotientOpParams {
+                    limb_width: 4,
+                    n_limbs: 2,
+                }
+            },
+            true,
+        ),
+    }
 }
 
 
