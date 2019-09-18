@@ -193,6 +193,13 @@ impl<E: Engine> Bit<E> {
         )
     }
 
+    pub fn not<CS: ConstraintSystem<E>>(&self) -> Self {
+        Self::new(
+            LinearCombination::zero() + CS::one() - &self.bit,
+            self.value.clone().map(|b| !b),
+        )
+    }
+
     pub fn new_false<CS: ConstraintSystem<E>>() -> Self {
         Self::new(LinearCombination::zero(), Some(false))
     }

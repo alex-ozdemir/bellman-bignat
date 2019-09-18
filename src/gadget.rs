@@ -96,6 +96,19 @@ pub trait Gadget: Sized + Clone {
         }
     }
 
+    /// Switches `i0` and `i1` iff `s`.
+    fn switch<CS: ConstraintSystem<Self::E>>(
+        mut cs: CS,
+        s: &Bit<Self::E>,
+        i0: &Self,
+        i1: &Self,
+    ) -> Result<(Self, Self), SynthesisError> {
+        let not_s = s.not::<CS>();
+        let o0 = Gadget::mux(cs.namespace(|| "out 0"), s, i0, i1)?;
+        let o1 = Gadget::mux(cs.namespace(|| "out 1"), &not_s, i0, i1)?;
+        Ok((o0, o1))
+    }
+
     fn assert_equal<CS: ConstraintSystem<Self::E>>(
         mut cs: CS,
         i0: &Self,
