@@ -645,6 +645,140 @@ mod test {
             true,
         ),
     }
+
+    #[derive(Debug)]
+    pub struct QuotientPowerInputs<'a> {
+        pub g: &'a str,
+        pub m: &'a str,
+        pub b: &'a str,
+        pub e: &'a str,
+        pub res: &'a str,
+    }
+
+    pub struct QuotientPowerParams {
+        pub limb_width: usize,
+        pub n_limbs_b: usize,
+        pub n_limbs_e: usize,
+    }
+
+    pub struct QuotientPower<'a> {
+        inputs: Option<QuotientPowerInputs<'a>>,
+        params: QuotientPowerParams,
+    }
+
+    impl<'a, E: Engine> Circuit<E> for QuotientPower<'a> {
+        fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
+            let ins = self.inputs.grab()?;
+            let group = CircuitRsaQuotientGroup::alloc(
+                cs.namespace(|| "group"),
+                Some(
+                    &RsaQuotientGroup {
+                        g: BigUint::from_str(ins.g).unwrap(),
+                        m: BigUint::from_str(ins.m).unwrap(),
+                    }
+                ),
+                (),
+                &CircuitRsaGroupParams {
+                    limb_width: self.params.limb_width,
+                    n_limbs: self.params.n_limbs_b,
+                },
+            )?;
+            let b = BigNat::alloc_from_nat(
+                cs.namespace(|| "b"),
+                || Ok(BigUint::from_str(self.inputs.grab()?.b).unwrap()),
+                self.params.limb_width,
+                self.params.n_limbs_b,
+            )?;
+            let e = BigNat::alloc_from_nat(
+                cs.namespace(|| "e"),
+                || Ok(BigUint::from_str(self.inputs.grab()?.e).unwrap()),
+                self.params.limb_width,
+                self.params.n_limbs_e,
+            )?;
+            let res = BigNat::alloc_from_nat(
+                cs.namespace(|| "res"),
+                || Ok(BigUint::from_str(self.inputs.grab()?.res).unwrap()),
+                self.params.limb_width,
+                self.params.n_limbs_b,
+            )?;
+            let actual = group.power(cs.namespace(|| "pow"), &b, &e)?;
+            actual.equal(cs.namespace(|| "check"), &res)?;
+            Ok(())
+        }
+    }
+
+    circuit_tests! {
+        quotient_power_1_1: (
+            QuotientPower {
+                inputs: Some(QuotientPowerInputs {
+                    g: "2",
+                    m: "241",
+                    b: "1",
+                    e: "1",
+                    res: "1",
+                }),
+                params: QuotientPowerParams {
+                    limb_width: 4,
+                    n_limbs_b: 2,
+                    n_limbs_e: 12,
+                }
+            },
+            true,
+        ),
+        quotient_power_1_0: (
+            QuotientPower {
+                inputs: Some(QuotientPowerInputs {
+                    g: "2",
+                    m: "241",
+                    b: "1",
+                    e: "0",
+                    res: "1",
+                }),
+                params: QuotientPowerParams {
+                    limb_width: 4,
+                    n_limbs_b: 2,
+                    n_limbs_e: 12,
+                }
+            },
+            true,
+        ),
+
+        quotient_power_5_12351: (
+            QuotientPower {
+                inputs: Some(QuotientPowerInputs {
+                    g: "2",
+                    m: "241",
+                    b: "5",
+                    e: "12351",
+                    res: "79",
+                }),
+                params: QuotientPowerParams {
+                    limb_width: 4,
+                    n_limbs_b: 2,
+                    n_limbs_e: 12,
+                }
+            },
+            true,
+        ),
+        quotient_power_512b_128b: (
+            QuotientPower {
+                inputs: Some(QuotientPowerInputs {
+                    g: "2",
+                    m: "11834783464130424096695514462778870280264989938857328737807205623069291535525952722847913694296392927890261736769191982212777933726583565708193466779811767",
+                    b: "5",
+                    e: "1",
+                    res: "5",
+                }),
+                params: QuotientPowerParams {
+                    limb_width: 32,
+                    n_limbs_b: 16,
+                    n_limbs_e: 4,
+                }
+            },
+            true,
+        ),
+    }
+
 }
 
 
