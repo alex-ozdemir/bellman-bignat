@@ -401,6 +401,7 @@ impl<E: Engine> CircuitSemiGroup for CircuitRsaQuotientGroup<E> {
     ) -> Result<Self::Elem, SynthesisError> {
         let x = a.mult_mod(cs.namespace(|| "mult"), b, &self.m).map(|(_, r)| r)?;
         let y = self.m.sub(cs.namespace(|| "sub"), &x)?;
+        y.decompose(cs.namespace(|| "y decomp check"))?;
         x.min(cs.namespace(|| "min"), &y)
     }
     fn elem_params(p: &<Self as Gadget>::Params) -> <Self::Elem as Gadget>::Params {
