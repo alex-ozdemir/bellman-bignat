@@ -126,6 +126,7 @@ impl<E: Engine> BigNat<E> {
                     || match *values_cell.borrow() {
                         Ok(ref vs) => {
                             if vs.len() != n_limbs {
+                                eprintln!("Values do not match stated limb count");
                                 return Err(SynthesisError::Unsatisfiable);
                             }
                             if value.is_none() {
@@ -274,17 +275,25 @@ impl<E: Engine> BigNat<E> {
         mut cs: CS,
         other: &Self,
     ) -> Result<(), SynthesisError> {
-        if self.limbs.len() != other.limbs.len() {
-            return Err(SynthesisError::Unsatisfiable);
+        if self.limbs.len() < other.limbs.len() {
+            return other.equal(cs, self);
         }
         self.enforce_limb_width_agreement(other, "equal")?;
-        let n = self.limbs.len();
+        let n = other.limbs.len();
         for i in 0..n {
             cs.enforce(
                 || format!("equal {}", i),
                 |lc| lc,
                 |lc| lc,
                 |lc| lc + &self.limbs[i] - &other.limbs[i],
+            );
+        }
+        for i in n..(self.limbs.len()) {
+            cs.enforce(
+                || format!("equal {}", i),
+                |lc| lc,
+                |lc| lc,
+                |lc| lc + &self.limbs[i],
             );
         }
         Ok(())
@@ -298,6 +307,7 @@ impl<E: Engine> BigNat<E> {
         use sapling_crypto::circuit::num::{AllocatedNum, Num};
         let mut rolling = Boolean::Constant(true);
         if self.limbs.len() != other.limbs.len() {
+            eprintln!("Self has {} limbs, other {} (BigNat::is_equal)", self.limbs.len(), other.limbs.len());
             return Err(SynthesisError::Unsatisfiable);
         }
         self.enforce_limb_width_agreement(other, "is_equal")?;
@@ -634,6 +644,7 @@ impl<E: Engine> BigNat<E> {
                 if o.is_multiple_of(s) {
                     Ok(o / s)
                 } else {
+                    eprintln!("Not divisible");
                     Err(SynthesisError::Unsatisfiable)
                 }
             },
@@ -967,7 +978,6 @@ impl<E: Engine> BigNat<E> {
 
         // a * b
         let left = a_poly.alloc_product(cs.namespace(|| "left"), &b_poly)?;
-        //println!("{:#?} {:#?}", quotient, modulus);
         let right_product = q_poly.alloc_product(cs.namespace(|| "right_product"), &mod_poly)?;
         // q * m + r
         let right = Polynomial::from(right_product).sum(&r_poly);
@@ -1142,6 +1152,7 @@ impl<E: Engine> BigNat<E> {
     ) -> Result<Boolean, SynthesisError> {
         let bits = self.decompose(cs.namespace(|| "decomp"))?;
         if bits.bits.len() < 3 {
+            eprintln!("Miller-Rabin too short");
             return Err(SynthesisError::Unsatisfiable);
         }
         // Unwraps are safe b/c of len check above
@@ -1177,6 +1188,7 @@ impl<E: Engine> BigNat<E> {
         for p in bases {
             let big_p = BigUint::from(*p);
             if big_p.bits() > self.params.limb_width * self.limbs.len() {
+                eprintln!("miller_rabin_rounds");
                 return Err(SynthesisError::Unsatisfiable);
             }
             let base = BigNat::alloc_from_nat(
@@ -1304,6 +1316,7 @@ impl<E: Engine> Gadget for BigNat<E> {
         let i0_wires = i0.wires();
         let i1_wires = i1.wires();
         if i0_wires.len() != i1_wires.len() || i0.params.limb_width != i1.params.limb_width {
+            eprintln!("Wire mis-match in BigNat mux");
             return Err(SynthesisError::Unsatisfiable);
         }
         let value: Option<&Self::Value> = s
@@ -1437,11 +1450,13 @@ mod tests {
         fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
             if let Some(a) = self.inputs.as_ref().map(|i| &i.a) {
                 if a.len() != self.params.n_limbs {
+                    eprintln!("Unsat: inputs/n_limbs mismatch a");
                     return Err(SynthesisError::Unsatisfiable);
                 }
             }
             if let Some(b) = self.inputs.as_ref().map(|i| &i.b) {
                 if b.len() != self.params.n_limbs {
+                    eprintln!("Unsat: inputs/n_limbs mismatch b");
                     return Err(SynthesisError::Unsatisfiable);
                 }
             }
@@ -1502,6 +1517,7 @@ mod tests {
         pub n_limbs_a: usize,
         pub n_limbs_b: usize,
         pub n_limbs_m: usize,
+        pub full_m: bool,
     }
 
     pub struct MultMod {
@@ -1529,7 +1545,9 @@ mod tests {
                 self.params.limb_width,
                 self.params.n_limbs_m,
             )?;
-            m.enforce_full_bits(cs.namespace(|| "m is full"))?;
+            if self.params.full_m {
+                m.enforce_full_bits(cs.namespace(|| "m is full"))?;
+            }
             let q = BigNat::alloc_from_nat(
                 cs.namespace(|| "q"),
                 || Ok(self.inputs.grab()?.q.clone()),
@@ -1556,6 +1574,7 @@ mod tests {
                 n_limbs_a: 2,
                 n_limbs_b: 2,
                 n_limbs_m: 2,
+                full_m: true,
             },
             inputs: Some(MultModInputs {
                 a: BigUint::from(1usize),
@@ -1571,6 +1590,7 @@ mod tests {
                 n_limbs_a: 2,
                 n_limbs_b: 2,
                 n_limbs_m: 2,
+                full_m: true,
             },
             inputs: Some(MultModInputs {
                 a: BigUint::from(1usize),
@@ -1586,6 +1606,7 @@ mod tests {
                 n_limbs_a: 2,
                 n_limbs_b: 2,
                 n_limbs_m: 2,
+                full_m: true,
             },
             inputs: Some(MultModInputs {
                 a: BigUint::from(2usize),
@@ -1601,6 +1622,7 @@ mod tests {
                 n_limbs_a: 2,
                 n_limbs_b: 2,
                 n_limbs_m: 2,
+                full_m: true,
             },
             inputs: Some(MultModInputs {
                 a: BigUint::from(16usize),
@@ -1616,6 +1638,7 @@ mod tests {
                 n_limbs_a: 2,
                 n_limbs_b: 2,
                 n_limbs_m: 2,
+                full_m: true,
             },
             inputs: Some(MultModInputs {
                 a: BigUint::from(254usize),
@@ -1631,6 +1654,7 @@ mod tests {
                 n_limbs_a: 2,
                 n_limbs_b: 2,
                 n_limbs_m: 2,
+                full_m: true,
             },
             inputs: Some(MultModInputs {
                 a: BigUint::from(254usize),
@@ -1646,6 +1670,7 @@ mod tests {
                 n_limbs_a: 2,
                 n_limbs_b: 2,
                 n_limbs_m: 2,
+                full_m: true,
             },
             inputs: Some(MultModInputs {
                 a: BigUint::from(110usize),
@@ -1661,6 +1686,7 @@ mod tests {
                 n_limbs_a: 6,
                 n_limbs_b: 2,
                 n_limbs_m: 2,
+                full_m: true,
             },
             inputs: Some(MultModInputs {
                 a: BigUint::from(16777215usize),
@@ -1676,6 +1702,23 @@ mod tests {
                 n_limbs_a: 6,
                 n_limbs_b: 2,
                 n_limbs_m: 2,
+                full_m: true,
+            },
+            inputs: Some(MultModInputs {
+                a: BigUint::from(16777210usize),
+                b: BigUint::from(180usize),
+                m: BigUint::from(255usize),
+                q: BigUint::from(11842736usize),
+                r: BigUint::from(120usize),
+            }),
+        }, true),
+        mult_mod_2048x128: ( MultMod {
+            params: MultModParameters {
+                limb_width: 32,
+                n_limbs_a: 64,
+                n_limbs_b: 4,
+                n_limbs_m: 4,
+                full_m: false,
             },
             inputs: Some(MultModInputs {
                 a: BigUint::from(16777210usize),
@@ -2325,6 +2368,45 @@ mod tests {
                                      }),
                                  },
                                  true),
+    }
+
+    #[derive(Debug)]
+    pub struct MillerRabin32Inputs<'a> {
+        pub n: &'a str,
+        pub result: bool,
+    }
+
+    pub struct MillerRabin32<'a> {
+        inputs: Option<MillerRabin32Inputs<'a>>,
+    }
+
+    impl<'a, E: Engine> Circuit<E> for MillerRabin32<'a> {
+        fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
+            use sapling_crypto::circuit::boolean::AllocatedBit;
+            let n = BigNat::alloc_from_nat(
+                cs.namespace(|| "n"),
+                || Ok(BigUint::from_str(self.inputs.grab()?.n).unwrap()),
+                32,
+                1,
+            )?;
+            let expected_res = Boolean::Is(AllocatedBit::alloc(
+                cs.namespace(|| "bit"),
+                self.inputs.map(|o| o.result),
+            )?);
+            let actual_res = n.miller_rabin_32b(cs.namespace(|| "mr"))?;
+            Boolean::enforce_equal(cs.namespace(|| "eq"), &expected_res, &actual_res)?;
+            Ok(())
+        }
+    }
+    circuit_tests! {
+        mr_32: (
+                          MillerRabin32 {
+                              inputs: Some(MillerRabin32Inputs {
+                                  n: "251",
+                                  result: true,
+                              }),
+                          },
+                          true),
     }
 }
 
