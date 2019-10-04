@@ -34,7 +34,6 @@ pub trait SemiGroup: Clone + Eq + Debug + Display {
     }
 }
 
-// TODO (aozdemir) mod out by the <-1> subgroup.
 #[derive(Clone, PartialEq, Eq)]
 pub struct RsaGroup {
     pub g: BigUint,
@@ -126,6 +125,12 @@ pub trait CircuitSemiGroup: Gadget<Access=()> + Eq {
         a: &Self::Elem,
         b: &Self::Elem,
     ) -> Result<Self::Elem, SynthesisError>;
+    fn partial_op<CS: ConstraintSystem<Self::E>>(
+        &self,
+        cs: CS,
+        a: &Self::Elem,
+        b: &Self::Elem,
+    ) -> Result<Self::Elem, SynthesisError>;
     fn generator(&self) -> Self::Elem;
     fn identity(&self) -> Self::Elem;
     fn group(&self) -> Option<&Self::Group>;
@@ -144,11 +149,11 @@ pub trait CircuitSemiGroup: Gadget<Access=()> + Eq {
                 let mut acc = self.bauer_power_bin_rev_helper(cs.namespace(|| "rec"), base_powers, k, exp_chunks)?;
                 // Square once, for each bit in the chunk
                 for j in 0..chunk_len {
-                    acc = self.op(cs.namespace(|| format!("square {}", j)), &acc, &acc)?;
+                    acc = self.partial_op(cs.namespace(|| format!("square {}", j)), &acc, &acc)?;
                 }
                 // Select the correct base power
                 let base_power = Gadget::mux_tree(cs.namespace(|| "select"), chunk.into_iter(), &base_powers[..(1<<chunk_len)])?;
-                self.op(cs.namespace(|| "prod"), &acc, &base_power)
+                self.partial_op(cs.namespace(|| "prod"), &acc, &base_power)
             } else {
                 Gadget::mux_tree(cs.namespace(|| "select"), chunk.into_iter(), &base_powers[..(1<<chunk_len)])
             }
@@ -167,31 +172,11 @@ pub trait CircuitSemiGroup: Gadget<Access=()> + Eq {
         let base_powers = {
             let mut base_powers = vec![self.identity(), base.clone()];
             for i in 2..(1<<k) {
-                base_powers.push(self.op(cs.namespace(|| format!("base {}", i)), base_powers.last().unwrap(), base)?);
+                base_powers.push(self.partial_op(cs.namespace(|| format!("base {}", i)), base_powers.last().unwrap(), base)?);
             }
             base_powers
         };
         self.bauer_power_bin_rev_helper(cs.namespace(|| "helper"), &base_powers, k, exp.into_bits().chunks(k))
-    }
-    fn power_bin_rev<CS: ConstraintSystem<Self::E>>(
-        &self,
-        mut cs: CS,
-        base: &Self::Elem,
-        mut exp: Bitvector<Self::E>,
-    ) -> Result<Self::Elem, SynthesisError> {
-        if exp.bits.len() == 0 {
-            Ok(self.identity())
-        } else {
-            let square = self.op(cs.namespace(|| "square"), &base, &base)?;
-            let select_bit = Bit {
-                // Unwrap is safe b/c of `n_bits` check
-                value: exp.values.as_mut().map(|vs| vs.pop().unwrap()),
-                bit: exp.bits.pop().unwrap(),
-            };
-            let rec = self.power_bin_rev(cs.namespace(|| "rec"), &square, exp)?;
-            let prod = self.op(cs.namespace(|| "prod"), &rec, &base)?;
-            <Self::Elem as Gadget>::mux(cs.namespace(|| "mux"), &select_bit, &rec, &prod)
-        }
     }
     fn power<CS: ConstraintSystem<Self::E>>(
         &self,
@@ -298,6 +283,14 @@ impl<E: Engine> CircuitSemiGroup for CircuitRsaGroup<E> {
     ) -> Result<Self::Elem, SynthesisError> {
         a.mult_mod(cs, b, &self.m).map(|(_, r)| r)
     }
+    fn partial_op<CS: ConstraintSystem<E>>(
+        &self,
+        cs: CS,
+        a: &BigNat<E>,
+        b: &BigNat<E>,
+    ) -> Result<BigNat<E>, SynthesisError> {
+        a.mult_mod(cs, b, &self.m).map(|(_, r)| r)
+    }
     fn elem_params(p: &<Self as Gadget>::Params) -> <Self::Elem as Gadget>::Params {
         BigNatParams::new(p.limb_width, p.n_limbs)
     }
@@ -329,6 +322,9 @@ impl<E: Engine> PartialEq for CircuitRsaQuotientGroup<E> {
             && self.value == other.value
             && self.params == other.params
     }
+}
+
+impl<E: Engine> CircuitRsaQuotientGroup<E> {
 }
 
 impl<E: Engine> Eq for CircuitRsaQuotientGroup<E> {}
@@ -399,7 +395,27 @@ impl<E: Engine> CircuitSemiGroup for CircuitRsaQuotientGroup<E> {
         a: &BigNat<E>,
         b: &BigNat<E>,
     ) -> Result<Self::Elem, SynthesisError> {
-        let x = a.mult_mod(cs.namespace(|| "mult"), b, &self.m).map(|(_, r)| r)?;
+        let x = self.partial_op(cs.namespace(|| "mult"), a, b)?;
+        let y = self.m.sub(cs.namespace(|| "sub"), &x)?;
+        y.decompose(cs.namespace(|| "y decomp check"))?;
+        x.min(cs.namespace(|| "min"), &y)
+    }
+    fn partial_op<CS: ConstraintSystem<E>>(
+        &self,
+        cs: CS,
+        a: &BigNat<E>,
+        b: &BigNat<E>,
+    ) -> Result<BigNat<E>, SynthesisError> {
+        a.mult_mod(cs, b, &self.m).map(|(_, r)| r)
+    }
+    fn power<CS: ConstraintSystem<Self::E>>(
+        &self,
+        mut cs: CS,
+        b: &Self::Elem,
+        e: &BigNat<Self::E>,
+    ) -> Result<Self::Elem, SynthesisError> {
+        let exp_bin_rev = e.decompose(cs.namespace(|| "exp decomp"))?.reversed();
+        let x = self.bauer_power_bin_rev(cs.namespace(|| "binary exp"), &b, exp_bin_rev)?;
         let y = self.m.sub(cs.namespace(|| "sub"), &x)?;
         y.decompose(cs.namespace(|| "y decomp check"))?;
         x.min(cs.namespace(|| "min"), &y)
