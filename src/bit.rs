@@ -207,6 +207,10 @@ impl<E: Engine> Bit<E> {
     pub fn new_true<CS: ConstraintSystem<E>>() -> Self {
         Self::new(LinearCombination::zero() + CS::one(), Some(true))
     }
+
+    pub fn new_value<CS: ConstraintSystem<E>>(v: bool) -> Self {
+        if v { Self::new_true::<CS>() } else { Self::new_false::<CS>() }
+    }
 }
 
 

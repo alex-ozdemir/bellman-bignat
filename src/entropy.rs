@@ -9,6 +9,7 @@ use mimc::mimc;
 
 use gadget::Gadget;
 
+#[derive(Debug)]
 pub struct NatTemplate {
     pub random_bits: usize,
     pub leading_ones: usize,
