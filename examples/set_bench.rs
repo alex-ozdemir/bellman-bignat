@@ -43,7 +43,6 @@ struct Args {
     arg_transactions: usize,
     arg_capacity: usize,
     cmd_rsa: bool,
-    flag_elem_size: usize,
 }
 
 
