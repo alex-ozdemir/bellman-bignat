@@ -1,21 +1,21 @@
 extern crate bellman_bignat;
+extern crate docopt;
 extern crate num_bigint;
 extern crate rand;
 extern crate sapling_crypto;
-extern crate docopt;
 extern crate serde;
 
 use bellman_bignat::bignat::nat_to_limbs;
 use bellman_bignat::group::RsaGroup;
-use bellman_bignat::set::{SetBench, SetBenchInputs, SetBenchParams};
+use bellman_bignat::set::{GenSet, SetBench, SetBenchInputs, SetBenchParams};
 use docopt::Docopt;
-use serde::Deserialize;
 use num_bigint::BigUint;
-use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
-use sapling_crypto::bellman::pairing::ff::ScalarEngine;
 use sapling_crypto::bellman::pairing::bn256::Bn256;
+use sapling_crypto::bellman::pairing::ff::ScalarEngine;
 use sapling_crypto::bellman::Circuit;
 use sapling_crypto::circuit::test::TestConstraintSystem;
+use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
+use serde::Deserialize;
 
 use std::rc::Rc;
 use std::str::FromStr;
@@ -44,7 +44,6 @@ struct Args {
     arg_capacity: usize,
     cmd_rsa: bool,
 }
-
 
 fn main() {
     color_backtrace::install();
@@ -93,29 +92,20 @@ fn main() {
     let initial_set = ins.initial_state.clone();
     let final_set = {
         let mut t = initial_set.clone();
-        t.remove_all(ins.to_remove.iter().map(Vec::as_slice));
-        t.insert_all(ins.to_insert.clone());
+        t.swap_all(ins.to_remove.clone(), ins.to_insert.clone());
         t
     };
 
     let mut inputs: Vec<<Bn256 as ScalarEngine>::Fr> = nat_to_limbs(&group.g, 32, 64).unwrap();
-    inputs.extend(nat_to_limbs::<<Bn256 as ScalarEngine>::Fr>(
-        &group.m, 32, 64,
-    ).unwrap());
-    inputs.extend(nat_to_limbs::<<Bn256 as ScalarEngine>::Fr>(
-        &initial_set.digest(),
-        32,
-        64,
-    ).unwrap());
-    inputs.extend(nat_to_limbs::<<Bn256 as ScalarEngine>::Fr>(
-        &final_set.digest(),
-        32,
-        64,
-    ).unwrap());
+    inputs.extend(nat_to_limbs::<<Bn256 as ScalarEngine>::Fr>(&group.m, 32, 64).unwrap());
+    inputs.extend(
+        nat_to_limbs::<<Bn256 as ScalarEngine>::Fr>(&initial_set.digest(), 32, 64).unwrap(),
+    );
+    inputs
+        .extend(nat_to_limbs::<<Bn256 as ScalarEngine>::Fr>(&final_set.digest(), 32, 64).unwrap());
 
     let mut cs = TestConstraintSystem::<Bn256>::new();
     circuit.synthesize(&mut cs).expect("synthesis failed");
     assert!(cs.is_satisfied());
     println!("Constraints: {}", cs.num_constraints());
-
 }

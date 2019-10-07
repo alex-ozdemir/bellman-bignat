@@ -1,4 +1,5 @@
 use num_bigint::BigUint;
+use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::pairing::ff::{PrimeField, ScalarEngine};
 use sapling_crypto::bellman::{Circuit, ConstraintSystem, LinearCombination, SynthesisError};
 use sapling_crypto::circuit::num::AllocatedNum;
@@ -14,6 +15,28 @@ use group::{CircuitRsaGroup, CircuitRsaGroupParams, CircuitSemiGroup, RsaGroup, 
 use hash::{rsa, pocklington, HashDomain};
 use int_set::{CircuitIntSet, IntSet, NaiveExpSet};
 use OptionExt;
+
+pub trait GenSet<E>
+where
+    E: Engine,
+{
+    type Digest;
+
+    fn swap(&mut self, old: &[E::Fr], new: Vec<E::Fr>);
+
+    /// Remove all of the `ns` from the set.
+    fn swap_all<I, J>(&mut self, old: I, new: J)
+        where
+            I: IntoIterator<Item = Vec<E::Fr>>,
+            J: IntoIterator<Item = Vec<E::Fr>>
+    {
+        for (i, j) in old.into_iter().zip(new.into_iter()) {
+            self.swap(i.as_slice(), j);
+        }
+    }
+
+    fn digest(&self) -> Self::Digest;
+}
 
 pub struct Set<E, Inner>
 where
@@ -76,15 +99,14 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> Set<E, Inner> {
             _phant: PhantomData::default(),
         }
     }
-}
 
-impl<E, Inner> Set<E, Inner>
-where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
-    Inner: IntSet,
-{
+    /// Gets the underlying RSA group
+    pub fn group(&self) -> &Inner::G {
+        self.inner.group()
+    }
+
     /// Add `n` to the set, returning whether `n` is new to the set.
-    pub fn insert(&mut self, n: Vec<E::Fr>) -> bool {
+    fn insert(&mut self, n: Vec<E::Fr>) -> bool {
         self.inner.insert(rsa::helper::hash_to_rsa_element::<E>(
             &n,
             &self.hash_domain,
@@ -93,7 +115,7 @@ where
         ))
     }
     /// Remove `n` from the set, returning whether `n` was present.
-    pub fn remove(&mut self, n: &[E::Fr]) -> bool {
+    fn remove(&mut self, n: &[E::Fr]) -> bool {
         self.inner.remove(&rsa::helper::hash_to_rsa_element::<E>(
             &n,
             &self.hash_domain,
@@ -102,26 +124,6 @@ where
         ))
     }
 
-    /// The digest of the current elements (`g` to the product of the elements).
-    pub fn digest(&self) -> <Inner::G as SemiGroup>::Elem {
-        self.inner.digest()
-    }
-
-    /// Gets the underlying RSA group
-    pub fn group(&self) -> &Inner::G {
-        self.inner.group()
-    }
-
-    /// Add all of the `ns` to the set.
-    pub fn insert_all<I: IntoIterator<Item = Vec<E::Fr>>>(&mut self, ns: I) -> bool {
-        let mut all_absent = true;
-        for n in ns {
-            all_absent &= self.insert(n);
-        }
-        all_absent
-    }
-
-    /// Remove all of the `ns` from the set.
     pub fn remove_all<'b, I: IntoIterator<Item = &'b [E::Fr]>>(&mut self, ns: I) -> bool
     where
         <Inner::G as SemiGroup>::Elem: 'b,
@@ -131,6 +133,33 @@ where
             all_present &= self.remove(n);
         }
         all_present
+    }
+
+    pub fn insert_all<I: IntoIterator<Item = Vec<E::Fr>>>(&mut self, ns: I) -> bool {
+        let mut all_absent = true;
+        for n in ns {
+            all_absent &= self.insert(n);
+        }
+        all_absent
+    }
+}
+
+impl<E, Inner> GenSet<E> for Set<E, Inner>
+where
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    Inner: IntSet,
+{
+    type Digest = <Inner::G as SemiGroup>::Elem;
+
+    fn swap(&mut self, old: &[E::Fr], new: Vec<E::Fr>) {
+        self.remove(old);
+        self.insert(new);
+    }
+
+
+    /// The digest of the current elements (`g` to the product of the elements).
+    fn digest(&self) -> <Inner::G as SemiGroup>::Elem {
+        self.inner.digest()
     }
 }
 
@@ -233,6 +262,18 @@ where
     }
 }
 
+trait GenCircuitSet<E> : Sized
+where E: Engine
+{
+    fn swap_all<'b, CS: ConstraintSystem<E>>(
+        self,
+        cs: CS,
+        challenge: &BigNat<E>,
+        removed_items: impl IntoIterator<Item = &'b [AllocatedNum<E>]> + Clone,
+        inserted_items: impl IntoIterator<Item = &'b [AllocatedNum<E>]> + Clone,
+    ) -> Result<Self, SynthesisError>;
+}
+
 impl<E, CG, Inner> CircuitSet<E, CG, Inner>
 where
     E: PoseidonEngine<SBox = QuinticSBox<E>>,
@@ -320,6 +361,26 @@ where
             inner,
             params: self.params.clone(),
         })
+    }
+}
+
+impl<E, CG, Inner> GenCircuitSet<E> for
+CircuitSet<E, CG, Inner>
+where
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    CG: CircuitSemiGroup<E = E> + Gadget<E = E, Value = <CG as CircuitSemiGroup>::Group>,
+    CG::Elem: Gadget<E = E, Value = <CG::Group as SemiGroup>::Elem, Access = ()>,
+    Inner: IntSet<G = <CG as CircuitSemiGroup>::Group>,
+{
+    fn swap_all<'b, CS: ConstraintSystem<E>>(
+        self,
+        mut cs: CS,
+        challenge: &BigNat<E>,
+        removed_items: impl IntoIterator<Item = &'b [AllocatedNum<E>]> + Clone,
+        inserted_items: impl IntoIterator<Item = &'b [AllocatedNum<E>]> + Clone,
+    ) -> Result<Self, SynthesisError> {
+        let without = self.remove(cs.namespace(|| "remove"), challenge, removed_items)?;
+        without.insert(cs.namespace(|| "insert"), challenge, inserted_items)
     }
 }
 
@@ -538,17 +599,11 @@ where
             &self.params.hash,
         )?;
 
-        println!("Deleting elements");
-        let reduced_set = set.remove(
-            cs.namespace(|| "remove"),
+        println!("Swapping elements");
+        let new_set = set.swap_all(
+            cs.namespace(|| "swap"),
             &challenge,
             removals.iter().map(Vec::as_slice),
-        )?;
-
-        println!("Inserting elements");
-        let expanded_set = reduced_set.insert(
-            cs.namespace(|| "insert"),
-            &challenge,
             insertions.iter().map(Vec::as_slice),
         )?;
 
@@ -560,11 +615,11 @@ where
         )?;
 
         println!("Verifying resulting digest");
-        expanded_set
+        new_set
             .inner
             .digest
             .equal(cs.namespace(|| "check"), &expected_digest)?;
-        expanded_set.inputize(cs.namespace(|| "final_state input"))?;
+        new_set.inputize(cs.namespace(|| "final_state input"))?;
         Ok(())
     }
 }

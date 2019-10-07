@@ -6,7 +6,7 @@ extern crate sapling_crypto;
 use bellman_bignat::bignat::nat_to_limbs;
 use bellman_bignat::group::RsaGroup;
 use bellman_bignat::int_set::NaiveExpSet;
-use bellman_bignat::set::{SetBench, SetBenchInputs, SetBenchParams};
+use bellman_bignat::set::{GenSet, SetBench, SetBenchInputs, SetBenchParams};
 use num_bigint::BigUint;
 use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
 
@@ -106,8 +106,7 @@ fn main() {
     let initial_set = ins.initial_state.clone();
     let final_set = {
         let mut t = initial_set.clone();
-        t.remove_all(ins.to_remove.iter().map(Vec::as_slice));
-        t.insert_all(ins.to_insert.clone());
+        t.swap_all(ins.to_remove.clone(), ins.to_insert.clone());
         t
     };
 
@@ -120,19 +119,12 @@ fn main() {
     use sapling_crypto::bellman::pairing::bn256::Bn256;
     use sapling_crypto::bellman::pairing::ff::ScalarEngine;
     let mut inputs: Vec<<Bn256 as ScalarEngine>::Fr> = nat_to_limbs(&group.g, 32, 64).unwrap();
-    inputs.extend(nat_to_limbs::<<Bn256 as ScalarEngine>::Fr>(
-        &group.m, 32, 64,
-    ).unwrap());
-    inputs.extend(nat_to_limbs::<<Bn256 as ScalarEngine>::Fr>(
-        &initial_set.digest(),
-        32,
-        64,
-    ).unwrap());
-    inputs.extend(nat_to_limbs::<<Bn256 as ScalarEngine>::Fr>(
-        &final_set.digest(),
-        32,
-        64,
-    ).unwrap());
+    inputs.extend(nat_to_limbs::<<Bn256 as ScalarEngine>::Fr>(&group.m, 32, 64).unwrap());
+    inputs.extend(
+        nat_to_limbs::<<Bn256 as ScalarEngine>::Fr>(&initial_set.digest(), 32, 64).unwrap(),
+    );
+    inputs
+        .extend(nat_to_limbs::<<Bn256 as ScalarEngine>::Fr>(&final_set.digest(), 32, 64).unwrap());
 
     println!("verified {:?}", verify_proof(&pvk, &proof, &inputs));
 }
