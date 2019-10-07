@@ -50,7 +50,6 @@ fn main() {
     let args: Args = Docopt::new(USAGE)
         .and_then(|d| d.deserialize())
         .unwrap_or_else(|e| e.exit());
-    println!("{:?}", args);
 
     let hash = Rc::new(Bn256PoseidonParams::new::<
         sapling_crypto::group_hash::Keccak256Hasher,
