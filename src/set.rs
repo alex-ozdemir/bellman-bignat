@@ -12,7 +12,7 @@ use bignat::BigNat;
 use gadget::Gadget;
 use group::{CircuitRsaGroup, CircuitRsaGroupParams, CircuitSemiGroup, RsaGroup, SemiGroup};
 use hash::{rsa, pocklington, HashDomain};
-use rsa_set::{CircuitIntSet, IntSet, NaiveExpSet};
+use int_set::{CircuitIntSet, IntSet, NaiveExpSet};
 use OptionExt;
 
 pub struct Set<E, Inner>

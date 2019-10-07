@@ -50,7 +50,7 @@ pub mod poly;
 pub mod bignat;
 pub mod lazy;
 pub mod wesolowski;
-pub mod rsa_set;
+pub mod int_set;
 pub mod hash;
 pub mod set;
 pub mod mimc;
