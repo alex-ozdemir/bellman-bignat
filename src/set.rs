@@ -450,12 +450,11 @@ where
             let mut cs = cs.namespace(|| format!("swap {}", j));
 
             // First, we allocate the path
-            let witness = self.value.as_ref().map(|v| {
-                let x: Vec<E::Fr> = old
-                    .into_iter()
-                    .map(|n| n.get_value().expect("missing value for removed_items"))
-                    .collect();
-                v.witness(&x)
+            let witness = self.value.as_ref().and_then(|v| {
+                old.into_iter()
+                    .map(|n| n.get_value())
+                    .collect::<Option<Vec<E::Fr>>>()
+                    .map(|x| v.witness(&x))
             });
             let path: Vec<(Boolean, AllocatedNum<E>)> = {
                 let mut cs = cs.namespace(|| "alloc path");
@@ -521,17 +520,19 @@ where
                         .unwrap();
                 }
                 self.digest = new_cur;
-                self.value.as_mut().map(|v| {
-                    let o: Vec<E::Fr> = old
+                if let Some(v) = self.value.as_mut() {
+                    let o = old
                         .into_iter()
-                        .map(|n| n.get_value().expect("missing value for removed_items"))
-                        .collect();
-                    let n: Vec<E::Fr> = new
+                        .map(|n| n.get_value())
+                        .collect::<Option<Vec<E::Fr>>>();
+                    let n = old
                         .into_iter()
-                        .map(|n| n.get_value().expect("missing value for inserted_items"))
-                        .collect();
-                    v.swap(&o, n);
-                });
+                        .map(|n| n.get_value())
+                        .collect::<Option<Vec<E::Fr>>>();
+                    if let (Some(o), Some(n)) = (o, n) {
+                        v.swap(&o, n);
+                    }
+                }
             }
         }
         Ok(self)
@@ -1012,11 +1013,7 @@ where
             .collect();
         assert!((1 << depth) >= initial.len());
         assert_eq!(removed.len(), inserted.len());
-        let initial_state = MerkleSet::new_with(
-            hash,
-            depth,
-            initial.iter().map(Vec::as_slice),
-        );
+        let initial_state = MerkleSet::new_with(hash, depth, initial.iter().map(Vec::as_slice));
         Self {
             initial_state,
             to_remove: removed,

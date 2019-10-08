@@ -67,9 +67,6 @@ impl<E: Engine> Polynomial<E> {
             values,
         };
         for x in 1..(n_product_coeffs + 1) {
-            let mut a = self.evaluate_at(usize_to_f(x)).unwrap();
-            a.mul_assign(&other.evaluate_at(usize_to_f(x)).unwrap());
-            assert_eq!(a, product.evaluate_at(usize_to_f(x)).unwrap());
             cs.enforce(
                 || format!("pointwise product @ {}", x),
                 |lc| {

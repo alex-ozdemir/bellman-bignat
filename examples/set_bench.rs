@@ -5,6 +5,7 @@ extern crate rand;
 extern crate sapling_crypto;
 extern crate serde;
 
+use bellman_bignat::bench::ConstraintCounter;
 use bellman_bignat::bignat::nat_to_limbs;
 use bellman_bignat::group::RsaGroup;
 use bellman_bignat::set::{GenSet, SetBench, SetBenchInputs, SetBenchParams, MerkleSetBench, MerkleSetBenchParams, MerkleSetBenchInputs};
@@ -13,7 +14,6 @@ use num_bigint::BigUint;
 use sapling_crypto::bellman::pairing::bn256::Bn256;
 use sapling_crypto::bellman::pairing::ff::ScalarEngine;
 use sapling_crypto::bellman::Circuit;
-use sapling_crypto::circuit::test::TestConstraintSystem;
 use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
 use serde::Deserialize;
 
@@ -79,7 +79,7 @@ fn rsa_bench(t: usize, c: usize) -> usize {
         m: BigUint::from_str(RSA_2048).unwrap(),
     };
 
-    let circuit = SetBench {
+    let circuit = SetBench::<Bn256, _> {
         inputs: Some(SetBenchInputs::from_counts(
             0,
             t,
@@ -123,9 +123,8 @@ fn rsa_bench(t: usize, c: usize) -> usize {
     inputs
         .extend(nat_to_limbs::<<Bn256 as ScalarEngine>::Fr>(&final_set.digest(), 32, 64).unwrap());
 
-    let mut cs = TestConstraintSystem::<Bn256>::new();
+    let mut cs = ConstraintCounter::new();
     circuit.synthesize(&mut cs).expect("synthesis failed");
-    assert!(cs.is_satisfied());
     cs.num_constraints()
 }
 
@@ -134,7 +133,7 @@ fn merkle_bench(t: usize, c: usize) -> usize {
         sapling_crypto::group_hash::Keccak256Hasher,
     >());
 
-    let circuit = MerkleSetBench {
+    let circuit = MerkleSetBench::<Bn256> {
         inputs: Some(MerkleSetBenchInputs::from_counts(
             0,
             t,
@@ -146,7 +145,7 @@ fn merkle_bench(t: usize, c: usize) -> usize {
             item_size: ELEMENT_SIZE,
             n_swaps: t,
             hash,
-            verbose: false,
+            verbose: true,
             depth: c,
         },
     };
@@ -159,8 +158,7 @@ fn merkle_bench(t: usize, c: usize) -> usize {
         t
     };
 
-    let mut cs = TestConstraintSystem::<Bn256>::new();
+    let mut cs = ConstraintCounter::new();
     circuit.synthesize(&mut cs).expect("synthesis failed");
-    assert!(cs.is_satisfied());
     cs.num_constraints()
 }
