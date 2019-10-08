@@ -6,7 +6,6 @@ use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
 use bignat::BigNat;
 use group::{CircuitSemiGroup, SemiGroup};
 use gadget::Gadget;
-use OptionExt;
 
 /// Computes `b ^ (prod(xs) / l) % m`, cleverly.
 pub fn base_to_product<'a, G: SemiGroup, I: Iterator<Item = &'a BigUint>>(
@@ -74,28 +73,23 @@ where
             })
         })
     };
-    let r_computation = || -> Result<BigUint, SynthesisError> {
-        let mut prod = BigUint::one();
-        let l = challenge.value.grab()?;
-        for pow in power_factors {
-            if pow.params.limb_width != challenge.params.limb_width {
-                return Err(SynthesisError::Unsatisfiable);
-            }
-            prod = prod * pow.value.grab()? % l;
+    let r = {
+        let mut acc = BigNat::alloc_from_nat(
+            cs.namespace(|| "r"),
+            || Ok(BigUint::one()),
+            challenge.params.limb_width,
+            challenge.limbs.len(),
+        )?;
+        for (i, f) in power_factors.into_iter().enumerate() {
+            acc = acc.mult_mod(cs.namespace(|| format!("fold {}", i)), f, challenge)?.1;
         }
-        Ok(prod)
+        acc
     };
     let q = <G::Elem as Gadget>::alloc(
         cs.namespace(|| "Q"),
         q_value.as_ref(),
         base.access().clone(),
         <G::Elem as Gadget>::params(base),
-    )?;
-    let r = BigNat::alloc_from_nat(
-        cs.namespace(|| "r"),
-        r_computation,
-        challenge.params.limb_width,
-        challenge.limbs.len(),
     )?;
     let ql = group.power(cs.namespace(|| "Q^l"), &q, &challenge)?;
     let br = group.power(cs.namespace(|| "b^r"), &base, &r)?;
@@ -105,6 +99,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use OptionExt;
     use super::*;
 
     use quickcheck::TestResult;
