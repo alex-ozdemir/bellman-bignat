@@ -1,18 +1,19 @@
 use num_bigint::BigUint;
-use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::pairing::ff::{PrimeField, ScalarEngine};
+use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{Circuit, ConstraintSystem, LinearCombination, SynthesisError};
 use sapling_crypto::circuit::num::AllocatedNum;
-use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
+use sapling_crypto::poseidon::{poseidon_hash, PoseidonEngine, QuinticSBox};
 
 use std::fmt::{self, Debug, Formatter};
 use std::marker::PhantomData;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use bignat::BigNat;
 use gadget::Gadget;
 use group::{CircuitRsaGroup, CircuitRsaGroupParams, CircuitSemiGroup, RsaGroup, SemiGroup};
-use hash::{rsa, pocklington, HashDomain};
+use hash::{pocklington, rsa, HashDomain};
 use int_set::{CircuitIntSet, IntSet, NaiveExpSet};
 use OptionExt;
 
@@ -26,9 +27,9 @@ where
 
     /// Remove all of the `ns` from the set.
     fn swap_all<I, J>(&mut self, old: I, new: J)
-        where
-            I: IntoIterator<Item = Vec<E::Fr>>,
-            J: IntoIterator<Item = Vec<E::Fr>>
+    where
+        I: IntoIterator<Item = Vec<E::Fr>>,
+        J: IntoIterator<Item = Vec<E::Fr>>,
     {
         for (i, j) in old.into_iter().zip(new.into_iter()) {
             self.swap(i.as_slice(), j);
@@ -49,6 +50,63 @@ where
     pub limb_width: usize,
     // TODO revisit upon the resolution of https://github.com/rust-lang/rust/issues/64155
     pub _phant: PhantomData<E>,
+}
+
+pub struct MerkleSet<E>
+where
+    E:  PoseidonEngine<SBox = QuinticSBox<E>>,
+{
+    pub hash_params: Rc<<E as PoseidonEngine>::Params>,
+    pub leaves: Vec<E::Fr>,
+    pub depth: usize,
+    pub leaf_indices: BTreeMap<<E::Fr as PrimeField>::Repr, usize>,
+}
+
+impl<E> MerkleSet<E>
+where
+    E:  PoseidonEngine<SBox = QuinticSBox<E>>,
+{
+    pub fn new_with<'b>(
+        hash_params: Rc<<E as PoseidonEngine>::Params>,
+        depth: usize,
+        items: impl IntoIterator<Item = &'b [E::Fr]>,
+    ) -> Self {
+        let leaves: Vec<E::Fr> = items.into_iter().map(|s| poseidon_hash::<E>(&hash_params, s).pop().unwrap()).collect();
+        let leaf_indices: BTreeMap<<E::Fr as PrimeField>::Repr, usize> = leaves.iter().enumerate().map(|(i, e)| (e.into_repr(), i)).collect();
+        assert_eq!(1 << depth, leaves.len());
+        Self {
+            hash_params,
+            leaves,
+            depth,
+            leaf_indices,
+        }
+    }
+}
+
+impl<E> GenSet<E> for MerkleSet<E>
+where
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+{
+    type Digest = E::Fr;
+
+    fn swap(&mut self, old: &[E::Fr], new: Vec<E::Fr>) {
+        let o_r = poseidon_hash::<E>(&self.hash_params, old).pop().unwrap().into_repr();
+        let n = poseidon_hash::<E>(&self.hash_params, new.as_slice()).pop().unwrap();
+        let n_r = n.into_repr();
+        let i = *self.leaf_indices.get(&o_r).expect("missing element in MerkleSet::swap");
+        self.leaves[i] = n;
+        self.leaf_indices.remove(&o_r);
+        self.leaf_indices.insert(n_r, i);
+    }
+
+    /// The digest of the current elements (`g` to the product of the elements).
+    fn digest(&self) -> Self::Digest {
+        let mut items = self.leaves.clone();
+        while items.len() > 1 {
+            items = items.as_slice().chunks(2).map(|c| poseidon_hash::<E>(&self.hash_params, c).pop().unwrap()).collect();
+        }
+        items.pop().unwrap()
+    }
 }
 
 impl<E, Inner> Debug for Set<E, Inner>
@@ -156,7 +214,6 @@ where
         self.insert(new);
     }
 
-
     /// The digest of the current elements (`g` to the product of the elements).
     fn digest(&self) -> <Inner::G as SemiGroup>::Elem {
         self.inner.digest()
@@ -262,8 +319,9 @@ where
     }
 }
 
-trait GenCircuitSet<E> : Sized
-where E: Engine
+trait GenCircuitSet<E>: Sized
+where
+    E: Engine,
 {
     fn swap_all<'b, CS: ConstraintSystem<E>>(
         self,
@@ -364,8 +422,7 @@ where
     }
 }
 
-impl<E, CG, Inner> GenCircuitSet<E> for
-CircuitSet<E, CG, Inner>
+impl<E, CG, Inner> GenCircuitSet<E> for CircuitSet<E, CG, Inner>
 where
     E: PoseidonEngine<SBox = QuinticSBox<E>>,
     CG: CircuitSemiGroup<E = E> + Gadget<E = E, Value = <CG as CircuitSemiGroup>::Group>,
