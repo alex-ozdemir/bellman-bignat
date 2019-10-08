@@ -8,7 +8,10 @@ extern crate serde;
 use bellman_bignat::bench::ConstraintCounter;
 use bellman_bignat::bignat::nat_to_limbs;
 use bellman_bignat::group::RsaGroup;
-use bellman_bignat::set::{GenSet, SetBench, SetBenchInputs, SetBenchParams, MerkleSetBench, MerkleSetBenchParams, MerkleSetBenchInputs};
+use bellman_bignat::set::{
+    GenSet, MerkleSetBench, MerkleSetBenchInputs, MerkleSetBenchParams, SetBench, SetBenchInputs,
+    SetBenchParams,
+};
 use docopt::Docopt;
 use num_bigint::BigUint;
 use sapling_crypto::bellman::pairing::bn256::Bn256;
@@ -52,21 +55,20 @@ fn main() {
     let args: Args = Docopt::new(USAGE)
         .and_then(|d| d.deserialize())
         .unwrap_or_else(|e| e.exit());
-    if args.cmd_rsa {
-        println!("OUT: {} {} {} {}",
-        "rsa",
-        args.arg_transactions,
-        args.arg_capacity,
-        rsa_bench(args.arg_transactions,
-                  args.arg_capacity));
+    let (set, constraints) = if args.cmd_rsa {
+        ("rsa", rsa_bench(args.arg_transactions, args.arg_capacity))
     } else if args.cmd_merkle {
-        println!("OUT: {} {} {} {}",
-        "merkle",
-        args.arg_transactions,
-        args.arg_capacity,
-        merkle_bench(args.arg_transactions,
-                  args.arg_capacity));
-    }
+        (
+            "merkle",
+            merkle_bench(args.arg_transactions, args.arg_capacity),
+        )
+    } else {
+        panic!("Unknown command")
+    };
+    println!(
+        "{},{},{},{}",
+        set, args.arg_transactions, args.arg_capacity, constraints
+    );
 }
 
 fn rsa_bench(t: usize, c: usize) -> usize {
@@ -139,7 +141,7 @@ fn merkle_bench(t: usize, c: usize) -> usize {
             t,
             ELEMENT_SIZE,
             hash.clone(),
-            c
+            c,
         )),
         params: MerkleSetBenchParams {
             item_size: ELEMENT_SIZE,
