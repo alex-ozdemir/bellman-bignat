@@ -600,19 +600,6 @@ where
     }
 }
 
-trait GenCircuitSet<E>: Sized
-where
-    E: Engine,
-{
-    fn swap_all<'b, CS: ConstraintSystem<E>>(
-        self,
-        cs: CS,
-        challenge: &BigNat<E>,
-        removed_items: impl IntoIterator<Item = &'b [AllocatedNum<E>]> + Clone,
-        inserted_items: impl IntoIterator<Item = &'b [AllocatedNum<E>]> + Clone,
-    ) -> Result<Self, SynthesisError>;
-}
-
 impl<E, CG, Inner> CircuitSet<E, CG, Inner>
 where
     E: PoseidonEngine<SBox = QuinticSBox<E>>,
@@ -701,15 +688,7 @@ where
             params: self.params.clone(),
         })
     }
-}
 
-impl<E, CG, Inner> GenCircuitSet<E> for CircuitSet<E, CG, Inner>
-where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
-    CG: CircuitSemiGroup<E = E> + Gadget<E = E, Value = <CG as CircuitSemiGroup>::Group>,
-    CG::Elem: Gadget<E = E, Value = <CG::Group as SemiGroup>::Elem, Access = ()>,
-    Inner: IntSet<G = <CG as CircuitSemiGroup>::Group>,
-{
     fn swap_all<'b, CS: ConstraintSystem<E>>(
         self,
         mut cs: CS,
@@ -975,6 +954,169 @@ where
     }
 }
 
+pub struct MerkleSetBenchInputs<E>
+where
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+{
+    /// The initial state of the set
+    pub initial_state: MerkleSet<E>,
+    /// The items to remove from the set
+    pub to_remove: Vec<Vec<E::Fr>>,
+    /// The items to insert into the set
+    pub to_insert: Vec<Vec<E::Fr>>,
+}
+
+impl<E> MerkleSetBenchInputs<E>
+where
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+{
+    pub fn from_counts(
+        n_untouched: usize,
+        n_swaps: usize,
+        item_len: usize,
+        hash: Rc<E::Params>,
+        depth: usize,
+    ) -> Self {
+        let untouched_items: Vec<Vec<String>> = (0..n_untouched)
+            .map(|i| {
+                (0..item_len)
+                    .map(|j| format!("1{:06}{:03}", i, j))
+                    .collect()
+            })
+            .collect();
+        let removed_items: Vec<Vec<String>> = (0..n_swaps)
+            .map(|i| {
+                (0..item_len)
+                    .map(|j| format!("2{:06}{:03}", i, j))
+                    .collect()
+            })
+            .collect();
+        let inserted_items: Vec<Vec<String>> = (0..n_swaps)
+            .map(|i| {
+                (0..item_len)
+                    .map(|j| format!("3{:06}{:03}", i, j))
+                    .collect()
+            })
+            .collect();
+
+        Self::new(untouched_items, removed_items, inserted_items, hash, depth)
+    }
+    pub fn new(
+        untouched_items: Vec<Vec<String>>,
+        removed_items: Vec<Vec<String>>,
+        inserted_items: Vec<Vec<String>>,
+        hash: Rc<E::Params>,
+        depth: usize,
+    ) -> Self {
+        let untouched: Vec<Vec<E::Fr>> = untouched_items
+            .iter()
+            .map(|i| i.iter().map(|j| E::Fr::from_str(j).unwrap()).collect())
+            .collect();
+        let removed: Vec<Vec<E::Fr>> = removed_items
+            .iter()
+            .map(|i| i.iter().map(|j| E::Fr::from_str(j).unwrap()).collect())
+            .collect();
+        let inserted: Vec<Vec<E::Fr>> = inserted_items
+            .iter()
+            .map(|i| i.iter().map(|j| E::Fr::from_str(j).unwrap()).collect())
+            .collect();
+        assert!(depth > untouched.len() + std::cmp::max(removed_items.len(), inserted_items.len()));
+        assert_eq!(removed.len(), inserted.len());
+        let initial_state = MerkleSet::new_with(
+            hash,
+            depth,
+            untouched.iter().chain(removed.iter()).map(Vec::as_slice),
+        );
+        Self {
+            initial_state,
+            to_remove: removed,
+            to_insert: inserted,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct MerkleSetBenchParams<E: PoseidonEngine> {
+    pub item_size: usize,
+    pub n_swaps: usize,
+    pub hash: Rc<E::Params>,
+    pub depth: usize,
+    pub verbose: bool,
+}
+
+pub struct MerkleSetBench<E>
+where
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+{
+    pub inputs: Option<MerkleSetBenchInputs<E>>,
+    pub params: MerkleSetBenchParams<E>,
+}
+
+impl<E> Circuit<E> for MerkleSetBench<E>
+where
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+{
+    fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
+        if self.params.verbose {
+            println!("Constructing Set");
+        }
+        let set: MerkleCircuitSet<E> = MerkleCircuitSet::alloc(
+            cs.namespace(|| "set init"),
+            self.inputs.as_ref().map(|is| &is.initial_state),
+            (),
+            &MerkleCircuitSetParams {
+                hash: self.params.hash.clone(),
+                depth: self.params.depth,
+            },
+        )?;
+        set.inputize(cs.namespace(|| "initial_state input"))?;
+        if self.params.verbose {
+            println!("Allocating Deletions...");
+        }
+        let removals = (0..self.params.n_swaps)
+            .map(|i| {
+                (0..self.params.item_size)
+                    .map(|j| {
+                        AllocatedNum::alloc(cs.namespace(|| format!("remove {} {}", i, j)), || {
+                            Ok(**self.inputs.grab()?.to_remove.get(i).grab()?.get(j).grab()?)
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .collect::<Result<Vec<Vec<AllocatedNum<E>>>, SynthesisError>>()?;
+
+        if self.params.verbose {
+            println!("Allocating Insertions...");
+        }
+        let insertions = (0..self.params.n_swaps)
+            .map(|i| {
+                (0..self.params.item_size)
+                    .map(|j| {
+                        AllocatedNum::alloc(cs.namespace(|| format!("insert {} {}", i, j)), || {
+                            Ok(**self.inputs.grab()?.to_insert.get(i).grab()?.get(j).grab()?)
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .collect::<Result<Vec<Vec<AllocatedNum<E>>>, SynthesisError>>()?;
+
+        if self.params.verbose {
+            println!("Swapping elements");
+        }
+        let new_set = set.swap_all(
+            cs.namespace(|| "swap"),
+            removals.iter().map(Vec::as_slice),
+            insertions.iter().map(Vec::as_slice),
+        )?;
+
+        if self.params.verbose {
+            println!("NOT Verifying resulting digest");
+        }
+        new_set.inputize(cs.namespace(|| "final_state input"))?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod test {
     // From https://en.wikipedia.org/wiki/RSA_numbers#RSA-
@@ -1090,5 +1232,71 @@ mod test {
         //        hash: Bn256PoseidonParams::new::<sapling_crypto::group_hash::Keccak256Hasher>(),
         //    },
         //}, true),
+    }
+    circuit_tests! {
+        merkle_1_swap_3_depth: (MerkleSetBench {
+            inputs: Some(MerkleSetBenchInputs::from_counts(
+                            0,
+                            1,
+                            5,
+                            Rc::new(Bn256PoseidonParams::new::<Keccak256Hasher>()),
+                            3
+                    )),
+                    params: MerkleSetBenchParams {
+                        item_size: 5,
+                        n_swaps: 1,
+                        hash: Rc::new(Bn256PoseidonParams::new::<Keccak256Hasher>()),
+                        verbose: true,
+                        depth: 3,
+                    },
+        }, true),
+        merkle_1_swap_10_depth: (MerkleSetBench {
+            inputs: Some(MerkleSetBenchInputs::from_counts(
+                            0,
+                            1,
+                            5,
+                            Rc::new(Bn256PoseidonParams::new::<Keccak256Hasher>()),
+                            10
+                    )),
+                    params: MerkleSetBenchParams {
+                        item_size: 5,
+                        n_swaps: 1,
+                        hash: Rc::new(Bn256PoseidonParams::new::<Keccak256Hasher>()),
+                        verbose: true,
+                        depth: 10,
+                    },
+        }, true),
+        merkle_1_swap_25_depth: (MerkleSetBench {
+            inputs: Some(MerkleSetBenchInputs::from_counts(
+                            0,
+                            1,
+                            5,
+                            Rc::new(Bn256PoseidonParams::new::<Keccak256Hasher>()),
+                            25
+                    )),
+                    params: MerkleSetBenchParams {
+                        item_size: 5,
+                        n_swaps: 1,
+                        hash: Rc::new(Bn256PoseidonParams::new::<Keccak256Hasher>()),
+                        verbose: true,
+                        depth: 25,
+                    },
+        }, true),
+        merkle_3_swap_25_depth: (MerkleSetBench {
+            inputs: Some(MerkleSetBenchInputs::from_counts(
+                            0,
+                            3,
+                            5,
+                            Rc::new(Bn256PoseidonParams::new::<Keccak256Hasher>()),
+                            25
+                    )),
+                    params: MerkleSetBenchParams {
+                        item_size: 5,
+                        n_swaps: 3,
+                        hash: Rc::new(Bn256PoseidonParams::new::<Keccak256Hasher>()),
+                        verbose: true,
+                        depth: 25,
+                    },
+        }, true),
     }
 }
