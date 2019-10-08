@@ -1020,7 +1020,7 @@ where
             .iter()
             .map(|i| i.iter().map(|j| E::Fr::from_str(j).unwrap()).collect())
             .collect();
-        assert!(depth > untouched.len() + std::cmp::max(removed_items.len(), inserted_items.len()));
+        assert!((1 << depth) > untouched.len() + std::cmp::max(removed_items.len(), inserted_items.len()));
         assert_eq!(removed.len(), inserted.len());
         let initial_state = MerkleSet::new_with(
             hash,

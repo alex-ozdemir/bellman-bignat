@@ -7,7 +7,7 @@ extern crate serde;
 
 use bellman_bignat::bignat::nat_to_limbs;
 use bellman_bignat::group::RsaGroup;
-use bellman_bignat::set::{GenSet, SetBench, SetBenchInputs, SetBenchParams};
+use bellman_bignat::set::{GenSet, SetBench, SetBenchInputs, SetBenchParams, MerkleSetBench, MerkleSetBenchParams, MerkleSetBenchInputs};
 use docopt::Docopt;
 use num_bigint::BigUint;
 use sapling_crypto::bellman::pairing::bn256::Bn256;
@@ -25,6 +25,7 @@ Set Benchmarker
 
 Usage:
   set_bench rsa <transactions> <capacity>
+  set_bench merkle <transactions> <capacity>
   set_bench (-h | --help)
   set_bench --version
 
@@ -43,6 +44,7 @@ struct Args {
     arg_transactions: usize,
     arg_capacity: usize,
     cmd_rsa: bool,
+    cmd_merkle: bool,
 }
 
 fn main() {
@@ -50,7 +52,24 @@ fn main() {
     let args: Args = Docopt::new(USAGE)
         .and_then(|d| d.deserialize())
         .unwrap_or_else(|e| e.exit());
+    if args.cmd_rsa {
+        println!("OUT: {} {} {} {}",
+        "rsa",
+        args.arg_transactions,
+        args.arg_capacity,
+        rsa_bench(args.arg_transactions,
+                  args.arg_capacity));
+    } else if args.cmd_merkle {
+        println!("OUT: {} {} {} {}",
+        "merkle",
+        args.arg_transactions,
+        args.arg_capacity,
+        merkle_bench(args.arg_transactions,
+                  args.arg_capacity));
+    }
+}
 
+fn rsa_bench(t: usize, c: usize) -> usize {
     let hash = Rc::new(Bn256PoseidonParams::new::<
         sapling_crypto::group_hash::Keccak256Hasher,
     >());
@@ -63,8 +82,8 @@ fn main() {
     let circuit = SetBench {
         inputs: Some(SetBenchInputs::from_counts(
             0,
-            args.arg_transactions,
-            args.arg_transactions,
+            t,
+            t,
             ELEMENT_SIZE,
             hash.clone(),
             RSA_SIZE,
@@ -81,8 +100,8 @@ fn main() {
             n_bits_challenge: 128,
             n_bits_base: RSA_SIZE,
             item_size: ELEMENT_SIZE,
-            n_inserts: args.arg_transactions,
-            n_removes: args.arg_transactions,
+            n_inserts: t,
+            n_removes: t,
             hash,
             verbose: false,
         },
@@ -107,5 +126,41 @@ fn main() {
     let mut cs = TestConstraintSystem::<Bn256>::new();
     circuit.synthesize(&mut cs).expect("synthesis failed");
     assert!(cs.is_satisfied());
-    println!("Constraints: {}", cs.num_constraints());
+    cs.num_constraints()
+}
+
+fn merkle_bench(t: usize, c: usize) -> usize {
+    let hash = Rc::new(Bn256PoseidonParams::new::<
+        sapling_crypto::group_hash::Keccak256Hasher,
+    >());
+
+    let circuit = MerkleSetBench {
+        inputs: Some(MerkleSetBenchInputs::from_counts(
+            0,
+            t,
+            ELEMENT_SIZE,
+            hash.clone(),
+            c
+        )),
+        params: MerkleSetBenchParams {
+            item_size: ELEMENT_SIZE,
+            n_swaps: t,
+            hash,
+            verbose: false,
+            depth: c,
+        },
+    };
+
+    let ins = circuit.inputs.as_ref().unwrap();
+    let initial_set = ins.initial_state.clone();
+    let final_set = {
+        let mut t = initial_set.clone();
+        t.swap_all(ins.to_remove.clone(), ins.to_insert.clone());
+        t
+    };
+
+    let mut cs = TestConstraintSystem::<Bn256>::new();
+    circuit.synthesize(&mut cs).expect("synthesis failed");
+    assert!(cs.is_satisfied());
+    cs.num_constraints()
 }
