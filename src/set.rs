@@ -977,38 +977,28 @@ where
         hash: Rc<E::Params>,
         depth: usize,
     ) -> Self {
-        let untouched_items: Vec<Vec<String>> = (0..n_untouched)
+        assert!(n_untouched < (1 << depth));
+        let items: Vec<Vec<String>> = (0..(n_untouched + 2 * n_swaps))
             .map(|i| {
                 (0..item_len)
                     .map(|j| format!("1{:06}{:03}", i, j))
                     .collect()
             })
             .collect();
-        let removed_items: Vec<Vec<String>> = (0..n_swaps)
-            .map(|i| {
-                (0..item_len)
-                    .map(|j| format!("2{:06}{:03}", i, j))
-                    .collect()
-            })
-            .collect();
-        let inserted_items: Vec<Vec<String>> = (0..n_swaps)
-            .map(|i| {
-                (0..item_len)
-                    .map(|j| format!("3{:06}{:03}", i, j))
-                    .collect()
-            })
-            .collect();
+        let initial_items = items[..=n_untouched].to_owned();
+        let removed_items = items[n_untouched..(n_untouched + n_swaps)].to_owned();
+        let inserted_items = items[(n_untouched + 1)..(n_untouched + n_swaps + 1)].to_owned();
 
-        Self::new(untouched_items, removed_items, inserted_items, hash, depth)
+        Self::new(initial_items, removed_items, inserted_items, hash, depth)
     }
     pub fn new(
-        untouched_items: Vec<Vec<String>>,
+        initial_items: Vec<Vec<String>>,
         removed_items: Vec<Vec<String>>,
         inserted_items: Vec<Vec<String>>,
         hash: Rc<E::Params>,
         depth: usize,
     ) -> Self {
-        let untouched: Vec<Vec<E::Fr>> = untouched_items
+        let initial: Vec<Vec<E::Fr>> = initial_items
             .iter()
             .map(|i| i.iter().map(|j| E::Fr::from_str(j).unwrap()).collect())
             .collect();
@@ -1020,12 +1010,12 @@ where
             .iter()
             .map(|i| i.iter().map(|j| E::Fr::from_str(j).unwrap()).collect())
             .collect();
-        assert!((1 << depth) > untouched.len() + std::cmp::max(removed_items.len(), inserted_items.len()));
+        assert!((1 << depth) >= initial.len());
         assert_eq!(removed.len(), inserted.len());
         let initial_state = MerkleSet::new_with(
             hash,
             depth,
-            untouched.iter().chain(removed.iter()).map(Vec::as_slice),
+            initial.iter().map(Vec::as_slice),
         );
         Self {
             initial_state,
