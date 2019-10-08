@@ -84,6 +84,7 @@ fn main() {
             n_inserts: args.arg_transactions,
             n_removes: args.arg_transactions,
             hash,
+            verbose: false,
         },
     };
 

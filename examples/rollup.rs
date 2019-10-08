@@ -57,6 +57,7 @@ fn main() {
                 n_inserts: n_swaps,
                 n_removes: n_swaps,
                 hash: hash.clone(),
+                verbose: true,
             },
         };
         let p = generate_random_parameters(c, rng);
@@ -99,6 +100,7 @@ fn main() {
             n_inserts: n_swaps,
             n_removes: n_swaps,
             hash,
+            verbose: true,
         },
     };
 

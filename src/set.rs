@@ -564,6 +564,7 @@ pub struct SetBenchParams<E: PoseidonEngine> {
     pub n_removes: usize,
     pub n_inserts: usize,
     pub hash: Rc<E::Params>,
+    pub verbose: bool,
 }
 
 pub struct SetBench<E, Inner>
@@ -580,7 +581,9 @@ where
     E: PoseidonEngine<SBox = QuinticSBox<E>>,
 {
     fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
-        println!("Constructing Group");
+        if self.params.verbose {
+            println!("Constructing Group");
+        }
         let raw_group = self
             .inputs
             .as_ref()
@@ -595,7 +598,9 @@ where
             },
         )?;
         group.inputize(cs.namespace(|| "group input"))?;
-        println!("Constructing Set");
+        if self.params.verbose {
+            println!("Constructing Set");
+        }
         let set: CircuitSet<E, CircuitRsaGroup<E>, NaiveExpSet<RsaGroup>> = CircuitSet::alloc(
             cs.namespace(|| "set init"),
             self.inputs.as_ref().map(|is| &is.initial_state),
@@ -607,7 +612,9 @@ where
             },
         )?;
         set.inputize(cs.namespace(|| "initial_state input"))?;
-        println!("Allocating Deletions...");
+        if self.params.verbose {
+            println!("Allocating Deletions...");
+        }
         let removals = (0..self.params.n_removes)
             .map(|i| {
                 (0..self.params.item_size)
@@ -620,7 +627,9 @@ where
             })
             .collect::<Result<Vec<Vec<AllocatedNum<E>>>, SynthesisError>>()?;
 
-        println!("Allocating Insertions...");
+        if self.params.verbose {
+            println!("Allocating Insertions...");
+        }
         let insertions = (0..self.params.n_inserts)
             .map(|i| {
                 (0..self.params.item_size)
@@ -656,7 +665,9 @@ where
             &self.params.hash,
         )?;
 
-        println!("Swapping elements");
+        if self.params.verbose {
+            println!("Swapping elements");
+        }
         let new_set = set.swap_all(
             cs.namespace(|| "swap"),
             &challenge,
@@ -671,7 +682,9 @@ where
             self.params.n_bits_base / self.params.limb_width,
         )?;
 
-        println!("Verifying resulting digest");
+        if self.params.verbose {
+            println!("Verifying resulting digest");
+        }
         new_set
             .inner
             .digest
@@ -726,6 +739,7 @@ mod test {
                         n_inserts: 1,
                         n_removes: 1,
                         hash: Rc::new(Bn256PoseidonParams::new::<Keccak256Hasher>()),
+                        verbose: true,
                     },
         }, true),
         //small_rsa_5_swaps: (SetBench {
