@@ -1,3 +1,4 @@
+extern crate fnv;
 extern crate rand;
 extern crate sapling_crypto;
 extern crate num_bigint;

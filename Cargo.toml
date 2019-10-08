@@ -4,6 +4,7 @@ version = "0.1.0"
 
 [dependencies]
 docopt = "1"
+fnv = "1.0.6"
 rand = "0.4.5"
 hex = "0.3.2"
 time = "0.1"

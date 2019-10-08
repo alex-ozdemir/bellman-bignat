@@ -1,13 +1,15 @@
+use fnv::FnvHashMap;
 use num_bigint::BigUint;
 use sapling_crypto::bellman::pairing::ff::{PrimeField, ScalarEngine};
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{Circuit, ConstraintSystem, LinearCombination, SynthesisError};
+use sapling_crypto::circuit::boolean::{AllocatedBit, Boolean};
 use sapling_crypto::circuit::num::AllocatedNum;
 use sapling_crypto::poseidon::{poseidon_hash, PoseidonEngine, QuinticSBox};
 
+use std::collections::BTreeMap;
 use std::fmt::{self, Debug, Formatter};
 use std::marker::PhantomData;
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use bignat::BigNat;
@@ -15,6 +17,7 @@ use gadget::Gadget;
 use group::{CircuitRsaGroup, CircuitRsaGroupParams, CircuitSemiGroup, RsaGroup, SemiGroup};
 use hash::{pocklington, rsa, HashDomain};
 use int_set::{CircuitIntSet, IntSet, NaiveExpSet};
+use usize_to_f;
 use OptionExt;
 
 pub trait GenSet<E>
@@ -52,34 +55,126 @@ where
     pub _phant: PhantomData<E>,
 }
 
+/// Represents a merkle tree in which some prefix of the capacity is occupied.
+/// Unoccupied leaves are assumed to be zero. This allows nodes with no occupied children to have a
+/// pre-determined hash.
+#[derive(Clone)]
 pub struct MerkleSet<E>
 where
-    E:  PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
 {
     pub hash_params: Rc<<E as PoseidonEngine>::Params>,
-    pub leaves: Vec<E::Fr>,
+
+    /// Level i holds 2 ** i elements. Level 0 is the root.
+    /// Maps (level, idx in level) -> hash value
+    pub nodes: FnvHashMap<(usize, usize), E::Fr>,
+
+    /// default[i] is the hash value for a node at level i which has no occupied descendents
+    pub defaults: Vec<E::Fr>,
+
+    /// The number of non-root levels. The number of leaves is 2 ** depth.
     pub depth: usize,
+
+    /// Map from a leave to its index in the array of leaves
     pub leaf_indices: BTreeMap<<E::Fr as PrimeField>::Repr, usize>,
 }
 
 impl<E> MerkleSet<E>
 where
-    E:  PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
 {
     pub fn new_with<'b>(
         hash_params: Rc<<E as PoseidonEngine>::Params>,
         depth: usize,
         items: impl IntoIterator<Item = &'b [E::Fr]>,
     ) -> Self {
-        let leaves: Vec<E::Fr> = items.into_iter().map(|s| poseidon_hash::<E>(&hash_params, s).pop().unwrap()).collect();
-        let leaf_indices: BTreeMap<<E::Fr as PrimeField>::Repr, usize> = leaves.iter().enumerate().map(|(i, e)| (e.into_repr(), i)).collect();
-        assert_eq!(1 << depth, leaves.len());
-        Self {
+        let leaves: Vec<E::Fr> = items
+            .into_iter()
+            .map(|s| poseidon_hash::<E>(&hash_params, s).pop().unwrap())
+            .collect();
+        let n = leaves.len();
+        let leaf_indices: BTreeMap<<E::Fr as PrimeField>::Repr, usize> = leaves
+            .iter()
+            .enumerate()
+            .map(|(i, e)| (e.into_repr(), i))
+            .collect();
+
+        let mut nodes = FnvHashMap::default();
+        for (i, hash) in leaves.into_iter().enumerate() {
+            nodes.insert((depth, i), hash);
+        }
+        let defaults = {
+            let mut d = vec![usize_to_f::<E::Fr>(0)];
+            while d.len() <= depth {
+                let prev = d.last().unwrap();
+                let next = poseidon_hash::<E>(&hash_params, &[prev.clone(), prev.clone()])
+                    .pop()
+                    .unwrap();
+                d.push(next);
+            }
+            d.reverse();
+            d
+        };
+        let mut this = Self {
             hash_params,
-            leaves,
+            nodes,
+            defaults,
             depth,
             leaf_indices,
+        };
+        for i in 0..n {
+            this.update_hashes_from_leaf_index(i);
         }
+        this
+    }
+}
+impl<E> MerkleSet<E>
+where
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+{
+    fn get_node(&self, level: usize, index: usize) -> &E::Fr {
+        self.nodes
+            .get(&(level, index))
+            .unwrap_or_else(|| &self.defaults[level])
+    }
+
+    fn hash(&self, child_1: &E::Fr, child_2: &E::Fr) -> E::Fr {
+        poseidon_hash::<E>(&self.hash_params, &[child_1.clone(), child_2.clone()])
+            .pop()
+            .unwrap()
+    }
+
+    fn update_hashes_from_leaf_index(&mut self, mut index: usize) {
+        index /= 2;
+        for level in (0..self.depth).rev() {
+            let child_1 = self.get_node(level + 1, 2 * index);
+            let child_2 = self.get_node(level + 1, 2 * index + 1);
+            let hash = self.hash(child_1, child_2);
+            self.nodes.insert((level, index), hash);
+            index /= 2;
+        }
+    }
+
+    /// Given an item, returns the witness that the item is in the set. The witness is a sequence
+    /// of pairs (bit, hash), where bit is true if hash is a right child on the path to the item.
+    /// The sequence starts at the top of the tree, going down.
+    fn witness(&self, item: &[E::Fr]) -> Vec<(bool, E::Fr)> {
+        let o_r = poseidon_hash::<E>(&self.hash_params, item)
+            .pop()
+            .unwrap()
+            .into_repr();
+        let i = *self
+            .leaf_indices
+            .get(&o_r)
+            .expect("missing element in merkleset::swap");
+        (0..self.depth)
+            .map(|level| {
+                let index_at_level = i >> (self.depth - (level + 1));
+                let bit = index_at_level & 1 == 0;
+                let hash = self.get_node(level + 1, index_at_level ^ 1).clone();
+                (bit, hash)
+            })
+            .collect()
     }
 }
 
@@ -90,22 +185,27 @@ where
     type Digest = E::Fr;
 
     fn swap(&mut self, old: &[E::Fr], new: Vec<E::Fr>) {
-        let o_r = poseidon_hash::<E>(&self.hash_params, old).pop().unwrap().into_repr();
-        let n = poseidon_hash::<E>(&self.hash_params, new.as_slice()).pop().unwrap();
+        let o_r = poseidon_hash::<E>(&self.hash_params, old)
+            .pop()
+            .unwrap()
+            .into_repr();
+        let n = poseidon_hash::<E>(&self.hash_params, new.as_slice())
+            .pop()
+            .unwrap();
         let n_r = n.into_repr();
-        let i = *self.leaf_indices.get(&o_r).expect("missing element in MerkleSet::swap");
-        self.leaves[i] = n;
+        let i = *self
+            .leaf_indices
+            .get(&o_r)
+            .expect("missing element in merkleset::swap");
+        self.nodes.insert((self.depth, i), n);
         self.leaf_indices.remove(&o_r);
         self.leaf_indices.insert(n_r, i);
+        self.update_hashes_from_leaf_index(i);
     }
 
     /// The digest of the current elements (`g` to the product of the elements).
     fn digest(&self) -> Self::Digest {
-        let mut items = self.leaves.clone();
-        while items.len() > 1 {
-            items = items.as_slice().chunks(2).map(|c| poseidon_hash::<E>(&self.hash_params, c).pop().unwrap()).collect();
-        }
-        items.pop().unwrap()
+        self.get_node(0, 0).clone()
     }
 }
 
@@ -255,6 +355,187 @@ where
     pub value: Option<Set<E, Inner>>,
     pub inner: CircuitIntSet<E, CG, Inner>,
     pub params: CircuitSetParams<E::Params>,
+}
+
+pub struct MerkleCircuitSetParams<HParams> {
+    hash: Rc<HParams>,
+    depth: usize,
+}
+
+impl<HParams> std::clone::Clone for MerkleCircuitSetParams<HParams> {
+    fn clone(&self) -> Self {
+        Self {
+            hash: self.hash.clone(),
+            depth: self.depth,
+        }
+    }
+}
+
+pub struct MerkleCircuitSet<E>
+where
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+{
+    pub value: Option<MerkleSet<E>>,
+    pub digest: AllocatedNum<E>,
+    pub params: MerkleCircuitSetParams<E::Params>,
+}
+
+impl<E> std::clone::Clone for MerkleCircuitSet<E>
+where
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+{
+    fn clone(&self) -> Self {
+        Self {
+            value: self.value.clone(),
+            digest: self.digest.clone(),
+            params: self.params.clone(),
+        }
+    }
+}
+
+impl<E> Gadget for MerkleCircuitSet<E>
+where
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+{
+    type E = E;
+    type Value = MerkleSet<E>;
+    type Access = ();
+    type Params = MerkleCircuitSetParams<E::Params>;
+    fn alloc<CS: ConstraintSystem<Self::E>>(
+        mut cs: CS,
+        value: Option<&Self::Value>,
+        _access: Self::Access,
+        params: &Self::Params,
+    ) -> Result<Self, SynthesisError> {
+        let digest = AllocatedNum::alloc(cs.namespace(|| "digest"), || Ok(value.grab()?.digest()))?;
+        Ok(Self {
+            value: value.cloned(),
+            digest,
+            params: params.clone(),
+        })
+    }
+    fn wires(&self) -> Vec<LinearCombination<Self::E>> {
+        vec![LinearCombination::zero() + self.digest.get_variable()]
+    }
+    fn wire_values(&self) -> Option<Vec<<Self::E as ScalarEngine>::Fr>> {
+        self.digest.get_value().map(|d| vec![d])
+    }
+    fn value(&self) -> Option<&Self::Value> {
+        self.value.as_ref()
+    }
+    fn access(&self) -> &Self::Access {
+        &()
+    }
+    fn params(&self) -> &Self::Params {
+        &self.params
+    }
+}
+
+impl<E> MerkleCircuitSet<E>
+where
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+{
+    pub fn swap_all<'b, CS: ConstraintSystem<E>>(
+        mut self,
+        mut cs: CS,
+        removed_items: impl IntoIterator<Item = &'b [AllocatedNum<E>]> + Clone,
+        inserted_items: impl IntoIterator<Item = &'b [AllocatedNum<E>]> + Clone,
+    ) -> Result<Self, SynthesisError> {
+        use sapling_crypto::circuit::poseidon_hash::poseidon_hash;
+        for (j, (old, new)) in removed_items
+            .into_iter()
+            .zip(inserted_items.into_iter())
+            .enumerate()
+        {
+            let mut cs = cs.namespace(|| format!("swap {}", j));
+
+            // First, we allocate the path
+            let witness = self.value.as_ref().map(|v| {
+                let x: Vec<E::Fr> = old
+                    .into_iter()
+                    .map(|n| n.get_value().expect("missing value for removed_items"))
+                    .collect();
+                v.witness(&x)
+            });
+            let path: Vec<(Boolean, AllocatedNum<E>)> = {
+                let mut cs = cs.namespace(|| "alloc path");
+                (0..self.params.depth)
+                    .map(|i| {
+                        let mut cs = cs.namespace(|| format!("{}", i));
+                        Ok((
+                            Boolean::from(AllocatedBit::alloc(
+                                cs.namespace(|| "direction"),
+                                witness.as_ref().map(|w| w[i].0),
+                            )?),
+                            AllocatedNum::alloc(cs.namespace(|| "hash"), || {
+                                Ok(witness.grab()?[i].1)
+                            })?,
+                        ))
+                    })
+                    .collect::<Result<Vec<(Boolean, AllocatedNum<E>)>, SynthesisError>>()?
+            };
+
+            // Now, check the old item
+            {
+                let mut cs = cs.namespace(|| "check old");
+                let mut cur = poseidon_hash(cs.namespace(|| "leaf hash"), old, &self.params.hash)?
+                    .pop()
+                    .unwrap();
+                for (i, (bit, hash)) in path.iter().enumerate().rev() {
+                    let mut cs = cs.namespace(|| format!("level {}", i));
+                    let (a, b) = AllocatedNum::conditionally_reverse(
+                        cs.namespace(|| "order"),
+                        &hash,
+                        &cur,
+                        &bit,
+                    )?;
+                    cur = poseidon_hash(cs.namespace(|| "hash"), &[a, b], &self.params.hash)?
+                        .pop()
+                        .unwrap();
+                }
+                let eq = AllocatedNum::equals(cs.namespace(|| "root check"), &cur, &self.digest)?;
+                Boolean::enforce_equal(
+                    cs.namespace(|| "root check passes"),
+                    &eq,
+                    &Boolean::constant(true),
+                )?;
+            }
+
+            // Now, add the new item
+            {
+                let mut cs = cs.namespace(|| "add new");
+                let mut new_cur =
+                    poseidon_hash(cs.namespace(|| "leaf hash"), new, &self.params.hash)?
+                        .pop()
+                        .unwrap();
+                for (i, (bit, hash)) in path.into_iter().enumerate().rev() {
+                    let mut cs = cs.namespace(|| format!("level {}", i));
+                    let (a, b) = AllocatedNum::conditionally_reverse(
+                        cs.namespace(|| "order"),
+                        &hash,
+                        &new_cur,
+                        &bit,
+                    )?;
+                    new_cur = poseidon_hash(cs.namespace(|| "hash"), &[a, b], &self.params.hash)?
+                        .pop()
+                        .unwrap();
+                }
+                self.digest = new_cur;
+                self.value.as_mut().map(|v| {
+                    let o: Vec<E::Fr> = old
+                        .into_iter()
+                        .map(|n| n.get_value().expect("missing value for removed_items"))
+                        .collect();
+                    let n: Vec<E::Fr> = new
+                        .into_iter()
+                        .map(|n| n.get_value().expect("missing value for inserted_items"))
+                        .collect();
+                    v.swap(&o, n);
+                });
+            }
+        }
+        Ok(self)
+    }
 }
 
 impl<E, CG, Inner> std::clone::Clone for CircuitSet<E, CG, Inner>
