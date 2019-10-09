@@ -117,7 +117,6 @@ pub mod exp;
 pub mod gadget;
 pub mod group;
 pub mod hash;
-pub mod int_set;
 pub mod lazy;
 pub mod mimc;
 pub mod num;
