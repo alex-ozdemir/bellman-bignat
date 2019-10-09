@@ -9,9 +9,10 @@ use bellman_bignat::bench::ConstraintCounter;
 use bellman_bignat::bignat::nat_to_limbs;
 use bellman_bignat::group::RsaGroup;
 use bellman_bignat::set::{
-    GenSet, MerkleSetBench, MerkleSetBenchInputs, MerkleSetBenchParams, SetBench, SetBenchInputs,
+    GenSet, SetBench, SetBenchInputs,
     SetBenchParams,
 };
+use bellman_bignat::set::merkle::{MerkleSetBench, MerkleSetBenchInputs, MerkleSetBenchParams};
 use docopt::Docopt;
 use num_bigint::BigUint;
 use sapling_crypto::bellman::pairing::bn256::Bn256;
