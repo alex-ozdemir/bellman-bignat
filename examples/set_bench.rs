@@ -147,7 +147,7 @@ fn merkle_bench(t: usize, c: usize) -> usize {
             item_size: ELEMENT_SIZE,
             n_swaps: t,
             hash,
-            verbose: true,
+            verbose: false,
             depth: c,
         },
     };
