@@ -997,6 +997,49 @@ impl<E: Engine> BigNat<E> {
         Ok((quotient, remainder))
     }
 
+    /// Compute a `BigNat` contrained to be equal to `self * other % modulus`.
+    pub fn red_mod<CS: ConstraintSystem<E>>(
+        &self,
+        mut cs: CS,
+        modulus: &Self,
+    ) -> Result<BigNat<E>, SynthesisError> {
+        self.enforce_limb_width_agreement(modulus, "red_mod")?;
+        let limb_width = self.params.limb_width;
+        let quotient_bits = self.n_bits() - modulus.params.min_bits;
+        let quotient_limbs = (quotient_bits - 1) / limb_width + 1;
+        let quotient = BigNat::alloc_from_nat(
+            cs.namespace(|| "quotient"),
+            || Ok(self.value.grab()? / modulus.value.grab()?),
+            self.params.limb_width,
+            quotient_limbs,
+        )?;
+        quotient.decompose(cs.namespace(|| "quotient rangecheck"))?;
+        let remainder = BigNat::alloc_from_nat(
+            cs.namespace(|| "remainder"),
+            || Ok(self.value.grab()? % modulus.value.grab()?),
+            self.params.limb_width,
+            modulus.limbs.len(),
+        )?;
+        remainder.decompose(cs.namespace(|| "remainder rangecheck"))?;
+        let mod_poly = Polynomial::from(modulus.clone());
+        let q_poly = Polynomial::from(BigNat::from(quotient.clone()));
+        let r_poly = Polynomial::from(BigNat::from(remainder.clone()));
+
+        // q * m + r
+        let right_product = q_poly.alloc_product(cs.namespace(|| "right_product"), &mod_poly)?;
+        let right = Polynomial::from(right_product).sum(&r_poly);
+
+        let right_max_word =
+            BigUint::from(std::cmp::min(quotient.limbs.len(), modulus.limbs.len()))
+                * &quotient.params.max_word
+                * &modulus.params.max_word
+                + &remainder.params.max_word;
+
+        let right_int = BigNat::from_poly(Polynomial::from(right), limb_width, right_max_word);
+        self.equal_when_carried_regroup(cs.namespace(|| "carry"), &right_int)?;
+        Ok(remainder)
+    }
+
     /// Combines limbs into groups.
     pub fn group_limbs(&self, limbs_per_group: usize) -> BigNat<E> {
         let n_groups = (self.limbs.len() - 1) / limbs_per_group + 1;
