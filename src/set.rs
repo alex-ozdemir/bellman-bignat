@@ -17,6 +17,7 @@ use gadget::Gadget;
 use group::{CircuitRsaGroup, CircuitRsaGroupParams, CircuitSemiGroup, RsaGroup, SemiGroup};
 use hash::{pocklington, rsa, HashDomain};
 use int_set::{CircuitIntSet, IntSet, NaiveExpSet};
+use wesolowski::Reduced;
 use usize_to_f;
 use OptionExt;
 
@@ -48,6 +49,7 @@ where
     Inner: IntSet,
 {
     pub inner: Inner,
+    pub offset: BigUint,
     pub hash_params: Rc<<E as PoseidonEngine>::Params>,
     pub hash_domain: HashDomain,
     pub limb_width: usize,
@@ -159,6 +161,7 @@ where
     /// of pairs (bit, hash), where bit is true if hash is a right child on the path to the item.
     /// The sequence starts at the top of the tree, going down.
     fn witness(&self, item: &[E::Fr]) -> Vec<(bool, E::Fr)> {
+        println!("{:?}", self.leaf_indices);
         let o_r = poseidon_hash::<E>(&self.hash_params, item)
             .pop()
             .unwrap()
@@ -166,7 +169,7 @@ where
         let i = *self
             .leaf_indices
             .get(&o_r)
-            .expect("missing element in merkleset::swap");
+            .expect("missing element in MerkleSet::witness");
         (0..self.depth)
             .map(|level| {
                 let index_at_level = i >> (self.depth - (level + 1));
@@ -196,7 +199,7 @@ where
         let i = *self
             .leaf_indices
             .get(&o_r)
-            .expect("missing element in merkleset::swap");
+            .expect("missing element in MerkleSet::swap");
         self.nodes.insert((self.depth, i), n);
         self.leaf_indices.remove(&o_r);
         self.leaf_indices.insert(n_r, i);
@@ -223,6 +226,7 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> std::clone::Clone 
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
+            offset: self.offset.clone(),
             hash_domain: self.hash_domain.clone(),
             hash_params: self.hash_params.clone(),
             limb_width: self.limb_width.clone(),
@@ -234,6 +238,7 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> std::clone::Clone 
 impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> Set<E, Inner> {
     fn new_with<'b>(
         group: Inner::G,
+        offset: BigUint,
         hash_params: Rc<E::Params>,
         element_bits: usize,
         limb_width: usize,
@@ -246,11 +251,12 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> Set<E, Inner> {
         let inner = Inner::new_with(
             group,
             items.into_iter().map(|slice| {
-                rsa::helper::hash_to_rsa_element::<E>(slice, &hash_domain, limb_width, &hash_params)
+                rsa::helper::hash_to_rsa_element::<E>(slice, &offset, &hash_domain, limb_width, &hash_params)
             }),
         );
         Self {
             inner,
+            offset: offset,
             hash_domain,
             hash_params,
             limb_width,
@@ -265,21 +271,25 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> Set<E, Inner> {
 
     /// Add `n` to the set, returning whether `n` is new to the set.
     fn insert(&mut self, n: Vec<E::Fr>) -> bool {
-        self.inner.insert(rsa::helper::hash_to_rsa_element::<E>(
+        let x = rsa::helper::hash_to_rsa_element::<E>(
             &n,
+            &self.offset,
             &self.hash_domain,
             self.limb_width,
             &self.hash_params,
-        ))
+        );
+        self.inner.insert(x)
     }
     /// Remove `n` from the set, returning whether `n` was present.
     fn remove(&mut self, n: &[E::Fr]) -> bool {
-        self.inner.remove(&rsa::helper::hash_to_rsa_element::<E>(
+        let x = rsa::helper::hash_to_rsa_element::<E>(
             &n,
+            &self.offset,
             &self.hash_domain,
             self.limb_width,
             &self.hash_params,
-        ))
+        );
+        self.inner.remove(&x)
     }
 
     pub fn remove_all<'b, I: IntoIterator<Item = &'b [E::Fr]>>(&mut self, ns: I) -> bool
@@ -353,6 +363,8 @@ where
     Inner: IntSet<G = <CG as CircuitSemiGroup>::Group>,
 {
     pub value: Option<Set<E, Inner>>,
+    pub offset: Reduced<E>,
+    pub access: (CG, BigNat<E>),
     pub inner: CircuitIntSet<E, CG, Inner>,
     pub params: CircuitSetParams<E::Params>,
 }
@@ -525,7 +537,7 @@ where
                         .into_iter()
                         .map(|n| n.get_value())
                         .collect::<Option<Vec<E::Fr>>>();
-                    let n = old
+                    let n = new
                         .into_iter()
                         .map(|n| n.get_value())
                         .collect::<Option<Vec<E::Fr>>>();
@@ -551,6 +563,8 @@ where
             value: self.value.clone(),
             inner: self.inner.clone(),
             params: self.params.clone(),
+            access: self.access.clone(),
+            offset: self.offset.clone(),
         }
     }
 }
@@ -564,7 +578,8 @@ where
 {
     type E = E;
     type Value = Set<E, Inner>;
-    type Access = CG;
+    /// Access is the circuit group and the challenge.
+    type Access = (CG, BigNat<E>);
     type Params = CircuitSetParams<E::Params>;
     fn alloc<CS: ConstraintSystem<Self::E>>(
         mut cs: CS,
@@ -575,12 +590,14 @@ where
         let inner = CircuitIntSet::alloc(
             cs.namespace(|| "int set"),
             value.as_ref().map(|s| &s.inner),
-            access,
+            access.0.clone(),
             &(),
         )?;
         Ok(Self {
             value: value.cloned(),
             inner,
+            offset: rsa::allocate_offset(cs.namespace(|| "hash offset % l"), &access.1, params.n_bits)?,
+            access,
             params: params.clone(),
         })
     }
@@ -594,7 +611,7 @@ where
         self.value.as_ref()
     }
     fn access(&self) -> &Self::Access {
-        &self.inner.group
+        &self.access
     }
     fn params(&self) -> &Self::Params {
         &self.params
@@ -611,26 +628,29 @@ where
     pub fn remove<'b, CS: ConstraintSystem<E>>(
         self,
         mut cs: CS,
-        challenge: &BigNat<E>,
         items: impl IntoIterator<Item = &'b [AllocatedNum<E>]> + Clone,
     ) -> Result<Self, SynthesisError> {
         let removals = items
             .clone()
             .into_iter()
             .enumerate()
-            .map(|(i, slice)| -> Result<BigNat<E>, SynthesisError> {
-                rsa::hash_to_rsa_element(
+            .map(|(i, slice)| -> Result<Reduced<E>, SynthesisError> {
+                rsa::hash_to_modded_rsa_element(
                     cs.namespace(|| format!("hash {}", i)),
                     &slice,
                     self.params.limb_width,
                     &self.params.hash_domain(),
+                    &self.offset,
+                    &self.access.1,
                     &self.params.hash,
                 )
             })
-            .collect::<Result<Vec<BigNat<E>>, SynthesisError>>()?;
-        let inner = self
-            .inner
-            .remove(cs.namespace(|| "int removals"), challenge, &removals)?;
+            .collect::<Result<Vec<Reduced<E>>, SynthesisError>>()?;
+        let inner = self.inner.remove(
+            cs.namespace(|| "int removals"),
+            &self.access.1,
+            &removals,
+        )?;
         let value = self.value.as_ref().and_then(|v| {
             let is: Option<Vec<Vec<E::Fr>>> = items
                 .into_iter()
@@ -646,32 +666,37 @@ where
             value,
             inner,
             params: self.params.clone(),
+            access: self.access.clone(),
+            offset: self.offset.clone(),
         })
     }
 
     pub fn insert<'b, CS: ConstraintSystem<E>>(
         self,
         mut cs: CS,
-        challenge: &BigNat<E>,
         items: impl IntoIterator<Item = &'b [AllocatedNum<E>]> + Clone,
     ) -> Result<Self, SynthesisError> {
         let insertions = items
             .clone()
             .into_iter()
             .enumerate()
-            .map(|(i, slice)| -> Result<BigNat<E>, SynthesisError> {
-                rsa::hash_to_rsa_element(
+            .map(|(i, slice)| -> Result<Reduced<E>, SynthesisError> {
+                rsa::hash_to_modded_rsa_element(
                     cs.namespace(|| format!("hash {}", i)),
                     &slice,
                     self.params.limb_width,
                     &self.params.hash_domain(),
+                    &self.offset,
+                    &self.access.1,
                     &self.params.hash,
                 )
             })
-            .collect::<Result<Vec<BigNat<E>>, SynthesisError>>()?;
-        let inner = self
-            .inner
-            .insert(cs.namespace(|| "int insertions"), challenge, &insertions)?;
+            .collect::<Result<Vec<Reduced<E>>, SynthesisError>>()?;
+        let inner = self.inner.insert(
+            cs.namespace(|| "int insertions"),
+            &self.access.1,
+            &insertions,
+        )?;
         let value = self.value.as_ref().and_then(|v| {
             let is: Option<Vec<Vec<E::Fr>>> = items
                 .into_iter()
@@ -687,18 +712,19 @@ where
             value,
             inner,
             params: self.params.clone(),
+            access: self.access.clone(),
+            offset: self.offset.clone(),
         })
     }
 
     fn swap_all<'b, CS: ConstraintSystem<E>>(
         self,
         mut cs: CS,
-        challenge: &BigNat<E>,
         removed_items: impl IntoIterator<Item = &'b [AllocatedNum<E>]> + Clone,
         inserted_items: impl IntoIterator<Item = &'b [AllocatedNum<E>]> + Clone,
     ) -> Result<Self, SynthesisError> {
-        let without = self.remove(cs.namespace(|| "remove"), challenge, removed_items)?;
-        without.insert(cs.namespace(|| "insert"), challenge, inserted_items)
+        let without = self.remove(cs.namespace(|| "remove"), removed_items)?;
+        without.insert(cs.namespace(|| "insert"), inserted_items)
     }
 }
 
@@ -788,18 +814,20 @@ where
             n_bits: n_bits_elem,
             n_trailing_ones: 1,
         };
+        let offset = rsa::offset(n_bits_elem);
         let untouched_hashes = untouched
             .iter()
-            .map(|xs| rsa::helper::hash_to_rsa_element::<E>(&xs, &hash_domain, limb_width, &hash));
+            .map(|xs| rsa::helper::hash_to_rsa_element::<E>(&xs, &offset, &hash_domain, limb_width, &hash));
         let inserted_hashes = inserted
             .iter()
-            .map(|xs| rsa::helper::hash_to_rsa_element::<E>(&xs, &hash_domain, limb_width, &hash));
+            .map(|xs| rsa::helper::hash_to_rsa_element::<E>(&xs, &offset, &hash_domain, limb_width, &hash));
         let final_digest = untouched_hashes
             .clone()
             .chain(inserted_hashes)
             .fold(group.g.clone(), |g, i| g.modpow(&i, &group.m));
         let initial_state = Set::new_with(
             group,
+            offset,
             hash,
             n_bits_elem,
             limb_width,
@@ -843,37 +871,6 @@ where
 {
     fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
         if self.params.verbose {
-            println!("Constructing Group");
-        }
-        let raw_group = self
-            .inputs
-            .as_ref()
-            .map(|s| s.initial_state.group().clone());
-        let group = CircuitRsaGroup::alloc(
-            cs.namespace(|| "group"),
-            raw_group.as_ref(),
-            (),
-            &CircuitRsaGroupParams {
-                limb_width: self.params.limb_width,
-                n_limbs: self.params.n_bits_base / self.params.limb_width,
-            },
-        )?;
-        group.inputize(cs.namespace(|| "group input"))?;
-        if self.params.verbose {
-            println!("Constructing Set");
-        }
-        let set: CircuitSet<E, CircuitRsaGroup<E>, NaiveExpSet<RsaGroup>> = CircuitSet::alloc(
-            cs.namespace(|| "set init"),
-            self.inputs.as_ref().map(|is| &is.initial_state),
-            group,
-            &CircuitSetParams {
-                hash: self.params.hash.clone(),
-                n_bits: self.params.n_bits_elem,
-                limb_width: self.params.limb_width,
-            },
-        )?;
-        set.inputize(cs.namespace(|| "initial_state input"))?;
-        if self.params.verbose {
             println!("Allocating Deletions...");
         }
         let removals = (0..self.params.n_removes)
@@ -903,21 +900,19 @@ where
             })
             .collect::<Result<Vec<Vec<AllocatedNum<E>>>, SynthesisError>>()?;
 
+        let expected_digest = BigNat::alloc_from_nat(
+            cs.namespace(|| "expected_digest"),
+            || Ok(self.inputs.as_ref().grab()?.final_digest.clone()),
+            self.params.limb_width,
+            self.params.n_bits_base / self.params.limb_width,
+        )?;
+
+        if self.params.verbose {
+            println!("Hashing everything");
+        }
         let mut to_hash_to_challenge: Vec<AllocatedNum<E>> = Vec::new();
-        to_hash_to_challenge.extend(
-            set.inner
-                .digest
-                .as_limbs::<CS>()
-                .into_iter()
-                .enumerate()
-                .map(|(i, n)| {
-                    n.as_sapling_allocated_num(cs.namespace(|| format!("digest hash {}", i)))
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-        );
         to_hash_to_challenge.extend(insertions.iter().flat_map(|i| i.iter().cloned()));
         to_hash_to_challenge.extend(removals.iter().flat_map(|i| i.iter().cloned()));
-
         let challenge = pocklington::hash_to_pocklington_prime(
             cs.namespace(|| "chash"),
             &to_hash_to_challenge,
@@ -927,20 +922,45 @@ where
         )?;
 
         if self.params.verbose {
+            println!("Constructing Group");
+        }
+        let raw_group = self
+            .inputs
+            .as_ref()
+            .map(|s| s.initial_state.group().clone());
+        let group = CircuitRsaGroup::alloc(
+            cs.namespace(|| "group"),
+            raw_group.as_ref(),
+            (),
+            &CircuitRsaGroupParams {
+                limb_width: self.params.limb_width,
+                n_limbs: self.params.n_bits_base / self.params.limb_width,
+            },
+        )?;
+        group.inputize(cs.namespace(|| "group input"))?;
+
+        if self.params.verbose {
+            println!("Constructing Set");
+        }
+        let set: CircuitSet<E, CircuitRsaGroup<E>, NaiveExpSet<RsaGroup>> = CircuitSet::alloc(
+            cs.namespace(|| "set init"),
+            self.inputs.as_ref().map(|is| &is.initial_state),
+            (group, challenge),
+            &CircuitSetParams {
+                hash: self.params.hash.clone(),
+                n_bits: self.params.n_bits_elem,
+                limb_width: self.params.limb_width,
+            },
+        )?;
+        set.inputize(cs.namespace(|| "initial_state input"))?;
+
+        if self.params.verbose {
             println!("Swapping elements");
         }
         let new_set = set.swap_all(
             cs.namespace(|| "swap"),
-            &challenge,
             removals.iter().map(Vec::as_slice),
             insertions.iter().map(Vec::as_slice),
-        )?;
-
-        let expected_digest = BigNat::alloc_from_nat(
-            cs.namespace(|| "expected_digest"),
-            || Ok(self.inputs.as_ref().grab()?.final_digest.clone()),
-            self.params.limb_width,
-            self.params.n_bits_base / self.params.limb_width,
         )?;
 
         if self.params.verbose {

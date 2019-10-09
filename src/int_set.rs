@@ -8,7 +8,7 @@ use std::fmt::Debug;
 use bignat::BigNat;
 use group::{CircuitSemiGroup, SemiGroup};
 use gadget::Gadget;
-use wesolowski::proof_of_exp;
+use wesolowski::{Reduced, proof_of_exp};
 
 pub trait IntSet: Sized + Clone + Eq + Debug {
     type G: SemiGroup;
@@ -174,16 +174,18 @@ where
     CG::Elem: Gadget<E = E, Value = <CG::Group as SemiGroup>::Elem, Access = ()>,
     S: IntSet<G =  CG::Group>,
 {
-    pub fn remove<CS: ConstraintSystem<E>>(
+
+    pub fn remove<'a, CS: ConstraintSystem<E>>(
         self,
         mut cs: CS,
         challenge: &BigNat<E>,
-        items: &[BigNat<E>],
+        items: impl IntoIterator<Item = &'a Reduced<E>> + Clone,
     ) -> Result<Self, SynthesisError> {
         let value = self.value.clone().and_then(|mut set| {
             items
-                .iter()
-                .map(|i| i.value.as_ref())
+                .clone()
+                .into_iter()
+                .map(|i| i.raw.value.as_ref())
                 .collect::<Option<Vec<&BigUint>>>()
                 .map(|is| {
                     assert!(set.remove_all(is));
@@ -211,12 +213,12 @@ where
         self,
         mut cs: CS,
         challenge: &BigNat<E>,
-        items: &[BigNat<E>],
+        items: &[Reduced<E>],
     ) -> Result<Self, SynthesisError> {
         let value = self.value.clone().and_then(|mut set| {
             items
                 .iter()
-                .map(|i| i.value.clone())
+                .map(|i| i.raw.value.clone())
                 .collect::<Option<Vec<BigUint>>>()
                 .map(|is| {
                     assert!(set.insert_all(is));
@@ -341,8 +343,10 @@ mod tests {
                 .digest
                 .equal(cs.namespace(|| "initial_eq"), &initial_digest)?;
 
+            let r: Vec<Reduced<E>> = removed_items_vec.iter().map(|n| Reduced::from_raw(n.clone())).collect();
+
             let final_set =
-                initial_set.remove(cs.namespace(|| "removal"), &challenge, &removed_items_vec)?;
+                initial_set.remove(cs.namespace(|| "removal"), &challenge, &r)?;
 
             final_set
                 .digest

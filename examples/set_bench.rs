@@ -71,7 +71,7 @@ fn main() {
     );
 }
 
-fn rsa_bench(t: usize, c: usize) -> usize {
+fn rsa_bench(t: usize, _c: usize) -> usize {
     let hash = Rc::new(Bn256PoseidonParams::new::<
         sapling_crypto::group_hash::Keccak256Hasher,
     >());
@@ -154,7 +154,7 @@ fn merkle_bench(t: usize, c: usize) -> usize {
 
     let ins = circuit.inputs.as_ref().unwrap();
     let initial_set = ins.initial_state.clone();
-    let final_set = {
+    let _final_set = {
         let mut t = initial_set.clone();
         t.swap_all(ins.to_remove.clone(), ins.to_insert.clone());
         t

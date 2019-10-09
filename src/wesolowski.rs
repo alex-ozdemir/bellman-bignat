@@ -3,9 +3,33 @@ use num_traits::One;
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
 
+use std::fmt::Debug;
+
 use bignat::BigNat;
 use group::{CircuitSemiGroup, SemiGroup};
 use gadget::Gadget;
+
+#[derive(Clone, Debug)]
+pub struct Reduced<E: Engine> {
+    pub raw: BigNat<E>,
+    pub reduced: BigNat<E>,
+}
+
+impl<E: Engine> Reduced<E> {
+    pub fn new(raw: BigNat<E>, reduced: BigNat<E>) -> Self {
+        Self {
+            raw,
+            reduced,
+        }
+    }
+
+    pub fn from_raw(raw: BigNat<E>) -> Self {
+        Self {
+            reduced: raw.clone(),
+            raw,
+        }
+    }
+}
 
 /// Computes `b ^ (prod(xs) / l) % m`, cleverly.
 pub fn base_to_product<'a, G: SemiGroup, I: Iterator<Item = &'a BigUint>>(
@@ -49,24 +73,25 @@ pub fn base_to_product_naive<'a, G: SemiGroup, I: Iterator<Item = &'a BigUint>>(
 }
 
 /// \exists q s.t. q^l \times base^r = result
-pub fn proof_of_exp<E: Engine, G: CircuitSemiGroup<E=E>, CS: ConstraintSystem<E>>(
+pub fn proof_of_exp<'a, E: Engine, G: CircuitSemiGroup<E=E>, CS: ConstraintSystem<E>>(
     mut cs: CS,
     group: &G,
     base: &G::Elem,
-    power_factors: &[BigNat<E>],
+    power_factors: impl IntoIterator<Item = &'a Reduced<E>> + Clone,
     challenge: &BigNat<E>,
     result: &G::Elem,
 ) -> Result<(), SynthesisError>
 where
-    G::Elem: Gadget<Value = <G::Group as SemiGroup>::Elem>,
+    G::Elem: Gadget<Value = <G::Group as SemiGroup>::Elem> + Debug,
 {
+    let pf: Vec<&'a Reduced<E>> = power_factors.into_iter().collect();
     let q_value: Option<<G::Group as SemiGroup>::Elem> = {
         group.group().and_then(|g| {
             base.value().and_then(|b| {
                 challenge.value().and_then(|c| {
-                    power_factors
+                    pf
                         .iter()
-                        .map(|pow| pow.value())
+                        .map(|pow| pow.raw.value())
                         .collect::<Option<Vec<&BigUint>>>()
                         .map(|facs| base_to_product(g, b, c, facs.into_iter()))
                 })
@@ -80,8 +105,8 @@ where
             challenge.params.limb_width,
             challenge.limbs.len(),
         )?;
-        for (i, f) in power_factors.into_iter().enumerate() {
-            acc = acc.mult_mod(cs.namespace(|| format!("fold {}", i)), f, challenge)?.1;
+        for (i, f) in pf.into_iter().enumerate() {
+            acc = acc.mult_mod(cs.namespace(|| format!("fold {}", i)), &f.reduced, challenge)?.1;
         }
         acc
     };
@@ -260,14 +285,14 @@ mod tests {
                 .iter()
                 .enumerate()
                 .map(|(i, e)| {
-                    BigNat::alloc_from_nat(
+                    Ok(Reduced::from_raw(BigNat::alloc_from_nat(
                         cs.namespace(|| format!("e {}", i)),
                         || Ok(BigUint::from_str(e).unwrap()),
                         self.params.limb_width,
                         self.params.n_limbs_e,
-                    )
+                    )?))
                 })
-                .collect::<Result<Vec<BigNat<E>>, SynthesisError>>()?;
+                .collect::<Result<Vec<Reduced<E>>, SynthesisError>>()?;
             let res_computation = || -> Result<BigUint, SynthesisError> {
                 let ref inputs = self.inputs.grab()?;
                 inputs

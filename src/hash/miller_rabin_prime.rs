@@ -5,7 +5,7 @@ use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
 
 use bignat::BigNat;
 use hash::HashDomain;
-use hash::rsa::hash_to_rsa_element;
+use hash::rsa::hash_to_integer;
 use num::Num;
 use OptionExt;
 
@@ -123,7 +123,7 @@ pub fn hash_to_prime<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: ConstraintSys
     )
     .fits_in_bits(cs.namespace(|| "nonce bound"), domain.nonce_width())?;
     inputs.push(nonce);
-    let hash = hash_to_rsa_element(cs.namespace(|| "hash"), &inputs, limb_width, domain, params)?;
+    let hash = hash_to_integer(cs.namespace(|| "hash"), &inputs, limb_width, domain, params)?;
     let res = hash.miller_rabin(cs.namespace(|| "primeck"), MILLER_RABIN_ROUNDS)?;
     Boolean::enforce_equal(cs.namespace(|| "result"), &Boolean::constant(true), &res)?;
     Ok(hash)
