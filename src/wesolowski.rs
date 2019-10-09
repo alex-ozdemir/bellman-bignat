@@ -6,8 +6,8 @@ use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
 use std::fmt::Debug;
 
 use bignat::BigNat;
-use group::{CircuitSemiGroup, SemiGroup};
 use gadget::Gadget;
+use group::{CircuitSemiGroup, SemiGroup};
 
 #[derive(Clone, Debug)]
 pub struct Reduced<E: Engine> {
@@ -17,10 +17,7 @@ pub struct Reduced<E: Engine> {
 
 impl<E: Engine> Reduced<E> {
     pub fn new(raw: BigNat<E>, reduced: BigNat<E>) -> Self {
-        Self {
-            raw,
-            reduced,
-        }
+        Self { raw, reduced }
     }
 
     pub fn from_raw(raw: BigNat<E>) -> Self {
@@ -73,7 +70,7 @@ pub fn base_to_product_naive<'a, G: SemiGroup, I: Iterator<Item = &'a BigUint>>(
 }
 
 /// \exists q s.t. q^l \times base^r = result
-pub fn proof_of_exp<'a, E: Engine, G: CircuitSemiGroup<E=E>, CS: ConstraintSystem<E>>(
+pub fn proof_of_exp<'a, E: Engine, G: CircuitSemiGroup<E = E>, CS: ConstraintSystem<E>>(
     mut cs: CS,
     group: &G,
     base: &G::Elem,
@@ -89,8 +86,7 @@ where
         group.group().and_then(|g| {
             base.value().and_then(|b| {
                 challenge.value().and_then(|c| {
-                    pf
-                        .iter()
+                    pf.iter()
                         .map(|pow| pow.raw.value())
                         .collect::<Option<Vec<&BigUint>>>()
                         .map(|facs| base_to_product(g, b, c, facs.into_iter()))
@@ -106,7 +102,13 @@ where
             challenge.limbs.len(),
         )?;
         for (i, f) in pf.into_iter().enumerate() {
-            acc = acc.mult_mod(cs.namespace(|| format!("fold {}", i)), &f.reduced, challenge)?.1;
+            acc = acc
+                .mult_mod(
+                    cs.namespace(|| format!("fold {}", i)),
+                    &f.reduced,
+                    challenge,
+                )?
+                .1;
         }
         acc
     };
@@ -124,13 +126,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use OptionExt;
     use super::*;
+    use OptionExt;
 
     use quickcheck::TestResult;
     use test_helpers::*;
 
-    use group::{RsaGroup, CircuitRsaGroup, CircuitRsaGroupParams};
+    use group::{CircuitRsaGroup, CircuitRsaGroupParams, RsaGroup};
 
     use std::str::FromStr;
 

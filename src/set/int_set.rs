@@ -6,9 +6,9 @@ use std::collections::BTreeSet;
 use std::fmt::Debug;
 
 use bignat::BigNat;
-use group::{CircuitSemiGroup, SemiGroup};
 use gadget::Gadget;
-use wesolowski::{Reduced, proof_of_exp};
+use group::{CircuitSemiGroup, SemiGroup};
+use wesolowski::{proof_of_exp, Reduced};
 
 pub trait IntSet: Sized + Clone + Eq + Debug {
     type G: SemiGroup;
@@ -112,7 +112,7 @@ where
     E: Engine,
     CG: CircuitSemiGroup<E = E> + Gadget<E = E, Value = <CG as CircuitSemiGroup>::Group>,
     CG::Elem: Gadget<E = E, Value = <CG::Group as SemiGroup>::Elem, Access = ()>,
-    S: IntSet<G =  CG::Group>,
+    S: IntSet<G = CG::Group>,
 {
     pub value: Option<S>,
     pub group: CG,
@@ -124,7 +124,7 @@ where
     E: Engine,
     CG: CircuitSemiGroup<E = E> + Gadget<E = E, Value = <CG as CircuitSemiGroup>::Group>,
     CG::Elem: Gadget<E = E, Value = <CG::Group as SemiGroup>::Elem, Access = ()>,
-    S: IntSet<G =  CG::Group>,
+    S: IntSet<G = CG::Group>,
 {
     type E = E;
     type Value = S;
@@ -172,9 +172,8 @@ where
     E: Engine,
     CG: CircuitSemiGroup<E = E> + Gadget<E = E, Value = <CG as CircuitSemiGroup>::Group>,
     CG::Elem: Gadget<E = E, Value = <CG::Group as SemiGroup>::Elem, Access = ()>,
-    S: IntSet<G =  CG::Group>,
+    S: IntSet<G = CG::Group>,
 {
-
     pub fn remove<'a, CS: ConstraintSystem<E>>(
         self,
         mut cs: CS,
@@ -329,24 +328,27 @@ mod tests {
                     n_limbs: self.params.n_limbs_b,
                 },
             )?;
-            let initial_set: CircuitIntSet<E, CircuitRsaGroup<E>, NaiveExpSet<RsaGroup>> = CircuitIntSet::alloc(
-                cs.namespace(|| "initial_set"),
-                Some(&NaiveExpSet::new_with(
-                    raw_group,
-                    initial_items_vec.into_iter(),
-                )),
-                group.clone(),
-                &(),
-            )?;
+            let initial_set: CircuitIntSet<E, CircuitRsaGroup<E>, NaiveExpSet<RsaGroup>> =
+                CircuitIntSet::alloc(
+                    cs.namespace(|| "initial_set"),
+                    Some(&NaiveExpSet::new_with(
+                        raw_group,
+                        initial_items_vec.into_iter(),
+                    )),
+                    group.clone(),
+                    &(),
+                )?;
 
             initial_set
                 .digest
                 .equal(cs.namespace(|| "initial_eq"), &initial_digest)?;
 
-            let r: Vec<Reduced<E>> = removed_items_vec.iter().map(|n| Reduced::from_raw(n.clone())).collect();
+            let r: Vec<Reduced<E>> = removed_items_vec
+                .iter()
+                .map(|n| Reduced::from_raw(n.clone()))
+                .collect();
 
-            let final_set =
-                initial_set.remove(cs.namespace(|| "removal"), &challenge, &r)?;
+            let final_set = initial_set.remove(cs.namespace(|| "removal"), &challenge, &r)?;
 
             final_set
                 .digest

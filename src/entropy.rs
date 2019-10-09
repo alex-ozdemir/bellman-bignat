@@ -3,8 +3,8 @@ use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
 use sapling_crypto::circuit::num::AllocatedNum;
 
-use bit::{Bit, Bitvector};
 use bignat::BigNat;
+use bit::{Bit, Bitvector};
 use mimc::mimc;
 
 use gadget::Gadget;
@@ -82,7 +82,11 @@ impl<E: Engine> EntropySource<E> {
     pub fn get_bit(&mut self) -> Bit<E> {
         self.bits.pop().unwrap()
     }
-    pub fn get_bits_as_nat<CS: ConstraintSystem<E>>(&mut self, template: NatTemplate, limb_width: usize) -> BigNat<E> {
+    pub fn get_bits_as_nat<CS: ConstraintSystem<E>>(
+        &mut self,
+        template: NatTemplate,
+        limb_width: usize,
+    ) -> BigNat<E> {
         let mut bits = vec![Bit::new_true::<CS>(); template.leading_ones];
         for _ in 0..template.random_bits {
             bits.push(self.get_bit());

@@ -3,8 +3,8 @@ use num_traits::One;
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
 
-use std::cmp::{min, PartialEq, Eq};
-use std::fmt::{self, Formatter, Debug, Display};
+use std::cmp::{min, Eq, PartialEq};
+use std::fmt::{self, Debug, Display, Formatter};
 
 use bignat::{BigNat, BigNatParams};
 use bit::{Bit, Bitvector};
@@ -116,7 +116,7 @@ impl SemiGroup for RsaQuotientGroup {
     }
 }
 
-pub trait CircuitSemiGroup: Gadget<Access=()> + Eq {
+pub trait CircuitSemiGroup: Gadget<Access = ()> + Eq {
     type Elem: Clone + Gadget<E = Self::E> + Eq + Display + Debug;
     type Group: SemiGroup;
     fn op<CS: ConstraintSystem<Self::E>>(
@@ -146,16 +146,29 @@ pub trait CircuitSemiGroup: Gadget<Access=()> + Eq {
             let chunk_len = chunk.len();
 
             if exp_chunks.len() > 0 {
-                let mut acc = self.bauer_power_bin_rev_helper(cs.namespace(|| "rec"), base_powers, k, exp_chunks)?;
+                let mut acc = self.bauer_power_bin_rev_helper(
+                    cs.namespace(|| "rec"),
+                    base_powers,
+                    k,
+                    exp_chunks,
+                )?;
                 // Square once, for each bit in the chunk
                 for j in 0..chunk_len {
                     acc = self.partial_op(cs.namespace(|| format!("square {}", j)), &acc, &acc)?;
                 }
                 // Select the correct base power
-                let base_power = Gadget::mux_tree(cs.namespace(|| "select"), chunk.into_iter(), &base_powers[..(1<<chunk_len)])?;
+                let base_power = Gadget::mux_tree(
+                    cs.namespace(|| "select"),
+                    chunk.into_iter(),
+                    &base_powers[..(1 << chunk_len)],
+                )?;
                 self.partial_op(cs.namespace(|| "prod"), &acc, &base_power)
             } else {
-                Gadget::mux_tree(cs.namespace(|| "select"), chunk.into_iter(), &base_powers[..(1<<chunk_len)])
+                Gadget::mux_tree(
+                    cs.namespace(|| "select"),
+                    chunk.into_iter(),
+                    &base_powers[..(1 << chunk_len)],
+                )
             }
         } else {
             Ok(self.identity())
@@ -171,12 +184,21 @@ pub trait CircuitSemiGroup: Gadget<Access=()> + Eq {
         let k = optimal_k(exp.bits.len());
         let base_powers = {
             let mut base_powers = vec![self.identity(), base.clone()];
-            for i in 2..(1<<k) {
-                base_powers.push(self.partial_op(cs.namespace(|| format!("base {}", i)), base_powers.last().unwrap(), base)?);
+            for i in 2..(1 << k) {
+                base_powers.push(self.partial_op(
+                    cs.namespace(|| format!("base {}", i)),
+                    base_powers.last().unwrap(),
+                    base,
+                )?);
             }
             base_powers
         };
-        self.bauer_power_bin_rev_helper(cs.namespace(|| "helper"), &base_powers, k, exp.into_bits().chunks(k))
+        self.bauer_power_bin_rev_helper(
+            cs.namespace(|| "helper"),
+            &base_powers,
+            k,
+            exp.into_bits().chunks(k),
+        )
     }
     fn power<CS: ConstraintSystem<Self::E>>(
         &self,
@@ -324,8 +346,7 @@ impl<E: Engine> PartialEq for CircuitRsaQuotientGroup<E> {
     }
 }
 
-impl<E: Engine> CircuitRsaQuotientGroup<E> {
-}
+impl<E: Engine> CircuitRsaQuotientGroup<E> {}
 
 impl<E: Engine> Eq for CircuitRsaQuotientGroup<E> {}
 
@@ -437,9 +458,9 @@ impl<E: Engine> CircuitSemiGroup for CircuitRsaQuotientGroup<E> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::str::FromStr;
     use test_helpers::*;
     use OptionExt;
-    use std::str::FromStr;
 
     #[derive(Debug)]
     pub struct PowerInputs<'a> {
@@ -466,12 +487,10 @@ mod test {
             let ins = self.inputs.grab()?;
             let group = CircuitRsaGroup::alloc(
                 cs.namespace(|| "group"),
-                Some(
-                    &RsaGroup {
-                        g: BigUint::from_str(ins.g).unwrap(),
-                        m: BigUint::from_str(ins.m).unwrap(),
-                    }
-                ),
+                Some(&RsaGroup {
+                    g: BigUint::from_str(ins.g).unwrap(),
+                    m: BigUint::from_str(ins.m).unwrap(),
+                }),
                 (),
                 &CircuitRsaGroupParams {
                     limb_width: self.params.limb_width,
@@ -596,12 +615,10 @@ mod test {
             let ins = self.inputs.grab()?;
             let group = CircuitRsaQuotientGroup::alloc(
                 cs.namespace(|| "group"),
-                Some(
-                    &RsaQuotientGroup {
-                        g: BigUint::from_str("2").unwrap(),
-                        m: BigUint::from_str(ins.m).unwrap(),
-                    }
-                ),
+                Some(&RsaQuotientGroup {
+                    g: BigUint::from_str("2").unwrap(),
+                    m: BigUint::from_str(ins.m).unwrap(),
+                }),
                 (),
                 &CircuitRsaGroupParams {
                     limb_width: self.params.limb_width,
@@ -688,12 +705,10 @@ mod test {
             let ins = self.inputs.grab()?;
             let group = CircuitRsaQuotientGroup::alloc(
                 cs.namespace(|| "group"),
-                Some(
-                    &RsaQuotientGroup {
-                        g: BigUint::from_str(ins.g).unwrap(),
-                        m: BigUint::from_str(ins.m).unwrap(),
-                    }
-                ),
+                Some(&RsaQuotientGroup {
+                    g: BigUint::from_str(ins.g).unwrap(),
+                    m: BigUint::from_str(ins.m).unwrap(),
+                }),
                 (),
                 &CircuitRsaGroupParams {
                     limb_width: self.params.limb_width,
@@ -795,7 +810,4 @@ mod test {
             true,
         ),
     }
-
 }
-
-

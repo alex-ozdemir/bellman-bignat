@@ -307,7 +307,11 @@ impl<E: Engine> BigNat<E> {
         use sapling_crypto::circuit::num::{AllocatedNum, Num};
         let mut rolling = Boolean::Constant(true);
         if self.limbs.len() != other.limbs.len() {
-            eprintln!("Self has {} limbs, other {} (BigNat::is_equal)", self.limbs.len(), other.limbs.len());
+            eprintln!(
+                "Self has {} limbs, other {} (BigNat::is_equal)",
+                self.limbs.len(),
+                other.limbs.len()
+            );
             return Err(SynthesisError::Unsatisfiable);
         }
         self.enforce_limb_width_agreement(other, "is_equal")?;
@@ -472,9 +476,11 @@ impl<E: Engine> BigNat<E> {
         let mut limbs = other.limbs.clone();
         limbs.extend(self.limbs.iter().cloned());
         let mut limb_values = other.limb_values.clone();
-        limb_values
-            .as_mut()
-            .map(|x| self.limb_values.as_ref().map(|y| x.extend(y.iter().cloned())));
+        limb_values.as_mut().map(|x| {
+            self.limb_values
+                .as_ref()
+                .map(|y| x.extend(y.iter().cloned()))
+        });
         let value = self.value.clone().and_then(|sv| {
             other
                 .value
@@ -794,7 +800,9 @@ impl<E: Engine> BigNat<E> {
     ) -> Result<Self, SynthesisError> {
         let select = Bit::alloc(
             cs.namespace(|| "select"),
-            self.value.as_ref().and_then(|s| other.value.as_ref().map(|o| o < s)),
+            self.value
+                .as_ref()
+                .and_then(|s| other.value.as_ref().map(|o| o < s)),
         )?;
         let (lesser, greater) = Gadget::switch(cs.namespace(|| "switch"), &select, self, other)?;
         let _diff = greater.sub(cs.namespace(|| "difference"), other)?;

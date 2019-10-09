@@ -188,10 +188,7 @@ mod tests {
                 .into_iter()
                 .map(|i| usize_to_f::<Fr>(*i))
                 .collect(),
-            b: [1, 1]
-                .into_iter()
-                .map(|i| usize_to_f::<Fr>(*i))
-                .collect(),
+            b: [1, 1].into_iter().map(|i| usize_to_f::<Fr>(*i)).collect(),
         };
 
         circuit.synthesize(&mut cs).expect("synthesis failed");

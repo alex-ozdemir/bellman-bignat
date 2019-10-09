@@ -4,7 +4,7 @@ use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
 use sapling_crypto::circuit::boolean::Boolean;
 
-use std::fmt::{self, Formatter, Display};
+use std::fmt::{self, Display, Formatter};
 
 use OptionExt;
 
@@ -41,11 +41,9 @@ impl<E: Engine> Bitvector<E> {
     }
 
     pub fn get(&self, i: usize) -> Option<Bit<E>> {
-        self.bits.get(i).map(|lc| {
-            Bit {
-                bit: lc.clone(),
-                value: self.values.as_ref().map(|vs| vs[i].clone()),
-            }
+        self.bits.get(i).map(|lc| Bit {
+            bit: lc.clone(),
+            value: self.values.as_ref().map(|vs| vs[i].clone()),
         })
     }
 
@@ -61,18 +59,15 @@ impl<E: Engine> Bitvector<E> {
         self.values.as_mut().map(|v| {
             v.splice(0..0, std::iter::repeat(false).take(i));
         });
-        self.bits.splice(0..0, std::iter::repeat(LinearCombination::zero()).take(i));
+        self.bits
+            .splice(0..0, std::iter::repeat(LinearCombination::zero()).take(i));
         self
     }
 
     pub fn split_off(&mut self, n_bits: usize) -> Bitvector<E> {
         let bits = self.bits.split_off(n_bits);
         let values = self.values.as_mut().map(|vs| vs.split_off(n_bits));
-        Bitvector {
-            bits,
-            values,
-
-        }
+        Bitvector { bits, values }
     }
 
     pub fn pop(&mut self) -> Option<Bit<E>> {
@@ -87,27 +82,37 @@ impl<E: Engine> Bitvector<E> {
     }
 
     pub fn push(&mut self, mut b: Bit<E>) {
-        self.values.as_mut().map(|vs| b.value.take().map(|v| vs.push(v)));
+        self.values
+            .as_mut()
+            .map(|vs| b.value.take().map(|v| vs.push(v)));
         self.bits.push(b.bit);
     }
 
     pub fn insert(&mut self, i: usize, mut b: Bit<E>) {
-        self.values.as_mut().map(|vs| b.value.take().map(|v| vs.insert(i, v)));
+        self.values
+            .as_mut()
+            .map(|vs| b.value.take().map(|v| vs.insert(i, v)));
         self.bits.insert(i, b.bit);
     }
 
     pub fn append(&mut self, mut other: Self) {
         let ovs = other.values.take();
         self.bits.extend(other.bits.into_iter());
-        self.values.as_mut().map(|vs| ovs.map(|ovs| vs.extend(ovs.into_iter())));
+        self.values
+            .as_mut()
+            .map(|vs| ovs.map(|ovs| vs.extend(ovs.into_iter())));
     }
 
     pub fn into_bits(mut self) -> Vec<Bit<E>> {
         let vs = self.values.take();
-        self.bits.into_iter().enumerate().map(|(i, b)| Bit {
-            bit: b,
-            value: vs.as_ref().map(|vs| vs[i]),
-        }).collect()
+        self.bits
+            .into_iter()
+            .enumerate()
+            .map(|(i, b)| Bit {
+                bit: b,
+                value: vs.as_ref().map(|vs| vs[i]),
+            })
+            .collect()
     }
 
     pub fn from_bits(bs: Vec<Bit<E>>) -> Self {
@@ -116,15 +121,14 @@ impl<E: Engine> Bitvector<E> {
         for mut b in bs {
             let v = b.value.take();
             bits.push(b.bit);
-            values = values.take().and_then(|mut vs| v.map(|v| {
-                vs.push(v);
-                vs
-            }));
+            values = values.take().and_then(|mut vs| {
+                v.map(|v| {
+                    vs.push(v);
+                    vs
+                })
+            });
         }
-        Self {
-            bits,
-            values,
-        }
+        Self { bits, values }
     }
 }
 
@@ -180,17 +184,11 @@ impl<E: Engine> Bit<E> {
     }
 
     pub fn new(bit: LinearCombination<E>, value: Option<bool>) -> Self {
-        Self {
-            bit,
-            value,
-        }
+        Self { bit, value }
     }
 
-    pub fn from_sapling<CS: ConstraintSystem<E>>(b: Boolean) ->  Self {
-        Self::new(
-            b.lc(CS::one(), E::Fr::one()),
-            b.get_value(),
-        )
+    pub fn from_sapling<CS: ConstraintSystem<E>>(b: Boolean) -> Self {
+        Self::new(b.lc(CS::one(), E::Fr::one()), b.get_value())
     }
 
     pub fn not<CS: ConstraintSystem<E>>(&self) -> Self {
@@ -209,16 +207,25 @@ impl<E: Engine> Bit<E> {
     }
 
     pub fn new_value<CS: ConstraintSystem<E>>(v: bool) -> Self {
-        if v { Self::new_true::<CS>() } else { Self::new_false::<CS>() }
+        if v {
+            Self::new_true::<CS>()
+        } else {
+            Self::new_false::<CS>()
+        }
     }
 }
-
 
 impl<E: Engine> Display for Bitvector<E> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self.values.as_ref() {
-            Some(vs) =>
-                write!(f, "Bitvector({})", vs.into_iter().map(|b| if *b { "1" } else {"0"}).collect::<Vec<_>>().concat()),
+            Some(vs) => write!(
+                f,
+                "Bitvector({})",
+                vs.into_iter()
+                    .map(|b| if *b { "1" } else { "0" })
+                    .collect::<Vec<_>>()
+                    .concat()
+            ),
             None => write!(f, "Bitvector(len {})", self.bits.len()),
         }
     }

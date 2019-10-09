@@ -27,4 +27,3 @@ pub mod helper {
         n & ((BigUint::one() << k) - 1usize)
     }
 }
-

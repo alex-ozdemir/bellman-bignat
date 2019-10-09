@@ -58,9 +58,7 @@ pub mod bench {
             self.n_constraints
         }
         pub fn new() -> Self {
-            Self {
-                n_constraints: 0,
-            }
+            Self { n_constraints: 0 }
         }
     }
 

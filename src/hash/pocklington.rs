@@ -123,7 +123,11 @@ pub mod helper {
         }
 
         pub fn entropy(&self) -> usize {
-            self.extensions.iter().map(|i| i.random_bits - i.nonce_bits).sum::<usize>() + self.initial_entropy
+            self.extensions
+                .iter()
+                .map(|i| i.random_bits - i.nonce_bits)
+                .sum::<usize>()
+                + self.initial_entropy
         }
 
         pub fn max_bits(&self) -> usize {
@@ -331,7 +335,8 @@ pub fn hash_to_pocklington_prime<
         })?;
         let mimcd_nonce_all_bits = Num::from(mimc(cs.namespace(|| "mimc"), nonce)?);
         let mimcd_nonce = BigNat::from_num(
-            mimcd_nonce_all_bits.low_k_bits(cs.namespace(|| "mimc low bits"), extension.nonce_bits)?,
+            mimcd_nonce_all_bits
+                .low_k_bits(cs.namespace(|| "mimc low bits"), extension.nonce_bits)?,
             crate::bignat::BigNatParams {
                 n_limbs: 1,
                 limb_width: prime.params.limb_width,
@@ -347,8 +352,7 @@ pub fn hash_to_pocklington_prime<
             },
             limb_width,
         );
-        let nonced_extension = extension
-            .add::<CS>(&mimcd_nonce)?;
+        let nonced_extension = extension.add::<CS>(&mimcd_nonce)?;
         let base = BigNat::alloc_from_nat(
             cs.namespace(|| "base"),
             || {

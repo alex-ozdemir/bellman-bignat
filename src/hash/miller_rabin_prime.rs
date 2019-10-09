@@ -4,8 +4,8 @@ use sapling_crypto::circuit::num::AllocatedNum;
 use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
 
 use bignat::BigNat;
-use hash::HashDomain;
 use hash::rsa::hash_to_integer;
+use hash::HashDomain;
 use num::Num;
 use OptionExt;
 
@@ -132,7 +132,7 @@ pub fn hash_to_prime<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: ConstraintSys
 #[cfg(test)]
 mod test {
     use num_bigint::BigUint;
-    use sapling_crypto::bellman::pairing::ff::{PrimeField};
+    use sapling_crypto::bellman::pairing::ff::PrimeField;
     use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
     use sapling_crypto::circuit::num::AllocatedNum;
     use sapling_crypto::group_hash::Keccak256Hasher;
@@ -141,43 +141,30 @@ mod test {
 
     use super::{hash_to_prime, helper};
 
-    use OptionExt;
     use bignat::BigNat;
     use hash::HashDomain;
+    use OptionExt;
 
     use test_helpers::*;
 
-
     #[test]
     fn mr_11() {
-        assert_eq!(
-            helper::miller_rabin(&BigUint::from(11usize), 3),
-            true
-        );
+        assert_eq!(helper::miller_rabin(&BigUint::from(11usize), 3), true);
     }
 
     #[test]
     fn mr_12() {
-        assert_eq!(
-            helper::miller_rabin(&BigUint::from(12usize), 3),
-            false
-        );
+        assert_eq!(helper::miller_rabin(&BigUint::from(12usize), 3), false);
     }
 
     #[test]
     fn mr_251() {
-        assert_eq!(
-            helper::miller_rabin(&BigUint::from(251usize), 11),
-            true
-        );
+        assert_eq!(helper::miller_rabin(&BigUint::from(251usize), 11), true);
     }
 
     #[test]
     fn mr_15() {
-        assert_eq!(
-            helper::miller_rabin(&BigUint::from(15usize), 3),
-            false
-        );
+        assert_eq!(helper::miller_rabin(&BigUint::from(15usize), 3), false);
     }
 
     #[derive(Debug)]
@@ -209,12 +196,8 @@ mod test {
                 n_bits: self.params.desired_bits,
                 n_trailing_ones: 2,
             };
-            let (expected_ouput, _, _) = helper::hash_to_prime::<E>(
-                &input_values,
-                &domain,
-                &self.params.hash,
-            )
-            .unwrap();
+            let (expected_ouput, _, _) =
+                helper::hash_to_prime::<E>(&input_values, &domain, &self.params.hash).unwrap();
             let allocated_expected_output = BigNat::alloc_from_nat(
                 cs.namespace(|| "output"),
                 || Ok(expected_ouput),

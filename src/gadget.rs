@@ -60,9 +60,9 @@ pub trait Gadget: Sized + Clone {
         }
         for (i, ((i0w, i1w), out_w)) in i0_wires
             .into_iter()
-                .zip(i1_wires)
-                .zip(out_wires)
-                .enumerate()
+            .zip(i1_wires)
+            .zip(out_wires)
+            .enumerate()
         {
             cs.enforce(
                 || format!("{}", i),

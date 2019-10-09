@@ -95,7 +95,13 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> Set<E, Inner> {
         let inner = Inner::new_with(
             group,
             items.into_iter().map(|slice| {
-                rsa::helper::hash_to_rsa_element::<E>(slice, &offset, &hash_domain, limb_width, &hash_params)
+                rsa::helper::hash_to_rsa_element::<E>(
+                    slice,
+                    &offset,
+                    &hash_domain,
+                    limb_width,
+                    &hash_params,
+                )
             }),
         );
         Self {
@@ -213,7 +219,6 @@ where
     pub params: CircuitSetParams<E::Params>,
 }
 
-
 impl<E, CG, Inner> std::clone::Clone for CircuitSet<E, CG, Inner>
 where
     E: PoseidonEngine<SBox = QuinticSBox<E>>,
@@ -259,7 +264,11 @@ where
         Ok(Self {
             value: value.cloned(),
             inner,
-            offset: rsa::allocate_offset(cs.namespace(|| "hash offset % l"), &access.1, params.n_bits)?,
+            offset: rsa::allocate_offset(
+                cs.namespace(|| "hash offset % l"),
+                &access.1,
+                params.n_bits,
+            )?,
             access,
             params: params.clone(),
         })
@@ -309,11 +318,9 @@ where
                 )
             })
             .collect::<Result<Vec<Reduced<E>>, SynthesisError>>()?;
-        let inner = self.inner.remove(
-            cs.namespace(|| "int removals"),
-            &self.access.1,
-            &removals,
-        )?;
+        let inner =
+            self.inner
+                .remove(cs.namespace(|| "int removals"), &self.access.1, &removals)?;
         let value = self.value.as_ref().and_then(|v| {
             let is: Option<Vec<Vec<E::Fr>>> = items
                 .into_iter()
@@ -478,12 +485,12 @@ where
             n_trailing_ones: 1,
         };
         let offset = rsa::offset(n_bits_elem);
-        let untouched_hashes = untouched
-            .iter()
-            .map(|xs| rsa::helper::hash_to_rsa_element::<E>(&xs, &offset, &hash_domain, limb_width, &hash));
-        let inserted_hashes = inserted
-            .iter()
-            .map(|xs| rsa::helper::hash_to_rsa_element::<E>(&xs, &offset, &hash_domain, limb_width, &hash));
+        let untouched_hashes = untouched.iter().map(|xs| {
+            rsa::helper::hash_to_rsa_element::<E>(&xs, &offset, &hash_domain, limb_width, &hash)
+        });
+        let inserted_hashes = inserted.iter().map(|xs| {
+            rsa::helper::hash_to_rsa_element::<E>(&xs, &offset, &hash_domain, limb_width, &hash)
+        });
         let final_digest = untouched_hashes
             .clone()
             .chain(inserted_hashes)
