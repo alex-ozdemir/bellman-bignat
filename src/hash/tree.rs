@@ -376,6 +376,13 @@ pub mod circuit {
             poseidon_7: (Bench::poseidon_with_inputs(7), true),
             poseidon_8: (Bench::poseidon_with_inputs(8), true),
             poseidon_9: (Bench::poseidon_with_inputs(9), true),
+            poseidon_10: (Bench::poseidon_with_inputs(10), true),
+            poseidon_11: (Bench::poseidon_with_inputs(11), true),
+            poseidon_12: (Bench::poseidon_with_inputs(12), true),
+            poseidon_13: (Bench::poseidon_with_inputs(13), true),
+            poseidon_14: (Bench::poseidon_with_inputs(14), true),
+            poseidon_15: (Bench::poseidon_with_inputs(15), true),
+            poseidon_16: (Bench::poseidon_with_inputs(16), true),
 
             pedersen_2: (Bench::pedersen_with_inputs(2), true),
 
