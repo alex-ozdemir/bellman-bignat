@@ -206,7 +206,7 @@ pub fn hash<E: Engine, CS: ConstraintSystem<E>>(
     let mut aa = allocate_num(cs.namespace(|| format!("alloc 0")), Num::zero())?;
     for (i, x) in xs.into_iter().enumerate() {
         let h = compression(cs.namespace(|| format!("hash {}", i)), aa.clone(), x.clone())?;
-        aa = allocate_num(cs.namespace(|| format!("alloc {}", i)), h)?;
+        aa = allocate_num(cs.namespace(|| format!("alloc {}", i + 1)), h)?;
     }
     Ok(aa)
 }

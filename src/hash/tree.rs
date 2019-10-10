@@ -1,7 +1,9 @@
 use sapling_crypto::bellman::pairing::ff::Field;
+use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::jubjub::JubjubEngine;
 use sapling_crypto::poseidon::{poseidon_hash, PoseidonEngine, PoseidonHashParams, QuinticSBox};
 
+use std::marker::PhantomData;
 use std::rc::Rc;
 
 pub trait Hasher: Clone {
@@ -100,9 +102,9 @@ where
 impl<E: sapling_crypto::babyjubjub::JubjubEngine> Hasher for BabyPedersen<E> {
     type F = E::Fr;
     fn hash(&self, inputs: &[E::Fr]) -> E::Fr {
-        use sapling_crypto::bellman::pairing::ff::PrimeField;
         use sapling_crypto::baby_pedersen_hash::pedersen_hash;
         use sapling_crypto::baby_pedersen_hash::Personalization;
+        use sapling_crypto::bellman::pairing::ff::PrimeField;
         let mut bits: Vec<bool> = Vec::new();
         for i in inputs {
             bits.extend(
@@ -119,8 +121,62 @@ impl<E: sapling_crypto::babyjubjub::JubjubEngine> Hasher for BabyPedersen<E> {
     }
 }
 
+pub struct Mimc<E>
+where
+    E: Engine,
+{
+    _params: PhantomData<E>,
+}
+
+impl<E> Mimc<E> where E: Engine
+{
+    fn new() -> Self {
+        Self {
+            _params: PhantomData::<E>::default(),
+        }
+    }
+}
+
+impl<E> Clone for Mimc<E>
+where
+    E: Engine,
+{
+    fn clone(&self) -> Self {
+        Self {
+            _params: self._params.clone(),
+        }
+    }
+}
+
+impl<E: Engine> Hasher for Mimc<E> {
+    type F = E::Fr;
+    fn hash(&self, inputs: &[E::Fr]) -> E::Fr {
+        use hash::mimc;
+        mimc::helper::hash(inputs)
+    }
+}
+
+pub struct PoseidonMimc<E>
+where
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+{
+    pub params: Rc<E::Params>,
+}
+
+impl<E> Clone for PoseidonMimc<E>
+where
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+{
+    fn clone(&self) -> Self {
+        Self {
+            params: self.params.clone(),
+        }
+    }
+}
+
 pub mod circuit {
-    use super::{Hasher, Pedersen, Poseidon, BabyPedersen};
+    use super::{BabyPedersen, Hasher, Pedersen, Poseidon, Mimc};
+    use sapling_crypto::alt_babyjubjub::AltJubjubBn256;
     use sapling_crypto::bellman::pairing::bn256::Bn256;
     use sapling_crypto::bellman::pairing::ff::PrimeField;
     use sapling_crypto::bellman::pairing::Engine;
@@ -130,7 +186,6 @@ pub mod circuit {
     use sapling_crypto::group_hash::Keccak256Hasher;
     use sapling_crypto::jubjub::JubjubEngine;
     use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
-    use sapling_crypto::alt_babyjubjub::AltJubjubBn256;
     use sapling_crypto::poseidon::{PoseidonEngine, PoseidonHashParams, QuinticSBox};
     use CResult;
 
@@ -186,7 +241,8 @@ pub mod circuit {
                 &bits,
                 &self.params,
             )?
-            .get_x().clone())
+            .get_x()
+            .clone())
         }
     }
 
@@ -200,9 +256,9 @@ pub mod circuit {
             mut cs: CS,
             inputs: &[AllocatedNum<E>],
         ) -> CResult<AllocatedNum<E>> {
-            use sapling_crypto::circuit::boolean::Boolean;
-            use sapling_crypto::circuit::baby_pedersen_hash::pedersen_hash;
             use sapling_crypto::baby_pedersen_hash::Personalization;
+            use sapling_crypto::circuit::baby_pedersen_hash::pedersen_hash;
+            use sapling_crypto::circuit::boolean::Boolean;
             let mut bits: Vec<Boolean> = Vec::new();
             for (i, in_) in inputs.into_iter().enumerate() {
                 bits.extend(in_.into_bits_le(cs.namespace(|| format!("bit split {}", i)))?);
@@ -213,7 +269,23 @@ pub mod circuit {
                 &bits,
                 &self.params,
             )?
-            .get_x().clone())
+            .get_x()
+            .clone())
+        }
+    }
+
+    impl<E> CircuitHasher for Mimc<E>
+    where
+        E: Engine
+    {
+        type E = E;
+        fn allocate_hash<CS: ConstraintSystem<E>>(
+            &self,
+            cs: CS,
+            inputs: &[AllocatedNum<E>],
+        ) -> CResult<AllocatedNum<E>> {
+            use hash::mimc;
+            mimc::hash(cs, inputs)
         }
     }
 
@@ -248,6 +320,15 @@ pub mod circuit {
             Self {
                 inputs: (0..n_inputs).map(|i| format!("{}", i)).collect(),
                 hasher: BabyPedersen::<Bn256> { params: p.clone() },
+            }
+        }
+    }
+
+    impl Bench<Mimc<Bn256>> {
+        pub fn mimc_with_inputs(n_inputs: usize) -> Self {
+            Self {
+                inputs: (0..n_inputs).map(|i| format!("{}", i)).collect(),
+                hasher: Mimc::new(),
             }
         }
     }
@@ -299,6 +380,15 @@ pub mod circuit {
             pedersen_2: (Bench::pedersen_with_inputs(2), true),
 
             baby_pedersen_2: (Bench::baby_pedersen_with_inputs(2), true),
+
+            mimc_2: (Bench::mimc_with_inputs(2), true),
+            mimc_3: (Bench::mimc_with_inputs(3), true),
+            mimc_4: (Bench::mimc_with_inputs(4), true),
+            mimc_5: (Bench::mimc_with_inputs(5), true),
+            mimc_6: (Bench::mimc_with_inputs(6), true),
+            mimc_7: (Bench::mimc_with_inputs(7), true),
+            mimc_8: (Bench::mimc_with_inputs(8), true),
+            mimc_9: (Bench::mimc_with_inputs(9), true),
         }
     }
 }
