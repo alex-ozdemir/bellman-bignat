@@ -11,6 +11,8 @@ extern crate quickcheck;
 #[macro_use(quickcheck)]
 extern crate quickcheck_macros;
 
+type CResult<T> = Result<T, SynthesisError>;
+
 #[cfg(test)]
 #[macro_use]
 mod test_helpers {

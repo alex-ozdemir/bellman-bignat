@@ -1,15 +1,18 @@
 use fnv::FnvHashMap;
 use sapling_crypto::bellman::pairing::ff::{PrimeField, ScalarEngine};
+use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{Circuit, ConstraintSystem, LinearCombination, SynthesisError};
 use sapling_crypto::circuit::boolean::{AllocatedBit, Boolean};
 use sapling_crypto::circuit::num::AllocatedNum;
-use sapling_crypto::poseidon::{poseidon_hash, PoseidonEngine, QuinticSBox};
+use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use super::GenSet;
 use gadget::Gadget;
+use hash::tree::circuit::{CircuitHasher, CircuitPoseidon};
+use hash::tree::{Hasher, Poseidon};
 use usize_to_f;
 use OptionExt;
 
@@ -17,11 +20,12 @@ use OptionExt;
 /// Unoccupied leaves are assumed to be zero. This allows nodes with no occupied children to have a
 /// pre-determined hash.
 #[derive(Clone)]
-pub struct MerkleSet<E>
+pub struct MerkleSet<E, H>
 where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: Engine,
+    H: Hasher<E::Fr>,
 {
-    pub hash_params: Rc<<E as PoseidonEngine>::Params>,
+    pub hasher: H,
 
     /// Level i holds 2 ** i elements. Level 0 is the root.
     /// Maps (level, idx in level) -> hash value
@@ -37,19 +41,17 @@ where
     pub leaf_indices: BTreeMap<<E::Fr as PrimeField>::Repr, usize>,
 }
 
-impl<E> MerkleSet<E>
+impl<E, H> MerkleSet<E, H>
 where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: Engine,
+    H: Hasher<E::Fr>,
 {
     pub fn new_with<'b>(
-        hash_params: Rc<<E as PoseidonEngine>::Params>,
+        hasher: H,
         depth: usize,
         items: impl IntoIterator<Item = &'b [E::Fr]>,
     ) -> Self {
-        let leaves: Vec<E::Fr> = items
-            .into_iter()
-            .map(|s| poseidon_hash::<E>(&hash_params, s).pop().unwrap())
-            .collect();
+        let leaves: Vec<E::Fr> = items.into_iter().map(|s| hasher.hash(s)).collect();
         let n = leaves.len();
         let leaf_indices: BTreeMap<<E::Fr as PrimeField>::Repr, usize> = leaves
             .iter()
@@ -64,17 +66,14 @@ where
         let defaults = {
             let mut d = vec![usize_to_f::<E::Fr>(0)];
             while d.len() <= depth {
-                let prev = d.last().unwrap();
-                let next = poseidon_hash::<E>(&hash_params, &[prev.clone(), prev.clone()])
-                    .pop()
-                    .unwrap();
-                d.push(next);
+                let prev = d.last().unwrap().clone();
+                d.push(hasher.hash(&[prev.clone(), prev]));
             }
             d.reverse();
             d
         };
         let mut this = Self {
-            hash_params,
+            hasher,
             nodes,
             defaults,
             depth,
@@ -86,9 +85,10 @@ where
         this
     }
 }
-impl<E> MerkleSet<E>
+impl<E, H> MerkleSet<E, H>
 where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: Engine,
+    H: Hasher<E::Fr>,
 {
     fn get_node(&self, level: usize, index: usize) -> &E::Fr {
         self.nodes
@@ -97,9 +97,7 @@ where
     }
 
     fn hash(&self, child_1: &E::Fr, child_2: &E::Fr) -> E::Fr {
-        poseidon_hash::<E>(&self.hash_params, &[child_1.clone(), child_2.clone()])
-            .pop()
-            .unwrap()
+        self.hasher.hash(&[child_1.clone(), child_2.clone()])
     }
 
     fn update_hashes_from_leaf_index(&mut self, mut index: usize) {
@@ -118,10 +116,7 @@ where
     /// The sequence starts at the top of the tree, going down.
     fn witness(&self, item: &[E::Fr]) -> Vec<(bool, E::Fr)> {
         println!("{:?}", self.leaf_indices);
-        let o_r = poseidon_hash::<E>(&self.hash_params, item)
-            .pop()
-            .unwrap()
-            .into_repr();
+        let o_r = self.hasher.hash(item).into_repr();
         let i = *self
             .leaf_indices
             .get(&o_r)
@@ -137,20 +132,16 @@ where
     }
 }
 
-impl<E> GenSet<E> for MerkleSet<E>
+impl<E, H> GenSet<E> for MerkleSet<E, H>
 where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: Engine,
+    H: Hasher<E::Fr>,
 {
     type Digest = E::Fr;
 
     fn swap(&mut self, old: &[E::Fr], new: Vec<E::Fr>) {
-        let o_r = poseidon_hash::<E>(&self.hash_params, old)
-            .pop()
-            .unwrap()
-            .into_repr();
-        let n = poseidon_hash::<E>(&self.hash_params, new.as_slice())
-            .pop()
-            .unwrap();
+        let o_r = self.hasher.hash(old).into_repr();
+        let n = self.hasher.hash(&new);
         let n_r = n.into_repr();
         let i = *self
             .leaf_indices
@@ -182,47 +173,56 @@ impl<HParams> std::clone::Clone for MerkleCircuitSetParams<HParams> {
     }
 }
 
-pub struct MerkleCircuitSet<E>
+pub struct MerkleCircuitSet<E, H, CH>
 where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: Engine,
+    H: Hasher<E::Fr>,
+    CH: CircuitHasher<E>,
 {
-    pub value: Option<MerkleSet<E>>,
+    pub value: Option<MerkleSet<E, H>>,
     pub digest: AllocatedNum<E>,
-    pub params: MerkleCircuitSetParams<E::Params>,
+    pub depth: usize,
+    pub hasher: CH,
 }
 
-impl<E> std::clone::Clone for MerkleCircuitSet<E>
+impl<E, H, CH> std::clone::Clone for MerkleCircuitSet<E, H, CH>
 where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: Engine,
+    H: Hasher<E::Fr>,
+    CH: CircuitHasher<E>,
 {
     fn clone(&self) -> Self {
         Self {
             value: self.value.clone(),
+            depth: self.depth,
+            hasher: self.hasher.clone(),
             digest: self.digest.clone(),
-            params: self.params.clone(),
         }
     }
 }
 
-impl<E> Gadget for MerkleCircuitSet<E>
+impl<E, H, CH> Gadget for MerkleCircuitSet<E, H, CH>
 where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: Engine,
+    H: Hasher<E::Fr>,
+    CH: CircuitHasher<E>,
 {
     type E = E;
-    type Value = MerkleSet<E>;
-    type Access = ();
-    type Params = MerkleCircuitSetParams<E::Params>;
+    type Value = MerkleSet<E, H>;
+    type Access = CH;
+    type Params = usize;
     fn alloc<CS: ConstraintSystem<Self::E>>(
         mut cs: CS,
         value: Option<&Self::Value>,
-        _access: Self::Access,
+        access: Self::Access,
         params: &Self::Params,
     ) -> Result<Self, SynthesisError> {
         let digest = AllocatedNum::alloc(cs.namespace(|| "digest"), || Ok(value.grab()?.digest()))?;
         Ok(Self {
             value: value.cloned(),
+            hasher: access,
+            depth: *params,
             digest,
-            params: params.clone(),
         })
     }
     fn wires(&self) -> Vec<LinearCombination<Self::E>> {
@@ -235,16 +235,18 @@ where
         self.value.as_ref()
     }
     fn access(&self) -> &Self::Access {
-        &()
+        &self.hasher
     }
     fn params(&self) -> &Self::Params {
-        &self.params
+        &self.depth
     }
 }
 
-impl<E> MerkleCircuitSet<E>
+impl<E, H, CH> MerkleCircuitSet<E, H, CH>
 where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: Engine,
+    H: Hasher<E::Fr>,
+    CH: CircuitHasher<E>,
 {
     pub fn swap_all<'b, CS: ConstraintSystem<E>>(
         mut self,
@@ -252,7 +254,6 @@ where
         removed_items: impl IntoIterator<Item = &'b [AllocatedNum<E>]> + Clone,
         inserted_items: impl IntoIterator<Item = &'b [AllocatedNum<E>]> + Clone,
     ) -> Result<Self, SynthesisError> {
-        use sapling_crypto::circuit::poseidon_hash::poseidon_hash;
         for (j, (old, new)) in removed_items
             .into_iter()
             .zip(inserted_items.into_iter())
@@ -269,7 +270,7 @@ where
             });
             let path: Vec<(Boolean, AllocatedNum<E>)> = {
                 let mut cs = cs.namespace(|| "alloc path");
-                (0..self.params.depth)
+                (0..self.depth)
                     .map(|i| {
                         let mut cs = cs.namespace(|| format!("{}", i));
                         Ok((
@@ -288,22 +289,18 @@ where
             // Now, check the old item
             {
                 let mut cs = cs.namespace(|| "check old");
-                let mut cur = poseidon_hash(cs.namespace(|| "leaf hash"), old, &self.params.hash)?
-                    .pop()
-                    .unwrap();
+                let mut acc = self.hasher.hash(cs.namespace(|| "leaf hash"), old)?;
                 for (i, (bit, hash)) in path.iter().enumerate().rev() {
                     let mut cs = cs.namespace(|| format!("level {}", i));
                     let (a, b) = AllocatedNum::conditionally_reverse(
                         cs.namespace(|| "order"),
                         &hash,
-                        &cur,
+                        &acc,
                         &bit,
                     )?;
-                    cur = poseidon_hash(cs.namespace(|| "hash"), &[a, b], &self.params.hash)?
-                        .pop()
-                        .unwrap();
+                    acc = self.hasher.hash(cs.namespace(|| "hash"), &[a, b])?;
                 }
-                let eq = AllocatedNum::equals(cs.namespace(|| "root check"), &cur, &self.digest)?;
+                let eq = AllocatedNum::equals(cs.namespace(|| "root check"), &acc, &self.digest)?;
                 Boolean::enforce_equal(
                     cs.namespace(|| "root check passes"),
                     &eq,
@@ -314,23 +311,18 @@ where
             // Now, add the new item
             {
                 let mut cs = cs.namespace(|| "add new");
-                let mut new_cur =
-                    poseidon_hash(cs.namespace(|| "leaf hash"), new, &self.params.hash)?
-                        .pop()
-                        .unwrap();
+                let mut acc = self.hasher.hash(cs.namespace(|| "leaf hash"), new)?;
                 for (i, (bit, hash)) in path.into_iter().enumerate().rev() {
                     let mut cs = cs.namespace(|| format!("level {}", i));
                     let (a, b) = AllocatedNum::conditionally_reverse(
                         cs.namespace(|| "order"),
                         &hash,
-                        &new_cur,
+                        &acc,
                         &bit,
                     )?;
-                    new_cur = poseidon_hash(cs.namespace(|| "hash"), &[a, b], &self.params.hash)?
-                        .pop()
-                        .unwrap();
+                    acc = self.hasher.hash(cs.namespace(|| "hash"), &[a, b])?;
                 }
-                self.digest = new_cur;
+                self.digest = acc;
                 if let Some(v) = self.value.as_mut() {
                     let o = old
                         .into_iter()
@@ -355,7 +347,7 @@ where
     E: PoseidonEngine<SBox = QuinticSBox<E>>,
 {
     /// The initial state of the set
-    pub initial_state: MerkleSet<E>,
+    pub initial_state: MerkleSet<E, Poseidon<E>>,
     /// The items to remove from the set
     pub to_remove: Vec<Vec<E::Fr>>,
     /// The items to insert into the set
@@ -408,7 +400,10 @@ where
             .collect();
         assert!((1 << depth) >= initial.len());
         assert_eq!(removed.len(), inserted.len());
-        let initial_state = MerkleSet::new_with(hash, depth, initial.iter().map(Vec::as_slice));
+        let hasher = Poseidon {
+            params: hash,
+        };
+        let initial_state = MerkleSet::new_with(hasher, depth, initial.iter().map(Vec::as_slice));
         Self {
             initial_state,
             to_remove: removed,
@@ -442,14 +437,14 @@ where
         if self.params.verbose {
             println!("Constructing Set");
         }
-        let set: MerkleCircuitSet<E> = MerkleCircuitSet::alloc(
+        let hasher = CircuitPoseidon::<E> {
+            params: self.params.hash.clone(),
+        };
+        let set = MerkleCircuitSet::alloc(
             cs.namespace(|| "set init"),
             self.inputs.as_ref().map(|is| &is.initial_state),
-            (),
-            &MerkleCircuitSetParams {
-                hash: self.params.hash.clone(),
-                depth: self.params.depth,
-            },
+            hasher,
+            &self.params.depth,
         )?;
         set.inputize(cs.namespace(|| "initial_state input"))?;
         if self.params.verbose {
