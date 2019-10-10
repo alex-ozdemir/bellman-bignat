@@ -1,3 +1,5 @@
+#![feature(hash_raw_entry)]
+
 extern crate fnv;
 extern crate num_bigint;
 extern crate num_integer;
@@ -45,71 +47,7 @@ mod test_helpers {
     }
 }
 
-pub mod bench {
-    pub use sapling_crypto::bellman::pairing::Engine;
-    pub use sapling_crypto::bellman::{
-        ConstraintSystem, Index, LinearCombination, SynthesisError, Variable,
-    };
-
-    pub struct ConstraintCounter {
-        n_constraints: usize,
-    }
-
-    impl ConstraintCounter {
-        pub fn num_constraints(&self) -> usize {
-            self.n_constraints
-        }
-        pub fn new() -> Self {
-            Self { n_constraints: 0 }
-        }
-    }
-
-    impl<E: Engine> ConstraintSystem<E> for ConstraintCounter {
-        type Root = Self;
-        fn alloc<F, A, AR>(&mut self, _annotation: A, _f: F) -> Result<Variable, SynthesisError>
-        where
-            F: FnOnce() -> Result<E::Fr, SynthesisError>,
-            A: FnOnce() -> AR,
-            AR: Into<String>,
-        {
-            Ok(Variable::new_unchecked(Index::Aux(0)))
-        }
-        fn alloc_input<F, A, AR>(
-            &mut self,
-            _annotation: A,
-            _f: F,
-        ) -> Result<Variable, SynthesisError>
-        where
-            F: FnOnce() -> Result<E::Fr, SynthesisError>,
-            A: FnOnce() -> AR,
-            AR: Into<String>,
-        {
-            Ok(Variable::new_unchecked(Index::Input(0)))
-        }
-
-        fn enforce<A, AR, LA, LB, LC>(&mut self, _annotation: A, _a: LA, _b: LB, _c: LC)
-        where
-            A: FnOnce() -> AR,
-            AR: Into<String>,
-            LA: FnOnce(LinearCombination<E>) -> LinearCombination<E>,
-            LB: FnOnce(LinearCombination<E>) -> LinearCombination<E>,
-            LC: FnOnce(LinearCombination<E>) -> LinearCombination<E>,
-        {
-            self.n_constraints += 1;
-        }
-        fn push_namespace<NR, N>(&mut self, _name_fn: N)
-        where
-            NR: Into<String>,
-            N: FnOnce() -> NR,
-        {
-        }
-        fn pop_namespace(&mut self) {}
-        fn get_root(&mut self) -> &mut Self::Root {
-            self
-        }
-    }
-}
-
+pub mod bench;
 pub mod bignat;
 pub mod bit;
 pub mod entropy;
