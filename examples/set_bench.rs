@@ -5,7 +5,7 @@ extern crate rand;
 extern crate sapling_crypto;
 extern crate serde;
 
-use bellman_bignat::bench::ConstraintCounter;
+use bellman_bignat::bench::{ConstraintCounter, ConstraintProfiler};
 use bellman_bignat::bignat::nat_to_limbs;
 use bellman_bignat::group::RsaGroup;
 use bellman_bignat::set::merkle::{MerkleSetBench, MerkleSetBenchInputs, MerkleSetBenchParams};
@@ -25,12 +25,14 @@ const USAGE: &str = "
 Set Benchmarker
 
 Usage:
-  set_bench rsa <transactions> <capacity>
-  set_bench merkle <transactions> <capacity>
+  set_bench [options] rsa <transactions> <capacity>
+  set_bench [options] merkle <transactions> <capacity>
   set_bench (-h | --help)
   set_bench --version
 
 Options:
+  -p --profile  Profile constraints, instead of just counting them
+                Emits JSON to stdout
   -h --help     Show this screen.
   --version     Show version.
 ";
@@ -44,6 +46,7 @@ const ELEMENT_SIZE: usize = 5;
 struct Args {
     arg_transactions: usize,
     arg_capacity: usize,
+    flag_profile: bool,
     cmd_rsa: bool,
     cmd_merkle: bool,
 }
@@ -54,22 +57,27 @@ fn main() {
         .and_then(|d| d.deserialize())
         .unwrap_or_else(|e| e.exit());
     let (set, constraints) = if args.cmd_rsa {
-        ("rsa", rsa_bench(args.arg_transactions, args.arg_capacity))
+        (
+            "rsa",
+            rsa_bench(args.arg_transactions, args.arg_capacity, args.flag_profile),
+        )
     } else if args.cmd_merkle {
         (
             "merkle",
-            merkle_bench(args.arg_transactions, args.arg_capacity),
+            merkle_bench(args.arg_transactions, args.arg_capacity, args.flag_profile),
         )
     } else {
         panic!("Unknown command")
     };
-    println!(
-        "{},{},{},{}",
-        set, args.arg_transactions, args.arg_capacity, constraints
-    );
+    if !args.flag_profile {
+        println!(
+            "{},{},{},{}",
+            set, args.arg_transactions, args.arg_capacity, constraints
+        );
+    }
 }
 
-fn rsa_bench(t: usize, _c: usize) -> usize {
+fn rsa_bench(t: usize, _c: usize, profile: bool) -> usize {
     let hash = Rc::new(Bn256PoseidonParams::new::<
         sapling_crypto::group_hash::Keccak256Hasher,
     >());
@@ -123,12 +131,19 @@ fn rsa_bench(t: usize, _c: usize) -> usize {
     inputs
         .extend(nat_to_limbs::<<Bn256 as ScalarEngine>::Fr>(&final_set.digest(), 32, 64).unwrap());
 
-    let mut cs = ConstraintCounter::new();
-    circuit.synthesize(&mut cs).expect("synthesis failed");
-    cs.num_constraints()
+    if profile {
+        let mut cs = ConstraintProfiler::new();
+        circuit.synthesize(&mut cs).expect("synthesis failed");
+        cs.emit_as_json(&mut std::io::stdout()).unwrap();
+        cs.num_constraints()
+    } else {
+        let mut cs = ConstraintCounter::new();
+        circuit.synthesize(&mut cs).expect("synthesis failed");
+        cs.num_constraints()
+    }
 }
 
-fn merkle_bench(t: usize, c: usize) -> usize {
+fn merkle_bench(t: usize, c: usize, profile: bool) -> usize {
     let hash = Rc::new(Bn256PoseidonParams::new::<
         sapling_crypto::group_hash::Keccak256Hasher,
     >());
@@ -158,7 +173,14 @@ fn merkle_bench(t: usize, c: usize) -> usize {
         t
     };
 
-    let mut cs = ConstraintCounter::new();
-    circuit.synthesize(&mut cs).expect("synthesis failed");
-    cs.num_constraints()
+    if profile {
+        let mut cs = ConstraintProfiler::new();
+        circuit.synthesize(&mut cs).expect("synthesis failed");
+        cs.emit_as_json(&mut std::io::stdout()).unwrap();
+        cs.num_constraints()
+    } else {
+        let mut cs = ConstraintCounter::new();
+        circuit.synthesize(&mut cs).expect("synthesis failed");
+        cs.num_constraints()
+    }
 }

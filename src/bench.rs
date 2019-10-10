@@ -129,13 +129,15 @@ impl InternedConstraintProfile {
     }
 
     pub fn add_child(&mut self, name: InternedName, child: InternedConstraintProfile) {
-        self.cumulative_count += child.cumulative_count;
-        self.children.push((name, child));
+        if child.cumulative_count > 0 {
+            self.cumulative_count += child.cumulative_count;
+            self.children.push((name, child));
+        }
     }
 
     pub fn emit_as_json<W: Write>(&self, w: &mut W, interner: &Interner) -> Result<(), Error>  {
         w.write_all(b"{")?;
-        write!(w, "\"#\":{},\"##\":{}", self.count, self.cumulative_count)?;
+        write!(w, "\"count\":{},\"cumulative\":{}", self.count, self.cumulative_count)?;
         for (n, c) in &self.children {
             write!(w, ",\"{}\":", interner.get_string(*n))?;
             c.emit_as_json(w, interner)?;
@@ -159,9 +161,15 @@ impl ConstraintProfiler {
             interner: Interner::new(),
         }
     }
+
     pub fn emit_as_json<W: Write>(&self, w: &mut W) -> Result<(), Error> {
         assert_eq!(self.profiles.len(), 1);
         self.profiles[0].emit_as_json(w, &self.interner)
+    }
+
+    pub fn num_constraints(&self) -> usize {
+        assert_eq!(self.profiles.len(), 1);
+        self.profiles[0].cumulative_count
     }
 }
 
