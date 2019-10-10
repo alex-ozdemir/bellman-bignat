@@ -3,6 +3,9 @@ pub use sapling_crypto::bellman::{
     ConstraintSystem, Index, LinearCombination, SynthesisError, Variable,
 };
 
+use std::io::Write;
+use std::io::Error;
+
 pub struct ConstraintCounter {
     n_constraints: usize,
 }
@@ -129,6 +132,17 @@ impl InternedConstraintProfile {
         self.cumulative_count += child.cumulative_count;
         self.children.push((name, child));
     }
+
+    pub fn emit_as_json<W: Write>(&self, w: &mut W, interner: &Interner) -> Result<(), Error>  {
+        w.write_all(b"{")?;
+        write!(w, "\"#\":{},\"##\":{}", self.count, self.cumulative_count)?;
+        for (n, c) in &self.children {
+            write!(w, ",\"{}\":", interner.get_string(*n))?;
+            c.emit_as_json(w, interner)?;
+        }
+        w.write_all(b"}")?;
+        Ok(())
+    }
 }
 
 pub struct ConstraintProfiler {
@@ -144,6 +158,10 @@ impl ConstraintProfiler {
             profiles: vec![InternedConstraintProfile::new()],
             interner: Interner::new(),
         }
+    }
+    pub fn emit_as_json<W: Write>(&self, w: &mut W) -> Result<(), Error> {
+        assert_eq!(self.profiles.len(), 1);
+        self.profiles[0].emit_as_json(w, &self.interner)
     }
 }
 
@@ -176,6 +194,7 @@ impl<E: Engine> ConstraintSystem<E> for ConstraintProfiler {
     {
         self.profiles.last_mut().unwrap().increment();
     }
+
     fn push_namespace<NR, N>(&mut self, _name_fn: N)
     where
         NR: Into<String>,
@@ -187,14 +206,17 @@ impl<E: Engine> ConstraintSystem<E> for ConstraintProfiler {
         self.names.push(name);
         debug_assert!(self.profiles.len() == self.names.len() + 1);
     }
+
     fn pop_namespace(&mut self) {
         debug_assert!(self.names.len() > 0);
+        debug_assert!(self.profiles.len() > 0);
         let n = self.names.pop().unwrap();
         let p = self.profiles.pop().unwrap();
         self.profiles.last_mut().unwrap().add_child(n, p);
         debug_assert!(self.profiles.len() > 0);
         debug_assert!(self.profiles.len() == self.names.len() + 1);
     }
+
     fn get_root(&mut self) -> &mut Self::Root {
         self
     }
