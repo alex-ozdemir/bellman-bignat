@@ -1,7 +1,7 @@
 use sapling_crypto::bellman::pairing::ff::{Field, PrimeField};
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
-use sapling_crypto::circuit::num::AllocatedNum;
+use sapling_crypto::circuit::num::{AllocatedNum, Num};
 
 use OptionExt;
 
@@ -101,7 +101,7 @@ const ROUND_KEYS: &[&str] = &[
 
 pub mod helper {
     use super::*;
-    pub fn mimc<F: PrimeField>(input: F) -> F {
+    pub fn permutation<F: PrimeField>(input: F) -> F {
         let mut x = input;
         for i in 0..91 {
             x.add_assign(&F::from_str(ROUND_KEYS[i]).unwrap());
@@ -120,9 +120,20 @@ pub mod helper {
         }
         x
     }
+
+    pub fn compression<F: PrimeField>(acc: F, x: F) -> F {
+        let mut out = permutation(x);
+        out.add_assign(&acc);
+        out.add_assign(&x);
+        out
+    }
+
+    pub fn hash<F: PrimeField>(xs: &[F]) -> F{
+        xs.into_iter().fold(F::zero(), |x, y| compression(x, *y))
+    }
 }
 
-pub fn mimc<E: Engine, CS: ConstraintSystem<E>>(
+pub fn permutation<E: Engine, CS: ConstraintSystem<E>>(
     mut cs: CS,
     input: AllocatedNum<E>,
 ) -> Result<AllocatedNum<E>, SynthesisError> {
@@ -162,6 +173,44 @@ pub fn mimc<E: Engine, CS: ConstraintSystem<E>>(
     Ok(x)
 }
 
+pub fn compression<E: Engine, CS: ConstraintSystem<E>>(
+    mut cs: CS,
+    acc: AllocatedNum<E>,
+    x: AllocatedNum<E>,
+) -> Result<Num<E>, SynthesisError> {
+    let out = permutation(cs.namespace(|| "permutation"), x.clone())?;
+    Ok(Num::from(out).add_number_with_coeff(&acc, E::Fr::one()).add_number_with_coeff(&x, E::Fr::one()))
+}
+
+pub fn allocate_num<E: Engine, CS: ConstraintSystem<E>>(
+    mut cs: CS,
+    n: Num<E>
+) -> Result<AllocatedNum<E>, SynthesisError> {
+    let out = AllocatedNum::alloc(
+        cs.namespace(|| "alloc"),
+        || Ok(*n.get_value().grab()?)
+    )?;
+    cs.enforce(
+        || "eq",
+        |lc| lc,
+        |lc| lc,
+        |lc| lc + out.get_variable() - &n.lc(E::Fr::one()),
+    );
+    Ok(out)
+}
+
+pub fn hash<E: Engine, CS: ConstraintSystem<E>>(
+    mut cs: CS,
+    xs: &[AllocatedNum<E>],
+) -> Result<AllocatedNum<E>, SynthesisError> {
+    let mut aa = allocate_num(cs.namespace(|| format!("alloc 0")), Num::zero())?;
+    for (i, x) in xs.into_iter().enumerate() {
+        let h = compression(cs.namespace(|| format!("hash {}", i)), aa.clone(), x.clone())?;
+        aa = allocate_num(cs.namespace(|| format!("alloc {}", i)), h)?;
+    }
+    Ok(aa)
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -183,12 +232,12 @@ mod test {
         fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
             let input_value: E::Fr = E::Fr::from_str(self.inputs.grab()?.input).unwrap();
 
-            let expected_ouput = super::helper::mimc::<E::Fr>(input_value);
+            let expected_ouput = super::helper::permutation::<E::Fr>(input_value);
             let allocated_expected_output =
                 AllocatedNum::alloc(cs.namespace(|| "output"), || Ok(expected_ouput))?;
             let allocated_input: AllocatedNum<E> =
                 AllocatedNum::alloc(cs.namespace(|| format!("input")), || Ok(input_value))?;
-            let hash = mimc(cs.namespace(|| "hash"), allocated_input)?;
+            let hash = permutation(cs.namespace(|| "hash"), allocated_input)?;
             let eq =
                 AllocatedNum::equals(cs.namespace(|| "eq"), &hash, &allocated_expected_output)?;
             Boolean::enforce_equal(cs.namespace(|| "eq2"), &eq, &Boolean::Constant(true))?;

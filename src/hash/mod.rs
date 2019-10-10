@@ -2,6 +2,7 @@ pub mod miller_rabin_prime;
 pub mod pocklington;
 pub mod rsa;
 pub mod tree;
+pub mod mimc;
 
 /// A representation of an integer domain to hash to
 #[derive(Clone, Debug)]

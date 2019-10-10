@@ -5,7 +5,7 @@ pub mod helper {
     use f_to_nat;
     use hash::helper::low_k_bits;
     use hash::miller_rabin_prime::helper::miller_rabin_32b;
-    use mimc::helper::mimc;
+    use hash::mimc;
     use num_bigint::BigUint;
     use num_integer::Integer;
     use num_traits::One;
@@ -173,7 +173,7 @@ pub mod helper {
         for i in 0..(1 << plan.nonce_bits) {
             let nonce = i;
             let mimcd_nonce = low_k_bits(
-                &f_to_nat(&mimc(F::from_str(&format!("{}", i)).unwrap())),
+                &f_to_nat(&mimc::helper::permutation(F::from_str(&format!("{}", i)).unwrap())),
                 plan.nonce_bits,
             );
             let nonced_extension = &random + &mimcd_nonce;
@@ -281,7 +281,7 @@ use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
 use bignat::BigNat;
 use entropy::{EntropySource, NatTemplate};
 use gadget::Gadget;
-use mimc::mimc;
+use hash::mimc;
 use num::Num;
 use usize_to_f;
 use OptionExt;
@@ -333,7 +333,7 @@ pub fn hash_to_pocklington_prime<
         let nonce = AllocatedNum::alloc(cs.namespace(|| "nonce"), || {
             Ok(usize_to_f(cert.as_ref().grab()?.extensions[i].nonce))
         })?;
-        let mimcd_nonce_all_bits = Num::from(mimc(cs.namespace(|| "mimc"), nonce)?);
+        let mimcd_nonce_all_bits = Num::from(mimc::permutation(cs.namespace(|| "mimc"), nonce)?);
         let mimcd_nonce = BigNat::from_num(
             mimcd_nonce_all_bits
                 .low_k_bits(cs.namespace(|| "mimc low bits"), extension.nonce_bits)?,

@@ -5,7 +5,7 @@ use sapling_crypto::circuit::num::AllocatedNum;
 
 use bignat::BigNat;
 use bit::{Bit, Bitvector};
-use mimc::mimc;
+use hash::mimc;
 
 use gadget::Gadget;
 
@@ -59,7 +59,7 @@ impl<E: Engine> Gadget for EntropySource<E> {
         let elems_needed = (bits_needed - 1) / E::Fr::CAPACITY as usize + 1;
         let mut elems: Vec<AllocatedNum<E>> = vec![access.clone()];
         while elems.len() < elems_needed {
-            elems.push(mimc(
+            elems.push(mimc::permutation(
                 cs.namespace(|| format!("hash {}", elems.len())),
                 elems.last().unwrap().clone(),
             )?);
@@ -107,7 +107,7 @@ pub mod helper {
     use sapling_crypto::bellman::pairing::ff::PrimeField;
 
     use f_to_nat;
-    use mimc::helper::mimc;
+    use hash::mimc;
 
     pub struct EntropySource {
         bits: Vec<bool>,
@@ -118,7 +118,7 @@ pub mod helper {
             let elems_needed = (bits_needed - 1) / F::CAPACITY as usize + 1;
             let mut elems = vec![hash];
             while elems.len() < elems_needed {
-                elems.push(mimc(elems.last().unwrap().clone()));
+                elems.push(mimc::helper::permutation(elems.last().unwrap().clone()));
             }
             let mut bits = Vec::new();
             for (i, hash) in elems.into_iter().enumerate() {
