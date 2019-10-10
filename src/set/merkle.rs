@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 use super::GenSet;
 use gadget::Gadget;
-use hash::tree::circuit::{CircuitHasher, CircuitPoseidon};
+use hash::tree::circuit::{CircuitHasher};
 use hash::tree::{Hasher, Poseidon};
 use usize_to_f;
 use OptionExt;
@@ -23,7 +23,7 @@ use OptionExt;
 pub struct MerkleSet<E, H>
 where
     E: Engine,
-    H: Hasher<E::Fr>,
+    H: Hasher<F = E::Fr>,
 {
     pub hasher: H,
 
@@ -44,7 +44,7 @@ where
 impl<E, H> MerkleSet<E, H>
 where
     E: Engine,
-    H: Hasher<E::Fr>,
+    H: Hasher<F = E::Fr>,
 {
     pub fn new_with<'b>(
         hasher: H,
@@ -88,7 +88,7 @@ where
 impl<E, H> MerkleSet<E, H>
 where
     E: Engine,
-    H: Hasher<E::Fr>,
+    H: Hasher<F = E::Fr>,
 {
     fn get_node(&self, level: usize, index: usize) -> &E::Fr {
         self.nodes
@@ -135,7 +135,7 @@ where
 impl<E, H> GenSet<E> for MerkleSet<E, H>
 where
     E: Engine,
-    H: Hasher<E::Fr>,
+    H: Hasher<F = E::Fr>,
 {
     type Digest = E::Fr;
 
@@ -176,8 +176,8 @@ impl<HParams> std::clone::Clone for MerkleCircuitSetParams<HParams> {
 pub struct MerkleCircuitSet<E, H, CH>
 where
     E: Engine,
-    H: Hasher<E::Fr>,
-    CH: CircuitHasher<E>,
+    H: Hasher<F = E::Fr>,
+    CH: CircuitHasher<E = E>,
 {
     pub value: Option<MerkleSet<E, H>>,
     pub digest: AllocatedNum<E>,
@@ -188,8 +188,8 @@ where
 impl<E, H, CH> std::clone::Clone for MerkleCircuitSet<E, H, CH>
 where
     E: Engine,
-    H: Hasher<E::Fr>,
-    CH: CircuitHasher<E>,
+    H: Hasher<F = E::Fr>,
+    CH: CircuitHasher<E = E>,
 {
     fn clone(&self) -> Self {
         Self {
@@ -204,8 +204,8 @@ where
 impl<E, H, CH> Gadget for MerkleCircuitSet<E, H, CH>
 where
     E: Engine,
-    H: Hasher<E::Fr>,
-    CH: CircuitHasher<E>,
+    H: Hasher<F = E::Fr>,
+    CH: CircuitHasher<E = E>,
 {
     type E = E;
     type Value = MerkleSet<E, H>;
@@ -245,8 +245,8 @@ where
 impl<E, H, CH> MerkleCircuitSet<E, H, CH>
 where
     E: Engine,
-    H: Hasher<E::Fr>,
-    CH: CircuitHasher<E>,
+    H: Hasher<F = E::Fr>,
+    CH: CircuitHasher<E = E>,
 {
     pub fn swap_all<'b, CS: ConstraintSystem<E>>(
         mut self,
@@ -289,7 +289,7 @@ where
             // Now, check the old item
             {
                 let mut cs = cs.namespace(|| "check old");
-                let mut acc = self.hasher.hash(cs.namespace(|| "leaf hash"), old)?;
+                let mut acc = self.hasher.allocate_hash(cs.namespace(|| "leaf hash"), old)?;
                 for (i, (bit, hash)) in path.iter().enumerate().rev() {
                     let mut cs = cs.namespace(|| format!("level {}", i));
                     let (a, b) = AllocatedNum::conditionally_reverse(
@@ -298,7 +298,7 @@ where
                         &acc,
                         &bit,
                     )?;
-                    acc = self.hasher.hash(cs.namespace(|| "hash"), &[a, b])?;
+                    acc = self.hasher.allocate_hash(cs.namespace(|| "hash"), &[a, b])?;
                 }
                 let eq = AllocatedNum::equals(cs.namespace(|| "root check"), &acc, &self.digest)?;
                 Boolean::enforce_equal(
@@ -311,7 +311,7 @@ where
             // Now, add the new item
             {
                 let mut cs = cs.namespace(|| "add new");
-                let mut acc = self.hasher.hash(cs.namespace(|| "leaf hash"), new)?;
+                let mut acc = self.hasher.allocate_hash(cs.namespace(|| "leaf hash"), new)?;
                 for (i, (bit, hash)) in path.into_iter().enumerate().rev() {
                     let mut cs = cs.namespace(|| format!("level {}", i));
                     let (a, b) = AllocatedNum::conditionally_reverse(
@@ -320,7 +320,7 @@ where
                         &acc,
                         &bit,
                     )?;
-                    acc = self.hasher.hash(cs.namespace(|| "hash"), &[a, b])?;
+                    acc = self.hasher.allocate_hash(cs.namespace(|| "hash"), &[a, b])?;
                 }
                 self.digest = acc;
                 if let Some(v) = self.value.as_mut() {
@@ -437,7 +437,7 @@ where
         if self.params.verbose {
             println!("Constructing Set");
         }
-        let hasher = CircuitPoseidon::<E> {
+        let hasher = Poseidon::<E> {
             params: self.params.hash.clone(),
         };
         let set = MerkleCircuitSet::alloc(
