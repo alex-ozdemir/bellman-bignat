@@ -12,7 +12,9 @@ use std::rc::Rc;
 use bignat::BigNat;
 use gadget::Gadget;
 use group::{CircuitRsaGroup, CircuitRsaGroupParams, CircuitSemiGroup, RsaGroup, SemiGroup};
-use hash::{pocklington, rsa, HashDomain};
+use hash::{pocklington, rsa, HashDomain, MaybeHashed};
+use hash::tree::{Poseidon};
+use hash::tree::circuit::CircuitHasher;
 use wesolowski::Reduced;
 use OptionExt;
 
@@ -300,16 +302,15 @@ where
     pub fn remove<'b, CS: ConstraintSystem<E>>(
         self,
         mut cs: CS,
-        items: impl IntoIterator<Item = &'b [AllocatedNum<E>]> + Clone,
+        items: &mut Vec<MaybeHashed<E>>,
     ) -> Result<Self, SynthesisError> {
         let removals = items
-            .clone()
             .into_iter()
             .enumerate()
-            .map(|(i, slice)| -> Result<Reduced<E>, SynthesisError> {
+            .map(|(i, mut input)| -> Result<Reduced<E>, SynthesisError> {
                 rsa::hash_to_modded_rsa_element(
                     cs.namespace(|| format!("hash {}", i)),
-                    &slice,
+                    &mut input,
                     self.params.limb_width,
                     &self.params.hash_domain(),
                     &self.offset,
@@ -324,7 +325,7 @@ where
         let value = self.value.as_ref().and_then(|v| {
             let is: Option<Vec<Vec<E::Fr>>> = items
                 .into_iter()
-                .map(|i| i.iter().map(|n| n.get_value()).collect::<Option<Vec<_>>>())
+                .map(|i| i.values.iter().map(|n| n.get_value()).collect::<Option<Vec<_>>>())
                 .collect::<Option<Vec<_>>>();
             is.map(|is| {
                 let mut v = v.clone();
@@ -344,16 +345,15 @@ where
     pub fn insert<'b, CS: ConstraintSystem<E>>(
         self,
         mut cs: CS,
-        items: impl IntoIterator<Item = &'b [AllocatedNum<E>]> + Clone,
+        items: &mut Vec<MaybeHashed<E>>,
     ) -> Result<Self, SynthesisError> {
         let insertions = items
-            .clone()
             .into_iter()
             .enumerate()
-            .map(|(i, slice)| -> Result<Reduced<E>, SynthesisError> {
+            .map(|(i, mut slice)| -> Result<Reduced<E>, SynthesisError> {
                 rsa::hash_to_modded_rsa_element(
                     cs.namespace(|| format!("hash {}", i)),
-                    &slice,
+                    &mut slice,
                     self.params.limb_width,
                     &self.params.hash_domain(),
                     &self.offset,
@@ -370,7 +370,7 @@ where
         let value = self.value.as_ref().and_then(|v| {
             let is: Option<Vec<Vec<E::Fr>>> = items
                 .into_iter()
-                .map(|i| i.iter().map(|n| n.get_value()).collect::<Option<Vec<_>>>())
+                .map(|i| i.values.iter().map(|n| n.get_value()).collect::<Option<Vec<_>>>())
                 .collect::<Option<Vec<_>>>();
             is.map(|is| {
                 let mut v = v.clone();
@@ -390,8 +390,8 @@ where
     fn swap_all<'b, CS: ConstraintSystem<E>>(
         self,
         mut cs: CS,
-        removed_items: impl IntoIterator<Item = &'b [AllocatedNum<E>]> + Clone,
-        inserted_items: impl IntoIterator<Item = &'b [AllocatedNum<E>]> + Clone,
+        removed_items: &mut Vec<MaybeHashed<E>>,
+        inserted_items: &mut Vec<MaybeHashed<E>>,
     ) -> Result<Self, SynthesisError> {
         let without = self.remove(cs.namespace(|| "remove"), removed_items)?;
         without.insert(cs.namespace(|| "insert"), inserted_items)
@@ -543,32 +543,41 @@ where
         if self.params.verbose {
             println!("Allocating Deletions...");
         }
-        let removals = (0..self.params.n_removes)
+        let hasher = Poseidon {
+            params: self.params.hash.clone(),
+        };
+        let mut removals = (0..self.params.n_removes)
             .map(|i| {
-                (0..self.params.item_size)
+                let mut cs = cs.namespace(|| "init removals");
+                let values = (0..self.params.item_size)
                     .map(|j| {
-                        AllocatedNum::alloc(cs.namespace(|| format!("remove {} {}", i, j)), || {
+                        AllocatedNum::alloc(cs.namespace(|| format!("alloc {} {}", i, j)), || {
                             Ok(**self.inputs.grab()?.to_remove.get(i).grab()?.get(j).grab()?)
                         })
                     })
-                    .collect::<Result<Vec<_>, _>>()
+                    .collect::<Result<Vec<_>, _>>()?;
+                let hash = hasher.allocate_hash(cs.namespace(|| format!("hash {}", i)), &values)?;
+                Ok(MaybeHashed::new(values, hash))
             })
-            .collect::<Result<Vec<Vec<AllocatedNum<E>>>, SynthesisError>>()?;
+            .collect::<Result<Vec<MaybeHashed<E>>, SynthesisError>>()?;
 
         if self.params.verbose {
             println!("Allocating Insertions...");
         }
-        let insertions = (0..self.params.n_inserts)
+        let mut insertions = (0..self.params.n_inserts)
             .map(|i| {
-                (0..self.params.item_size)
+                let mut cs = cs.namespace(|| "init insertions");
+                let values = (0..self.params.item_size)
                     .map(|j| {
-                        AllocatedNum::alloc(cs.namespace(|| format!("insert {} {}", i, j)), || {
+                        AllocatedNum::alloc(cs.namespace(|| format!("alloc {} {}", i, j)), || {
                             Ok(**self.inputs.grab()?.to_insert.get(i).grab()?.get(j).grab()?)
                         })
                     })
-                    .collect::<Result<Vec<_>, _>>()
+                    .collect::<Result<Vec<_>, _>>()?;
+                let hash = hasher.allocate_hash(cs.namespace(|| format!("hash {}", i)), &values)?;
+                Ok(MaybeHashed::new(values, hash))
             })
-            .collect::<Result<Vec<Vec<AllocatedNum<E>>>, SynthesisError>>()?;
+            .collect::<Result<Vec<MaybeHashed<E>>, SynthesisError>>()?;
 
         let expected_digest = BigNat::alloc_from_nat(
             cs.namespace(|| "expected_digest"),
@@ -581,8 +590,8 @@ where
             println!("Hashing everything");
         }
         let mut to_hash_to_challenge: Vec<AllocatedNum<E>> = Vec::new();
-        to_hash_to_challenge.extend(insertions.iter().flat_map(|i| i.iter().cloned()));
-        to_hash_to_challenge.extend(removals.iter().flat_map(|i| i.iter().cloned()));
+        to_hash_to_challenge.extend(insertions.iter().map(|i| i.hash.clone().unwrap()));
+        to_hash_to_challenge.extend(removals.iter().map(|i| i.hash.clone().unwrap()));
         let challenge = pocklington::hash_to_pocklington_prime(
             cs.namespace(|| "chash"),
             &to_hash_to_challenge,
@@ -629,8 +638,8 @@ where
         }
         let new_set = set.swap_all(
             cs.namespace(|| "swap"),
-            removals.iter().map(Vec::as_slice),
-            insertions.iter().map(Vec::as_slice),
+            &mut removals,
+            &mut insertions,
         )?;
 
         if self.params.verbose {

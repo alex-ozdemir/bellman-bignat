@@ -11,6 +11,7 @@ use std::str::FromStr;
 use super::HashDomain;
 use bignat::BigNat;
 use bit::{Bit, Bitvector};
+use hash::MaybeHashed;
 use num::Num;
 use wesolowski::Reduced;
 use OptionExt;
@@ -182,7 +183,7 @@ pub fn hash_to_integer<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: ConstraintS
 
 pub fn hash_to_rsa_element<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: ConstraintSystem<E>>(
     mut cs: CS,
-    input: &[AllocatedNum<E>],
+    input: &mut MaybeHashed<E>,
     limb_width: usize,
     domain: &HashDomain,
     offset: Reduced<E>,
@@ -193,13 +194,15 @@ pub fn hash_to_rsa_element<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: Constra
     }
     let bits_per_hash = params.security_level() as usize * 2;
     assert!(domain.n_bits % limb_width == 0);
-    let hash = sapling_crypto::circuit::poseidon_hash::poseidon_hash(
-        cs.namespace(|| "inputs"),
-        &input,
-        params,
-    )?
-    .pop()
-    .unwrap();
+    let hash: AllocatedNum<E> = input.get_hash(|values| {
+        Ok(sapling_crypto::circuit::poseidon_hash::poseidon_hash(
+            cs.namespace(|| "inputs"),
+            values,
+            params,
+        )?
+        .pop()
+        .unwrap())
+    })?;
     let hash_bits = hash.into_bits_le_strict(cs.namespace(|| "bitify"))?;
     let bits: Vec<Boolean> = hash_bits.into_iter().take(bits_per_hash).collect();
     let x = BigNat::<E>::recompose(
@@ -218,7 +221,7 @@ pub fn hash_to_modded_rsa_element<
     CS: ConstraintSystem<E>,
 >(
     mut cs: CS,
-    input: &[AllocatedNum<E>],
+    input: &mut MaybeHashed<E>,
     limb_width: usize,
     domain: &HashDomain,
     offset: &Reduced<E>,
@@ -230,13 +233,15 @@ pub fn hash_to_modded_rsa_element<
     }
     let bits_per_hash = params.security_level() as usize * 2;
     assert!(domain.n_bits % limb_width == 0);
-    let hash = sapling_crypto::circuit::poseidon_hash::poseidon_hash(
-        cs.namespace(|| "inputs"),
-        &input,
-        params,
-    )?
-    .pop()
-    .unwrap();
+    let hash: AllocatedNum<E> = input.get_hash(|values| {
+        Ok(sapling_crypto::circuit::poseidon_hash::poseidon_hash(
+            cs.namespace(|| "inputs"),
+            values,
+            params,
+        )?
+        .pop()
+        .unwrap())
+    })?;
     let hash_bits = hash.into_bits_le_strict(cs.namespace(|| "bitify"))?;
     let bits: Vec<Boolean> = hash_bits.into_iter().take(bits_per_hash).collect();
     let x = BigNat::<E>::recompose(

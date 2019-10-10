@@ -4,6 +4,36 @@ pub mod rsa;
 pub mod tree;
 pub mod mimc;
 
+use sapling_crypto::bellman::pairing::Engine;
+use sapling_crypto::circuit::num::AllocatedNum;
+use CResult;
+
+pub struct MaybeHashed<E: Engine> {
+    pub values: Vec<AllocatedNum<E>>,
+    pub hash: Option<AllocatedNum<E>>,
+}
+
+impl<E: Engine> MaybeHashed<E> {
+    pub fn new(values: Vec<AllocatedNum<E>>, hash: AllocatedNum<E>) -> Self {
+        Self {
+            values,
+            hash: Some(hash),
+        }
+    }
+    pub fn from_values(values: Vec<AllocatedNum<E>>) -> Self {
+        Self {
+            values,
+            hash: None,
+        }
+    }
+    pub fn get_hash<F: FnOnce(&[AllocatedNum<E>]) -> CResult<AllocatedNum<E>>>(&mut self, f: F) -> CResult<AllocatedNum<E>> {
+        if self.hash.is_none() {
+            self.hash = Some(f(&self.values)?);
+        }
+        Ok(self.hash.clone().unwrap())
+    }
+}
+
 /// A representation of an integer domain to hash to
 #[derive(Clone, Debug)]
 pub struct HashDomain {
