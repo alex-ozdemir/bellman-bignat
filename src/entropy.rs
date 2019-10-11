@@ -95,7 +95,11 @@ impl<E: Engine> EntropySource<E> {
             bits.push(Bit::new_true::<CS>());
         }
         bits.reverse();
-        BigNat::recompose(&Bitvector::from_bits(bits), limb_width)
+        let mut r = BigNat::recompose(&Bitvector::from_bits(bits), limb_width);
+        if template.leading_ones > 0 {
+            r.params.min_bits = template.leading_ones + template.random_bits + template.trailing_ones;
+        }
+        r
     }
 }
 
