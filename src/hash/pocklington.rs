@@ -84,11 +84,11 @@ pub mod helper {
                     let mut nonce_bits = 0;
                     let mut next_bits = 0;
                     loop {
-                        if random_bits + nonce_bits >= base.bits {
+                        if random_bits + nonce_bits + 1 >= base.bits {
                             error = true;
                             break;
                         }
-                        next_bits = nonce_bits + random_bits + base.bits;
+                        next_bits = nonce_bits + random_bits + base.bits + 1;
                         if nonce_bits >= nonce_bits_needed(next_bits) {
                             break;
                         }
@@ -133,7 +133,7 @@ pub mod helper {
         pub fn max_bits(&self) -> usize {
             self.extensions
                 .iter()
-                .map(|i| i.random_bits + i.nonce_bits)
+                .map(|i| i.random_bits + 1)
                 .sum::<usize>()
                 + 32
         }
@@ -223,7 +223,7 @@ pub mod helper {
             let random = bits.get_bits_as_nat(NatTemplate {
                 random_bits: extension.random_bits,
                 trailing_ones: 0,
-                leading_ones: 0,
+                leading_ones: 1,
             });
             certificate =
                 attempt_pocklington_extension::<F>(certificate, extension, random).ok()?;
@@ -348,7 +348,7 @@ pub fn hash_to_pocklington_prime<
             NatTemplate {
                 random_bits: extension.random_bits,
                 trailing_ones: 0,
-                leading_ones: 0,
+                leading_ones: 1,
             },
             limb_width,
         );
@@ -395,6 +395,8 @@ mod test {
     #[test]
     fn pocklington_plan_128() {
         let p = helper::PocklingtonPlan::new(128);
+        println!("{:#?}", p);
+        println!("{:#?}", p.max_bits());
         assert_eq!(p.entropy(), 128);
     }
 
@@ -551,18 +553,6 @@ mod test {
                 }),
                 params: PockHashParams {
                     entropy: 128,
-                    hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
-                },
-            },
-            true,
-        ),
-        pocklington_hash_200_1: (
-            PockHash {
-                inputs: Some(PockHashInputs {
-                    inputs: &["1","2","3","4","5","6","7","8","9","10"],
-                }),
-                params: PockHashParams {
-                    entropy: 200,
                     hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
                 },
             },

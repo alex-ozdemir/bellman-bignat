@@ -730,7 +730,7 @@ impl<E: Engine> BigNat<E> {
     ) -> Result<BigNat<E>, SynthesisError> {
         self.enforce_limb_width_agreement(other, "mult")?;
 
-        let prod = BigNat::alloc_from_nat(
+        let mut prod = BigNat::alloc_from_nat(
             cs.namespace(|| "product"),
             || {
                 let s = self.value.grab()?;
@@ -740,6 +740,9 @@ impl<E: Engine> BigNat<E> {
             other.params.limb_width,
             other.params.n_limbs + self.params.n_limbs,
         )?;
+        if self.params.min_bits > 0 && other.params.min_bits > 0 {
+            prod.params.min_bits = self.params.min_bits + other.params.min_bits - 1;
+        }
 
         prod.decompose(cs.namespace(|| "rangecheck"))?;
 
@@ -962,8 +965,9 @@ impl<E: Engine> BigNat<E> {
     ) -> Result<(BigNat<E>, BigNat<E>), SynthesisError> {
         self.enforce_limb_width_agreement(other, "mult_mod")?;
         let limb_width = self.params.limb_width;
-        let quotient_bits = self.n_bits() + other.n_bits() - modulus.params.min_bits;
-        let quotient_limbs = (quotient_bits - 1) / limb_width + 1;
+        let quotient_bits =
+            (self.n_bits() + other.n_bits()).saturating_sub(modulus.params.min_bits);
+        let quotient_limbs = quotient_bits.saturating_sub(1) / limb_width + 1;
         let quotient = BigNat::alloc_from_nat(
             cs.namespace(|| "quotient"),
             || Ok(self.value.grab()? * other.value.grab()? / modulus.value.grab()?),
@@ -1013,8 +1017,8 @@ impl<E: Engine> BigNat<E> {
     ) -> Result<BigNat<E>, SynthesisError> {
         self.enforce_limb_width_agreement(modulus, "red_mod")?;
         let limb_width = self.params.limb_width;
-        let quotient_bits = self.n_bits() - modulus.params.min_bits;
-        let quotient_limbs = (quotient_bits - 1) / limb_width + 1;
+        let quotient_bits = self.n_bits().saturating_sub(modulus.params.min_bits);
+        let quotient_limbs = quotient_bits.saturating_sub(1) / limb_width + 1;
         let quotient = BigNat::alloc_from_nat(
             cs.namespace(|| "quotient"),
             || Ok(self.value.grab()? / modulus.value.grab()?),
