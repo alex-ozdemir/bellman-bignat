@@ -264,6 +264,7 @@ pub fn hash_to_modded_rsa_element<
 #[cfg(test)]
 mod test {
     use hash::HashDomain;
+    use hash::MaybeHashed;
     use num_bigint::BigUint;
     use sapling_crypto::bellman::pairing::ff::PrimeField;
     use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
@@ -335,9 +336,10 @@ mod test {
                     AllocatedNum::alloc(cs.namespace(|| format!("input {}", i)), || Ok(value))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            let mut hashed = MaybeHashed::from_values(allocated_inputs);
             let hash = super::hash_to_modded_rsa_element(
                 cs.namespace(|| "hash"),
-                &allocated_inputs,
+                &mut hashed,
                 32,
                 &HashDomain {
                     n_bits: self.params.desired_bits,
