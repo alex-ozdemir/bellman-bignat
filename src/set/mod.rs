@@ -579,8 +579,14 @@ where
             })
             .collect::<Result<Vec<MaybeHashed<E>>, SynthesisError>>()?;
 
-        let expected_digest = BigNat::alloc_from_nat(
-            cs.namespace(|| "expected_digest"),
+        let expected_initial_digest = BigNat::alloc_from_nat(
+            cs.namespace(|| "expected_initial_digest"),
+            || Ok(self.inputs.as_ref().grab()?.initial_state.digest()),
+            self.params.limb_width,
+            self.params.n_bits_base / self.params.limb_width,
+        )?;
+        let expected_final_digest = BigNat::alloc_from_nat(
+            cs.namespace(|| "expected_final_digest"),
             || Ok(self.inputs.as_ref().grab()?.final_digest.clone()),
             self.params.limb_width,
             self.params.n_bits_base / self.params.limb_width,
@@ -590,6 +596,16 @@ where
             println!("Hashing everything");
         }
         let mut to_hash_to_challenge: Vec<AllocatedNum<E>> = Vec::new();
+        to_hash_to_challenge.extend(
+            expected_initial_digest
+                .as_limbs::<CS>()
+                .into_iter()
+                .enumerate()
+                .map(|(i, n)| {
+                    n.as_sapling_allocated_num(cs.namespace(|| format!("digest hash {}", i)))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        );
         to_hash_to_challenge.extend(insertions.iter().map(|i| i.hash.clone().unwrap()));
         to_hash_to_challenge.extend(removals.iter().map(|i| i.hash.clone().unwrap()));
         let challenge = pocklington::hash_to_pocklington_prime(
@@ -632,6 +648,7 @@ where
             },
         )?;
         set.inputize(cs.namespace(|| "initial_state input"))?;
+        set.inner.digest.equal(cs.namespace(|| "initial digest matches"), &expected_initial_digest)?;
 
         if self.params.verbose {
             println!("Swapping elements");
@@ -648,7 +665,7 @@ where
         new_set
             .inner
             .digest
-            .equal(cs.namespace(|| "check"), &expected_digest)?;
+            .equal(cs.namespace(|| "check"), &expected_final_digest)?;
         new_set.inputize(cs.namespace(|| "final_state input"))?;
         Ok(())
     }
