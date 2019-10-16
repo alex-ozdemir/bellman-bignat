@@ -4,6 +4,8 @@ pub mod rsa;
 pub mod tree;
 pub mod mimc;
 
+use std::clone::Clone;
+
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::circuit::num::AllocatedNum;
 use CResult;
@@ -31,6 +33,15 @@ impl<E: Engine> MaybeHashed<E> {
             self.hash = Some(f(&self.values)?);
         }
         Ok(self.hash.clone().unwrap())
+    }
+}
+
+impl<E: Engine> Clone for MaybeHashed<E> {
+    fn clone(&self) -> Self {
+        Self {
+            values: self.values.clone(),
+            hash: self.hash.clone(),
+        }
     }
 }
 

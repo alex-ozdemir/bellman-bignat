@@ -6,7 +6,8 @@ extern crate sapling_crypto;
 use bellman_bignat::bignat::nat_to_limbs;
 use bellman_bignat::group::RsaGroup;
 use bellman_bignat::set::int_set::NaiveExpSet;
-use bellman_bignat::set::{GenSet, SetBench, SetBenchInputs, SetBenchParams};
+use bellman_bignat::set::GenSet;
+use bellman_bignat::set::rsa::{SetBench, SetBenchInputs, SetBenchParams};
 use num_bigint::BigUint;
 use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
 

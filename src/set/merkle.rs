@@ -9,8 +9,9 @@ use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use super::GenSet;
+use super::{GenSet, CircuitGenSet};
 use gadget::Gadget;
+use hash::MaybeHashed;
 use hash::tree::circuit::{CircuitHasher};
 use hash::tree::{Hasher, Poseidon};
 use usize_to_f;
@@ -242,17 +243,18 @@ where
     }
 }
 
-impl<E, H, CH> MerkleCircuitSet<E, H, CH>
+impl<E, H, CH> CircuitGenSet for MerkleCircuitSet<E, H, CH>
 where
     E: Engine,
     H: Hasher<F = E::Fr>,
-    CH: CircuitHasher<E = E>,
-{
-    pub fn swap_all<'b, CS: ConstraintSystem<E>>(
+    CH: CircuitHasher<E = E> {
+    type E = E;
+
+    fn swap_all<'b, CS: ConstraintSystem<Self::E>>(
         mut self,
         mut cs: CS,
-        removed_items: impl IntoIterator<Item = &'b [AllocatedNum<E>]> + Clone,
-        inserted_items: impl IntoIterator<Item = &'b [AllocatedNum<E>]> + Clone,
+        removed_items: Vec<MaybeHashed<Self::E>>,
+        inserted_items: Vec<MaybeHashed<Self::E>>,
     ) -> Result<Self, SynthesisError> {
         for (j, (old, new)) in removed_items
             .into_iter()
@@ -263,7 +265,7 @@ where
 
             // First, we allocate the path
             let witness = self.value.as_ref().and_then(|v| {
-                old.into_iter()
+                old.values.iter()
                     .map(|n| n.get_value())
                     .collect::<Option<Vec<E::Fr>>>()
                     .map(|x| v.witness(&x))
@@ -289,7 +291,7 @@ where
             // Now, check the old item
             {
                 let mut cs = cs.namespace(|| "check old");
-                let mut acc = self.hasher.allocate_hash(cs.namespace(|| "leaf hash"), old)?;
+                let mut acc = self.hasher.allocate_hash(cs.namespace(|| "leaf hash"), &old.values)?;
                 for (i, (bit, hash)) in path.iter().enumerate().rev() {
                     let mut cs = cs.namespace(|| format!("level {}", i));
                     let (a, b) = AllocatedNum::conditionally_reverse(
@@ -311,7 +313,7 @@ where
             // Now, add the new item
             {
                 let mut cs = cs.namespace(|| "add new");
-                let mut acc = self.hasher.allocate_hash(cs.namespace(|| "leaf hash"), new)?;
+                let mut acc = self.hasher.allocate_hash(cs.namespace(|| "leaf hash"), &new.values)?;
                 for (i, (bit, hash)) in path.into_iter().enumerate().rev() {
                     let mut cs = cs.namespace(|| format!("level {}", i));
                     let (a, b) = AllocatedNum::conditionally_reverse(
@@ -325,10 +327,12 @@ where
                 self.digest = acc;
                 if let Some(v) = self.value.as_mut() {
                     let o = old
+                        .values
                         .into_iter()
                         .map(|n| n.get_value())
                         .collect::<Option<Vec<E::Fr>>>();
                     let n = new
+                        .values
                         .into_iter()
                         .map(|n| n.get_value())
                         .collect::<Option<Vec<E::Fr>>>();
@@ -341,6 +345,7 @@ where
         Ok(self)
     }
 }
+
 
 pub struct MerkleSetBenchInputs<E>
 where
@@ -482,8 +487,8 @@ where
         }
         let new_set = set.swap_all(
             cs.namespace(|| "swap"),
-            removals.iter().map(Vec::as_slice),
-            insertions.iter().map(Vec::as_slice),
+            removals.into_iter().map(MaybeHashed::from_values).collect(),
+            insertions.into_iter().map(MaybeHashed::from_values).collect(),
         )?;
 
         if self.params.verbose {
