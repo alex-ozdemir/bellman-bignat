@@ -2,7 +2,7 @@ use num_bigint::BigUint;
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::fmt::Debug;
 
 use bignat::BigNat;
@@ -17,8 +17,8 @@ pub trait IntSet: Sized + Clone + Eq + Debug {
 
     fn new_with<I: IntoIterator<Item = BigUint>>(group: Self::G, items: I) -> Self;
 
-    /// Add `n` to the set, returning whether `n` is new to the set.
-    fn insert(&mut self, n: BigUint) -> bool;
+    /// Add `n` to the set.
+    fn insert(&mut self, n: BigUint);
     /// Remove `n` from the set, returning whether `n` was present.
     fn remove(&mut self, n: &BigUint) -> bool;
     /// BigUinthe digest of the current elements (`g` to the product of the elements).
@@ -28,12 +28,10 @@ pub trait IntSet: Sized + Clone + Eq + Debug {
     fn group(&self) -> &Self::G;
 
     /// Add all of the `ns` to the set. Returns whether all items were absent
-    fn insert_all<I: IntoIterator<Item = BigUint>>(&mut self, ns: I) -> bool {
-        let mut all_absent = true;
+    fn insert_all<I: IntoIterator<Item = BigUint>>(&mut self, ns: I) {
         for n in ns {
-            all_absent &= self.insert(n);
+            self.insert(n);
         }
-        all_absent
     }
 
     /// Remove all of the `ns` from the set. Rerturns whether all items were present.
@@ -53,7 +51,7 @@ pub trait IntSet: Sized + Clone + Eq + Debug {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NaiveExpSet<G: SemiGroup> {
     group: G,
-    elements: BTreeSet<BigUint>,
+    elements: BTreeMap<BigUint, usize>,
 }
 
 //impl<G: SemiGroup> std::fmt::Debug for NaiveRsaSetBackend<G> where G::Elem: std::fmt::Display {
@@ -75,7 +73,7 @@ where
     fn new(group: G) -> Self {
         Self {
             group,
-            elements: BTreeSet::new(),
+            elements: BTreeMap::new(),
         }
     }
 
@@ -85,19 +83,30 @@ where
         this
     }
 
-    fn insert(&mut self, n: BigUint) -> bool {
-        self.elements.insert(n)
+    fn insert(&mut self, n: BigUint) {
+        *self.elements.entry(n).or_insert(0) += 1;
     }
 
     fn remove(&mut self, n: &BigUint) -> bool {
-        self.elements.remove(n)
+        if let Some(count) = self.elements.get_mut(n) {
+            *count -= 1;
+            if *count == 0 {
+                self.elements.remove(n);
+            }
+            return true;
+        } else {
+            return false;
+        }
     }
 
     fn digest(&self) -> G::Elem {
         self.elements
             .iter()
-            .fold(self.group.generator(), |acc, elem| {
-                self.group.power(&acc, &elem)
+            .fold(self.group.generator(), |mut acc, (elem, ct)| {
+                for _ in 0..*ct {
+                    acc = self.group.power(&acc, &elem)
+                }
+                acc
             })
     }
 
@@ -220,7 +229,7 @@ where
                 .map(|i| i.raw.value.clone())
                 .collect::<Option<Vec<BigUint>>>()
                 .map(|is| {
-                    assert!(set.insert_all(is));
+                    set.insert_all(is);
                     set
                 })
         });

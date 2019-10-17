@@ -97,8 +97,8 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> Set<E, Inner> {
         self.inner.group()
     }
 
-    /// Add `n` to the set, returning whether `n` is new to the set.
-    fn insert(&mut self, n: Vec<E::Fr>) -> bool {
+    /// Add `n` to the set.
+    fn insert(&mut self, n: Vec<E::Fr>) {
         let x = rsa::helper::hash_to_rsa_element::<E>(
             &n,
             &self.offset,
@@ -131,12 +131,10 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> Set<E, Inner> {
         all_present
     }
 
-    pub fn insert_all<I: IntoIterator<Item = Vec<E::Fr>>>(&mut self, ns: I) -> bool {
-        let mut all_absent = true;
+    pub fn insert_all<I: IntoIterator<Item = Vec<E::Fr>>>(&mut self, ns: I) {
         for n in ns {
-            all_absent &= self.insert(n);
+            self.insert(n);
         }
-        all_absent
     }
 }
 
@@ -378,8 +376,9 @@ where
         mut removed_items: Vec<MaybeHashed<Self::E>>,
         mut inserted_items: Vec<MaybeHashed<Self::E>>,
     ) -> CResult<Self> {
-        let without = self.remove(cs.namespace(|| "remove"), &mut removed_items)?;
-        without.insert(cs.namespace(|| "insert"), &mut inserted_items)
+        let with = self.insert(cs.namespace(|| "insert"), &mut inserted_items)?;
+        let without = with.remove(cs.namespace(|| "remove"), &mut removed_items)?;
+        Ok(without)
     }
 }
 
