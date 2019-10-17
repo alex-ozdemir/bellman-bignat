@@ -103,7 +103,6 @@ pub mod circuit {
     use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
     use sapling_crypto::bellman::pairing::ff::PrimeField;
     use sapling_crypto::circuit::baby_eddsa::EddsaSignature;
-    use sapling_crypto::circuit::boolean::Boolean;
     use sapling_crypto::circuit::ecc::EdwardsPoint;
     use sapling_crypto::circuit::num::AllocatedNum;
     use sapling_crypto::jubjub::JubjubEngine;

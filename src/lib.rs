@@ -68,8 +68,6 @@ use num_bigint::BigUint;
 use sapling_crypto::bellman::pairing::ff::{PrimeField, PrimeFieldRepr};
 use sapling_crypto::bellman::SynthesisError;
 
-use std::str::FromStr;
-
 trait OptionExt<T> {
     fn grab(&self) -> Result<&T, SynthesisError>;
     fn grab_mut(&mut self) -> Result<&mut T, SynthesisError>;

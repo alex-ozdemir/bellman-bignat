@@ -48,21 +48,24 @@ pub trait IntSet: Sized + Clone + Eq + Debug {
 }
 
 /// An `NaiveExpSet` which computes products from scratch each time.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct NaiveExpSet<G: SemiGroup> {
     group: G,
     elements: BTreeMap<BigUint, usize>,
 }
 
-//impl<G: SemiGroup> std::fmt::Debug for NaiveRsaSetBackend<G> where G::Elem: std::fmt::Display {
-//    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
-//        writeln!(f, "NaiveRsaSetBackend:")?;
-//        for e in &self.elements {
-//            writeln!(f, "\t{}", e)?;
-//        }
-//        Ok(())
-//    }
-//}
+impl<G: SemiGroup> std::fmt::Debug for NaiveExpSet<G> where G::Elem: std::fmt::Display {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        write!(f, "NaiveExpSet ")?;
+        let mut d = f.debug_set();
+        for (e, ct) in &self.elements {
+            for _ in 0..*ct {
+                d.entry(&format_args!("{}", e));
+            }
+        }
+        d.finish()
+    }
+}
 
 impl<G: SemiGroup> IntSet for NaiveExpSet<G>
 where

@@ -58,7 +58,7 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> std::clone::Clone 
 }
 
 impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> Set<E, Inner> {
-    fn new_with<'b>(
+    pub fn new_with<'b>(
         group: Inner::G,
         offset: BigUint,
         hash_params: Rc<E::Params>,
@@ -98,7 +98,7 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> Set<E, Inner> {
     }
 
     /// Add `n` to the set.
-    fn insert(&mut self, n: Vec<E::Fr>) {
+    pub fn insert(&mut self, n: Vec<E::Fr>) {
         let x = rsa::helper::hash_to_rsa_element::<E>(
             &n,
             &self.offset,
@@ -109,7 +109,7 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> Set<E, Inner> {
         self.inner.insert(x)
     }
     /// Remove `n` from the set, returning whether `n` was present.
-    fn remove(&mut self, n: &[E::Fr]) -> bool {
+    pub fn remove(&mut self, n: &[E::Fr]) -> bool {
         let x = rsa::helper::hash_to_rsa_element::<E>(
             &n,
             &self.offset,
@@ -146,8 +146,8 @@ where
     type Digest = <Inner::G as SemiGroup>::Elem;
 
     fn swap(&mut self, old: &[E::Fr], new: Vec<E::Fr>) {
-        self.remove(old);
         self.insert(new);
+        self.remove(old);
     }
 
     /// The digest of the current elements (`g` to the product of the elements).
@@ -157,9 +157,9 @@ where
 }
 
 pub struct CircuitSetParams<HParams> {
-    hash: Rc<HParams>,
-    n_bits: usize,
-    limb_width: usize,
+    pub hash: Rc<HParams>,
+    pub n_bits: usize,
+    pub limb_width: usize,
 }
 
 impl<HParams> CircuitSetParams<HParams> {
