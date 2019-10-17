@@ -1,11 +1,14 @@
 #![feature(hash_raw_entry)]
 
+extern crate byteorder;
 extern crate fnv;
 extern crate num_bigint;
 extern crate num_integer;
 extern crate num_traits;
 extern crate rand;
 extern crate sapling_crypto;
+#[macro_use]
+extern crate derivative;
 
 #[cfg(test)]
 extern crate quickcheck;
@@ -58,12 +61,15 @@ pub mod hash;
 pub mod lazy;
 pub mod num;
 pub mod poly;
+pub mod rollup;
 pub mod set;
 pub mod wesolowski;
 
 use num_bigint::BigUint;
 use sapling_crypto::bellman::pairing::ff::{PrimeField, PrimeFieldRepr};
 use sapling_crypto::bellman::SynthesisError;
+
+use std::str::FromStr;
 
 trait OptionExt<T> {
     fn grab(&self) -> Result<&T, SynthesisError>;
@@ -94,6 +100,12 @@ fn nat_to_f<F: PrimeField>(n: &BigUint) -> Option<F> {
 
 /// Convert a `usize` to a field element.
 /// Panics if the field is too small.
-fn usize_to_f<F: PrimeField>(n: usize) -> F {
+pub fn usize_to_f<F: PrimeField>(n: usize) -> F {
     F::from_str(&format!("{}", n)).unwrap()
+}
+
+/// Convert a `usize` to a field element.
+/// Panics if the field is too small.
+pub fn f_to_usize<F: PrimeField>(n: F) -> usize {
+    usize::from_str(&format!("{}", n)).unwrap()
 }

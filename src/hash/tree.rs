@@ -9,6 +9,13 @@ use std::rc::Rc;
 pub trait Hasher: Clone {
     type F: Field;
     fn hash(&self, inputs: &[Self::F]) -> Self::F;
+    fn hash_chain(&self, inputs: &[Self::F]) -> Self::F {
+        let mut acc = Self::F::zero();
+        for input in inputs {
+            acc = self.hash(&[acc, input.clone()]);
+        }
+        acc
+    }
 }
 
 pub struct Poseidon<E>
@@ -45,7 +52,7 @@ pub struct Pedersen<E>
 where
     E: JubjubEngine,
 {
-    params: Rc<E::Params>,
+    pub params: Rc<E::Params>,
 }
 
 impl<E> Clone for Pedersen<E>
@@ -128,7 +135,9 @@ where
     _params: PhantomData<E>,
 }
 
-impl<E> Mimc<E> where E: Engine
+impl<E> Mimc<E>
+where
+    E: Engine,
 {
     fn new() -> Self {
         Self {
@@ -175,10 +184,12 @@ where
 }
 
 pub mod circuit {
-    use super::{BabyPedersen, Hasher, Pedersen, Poseidon, Mimc};
+    use super::{BabyPedersen, Hasher, Mimc, Pedersen, Poseidon};
     use sapling_crypto::alt_babyjubjub::AltJubjubBn256;
     use sapling_crypto::bellman::pairing::bn256::Bn256;
     use sapling_crypto::bellman::pairing::ff::PrimeField;
+    use sapling_crypto::bellman::pairing::ff::Field;
+    use sapling_crypto::bellman::pairing::ff::ScalarEngine;
     use sapling_crypto::bellman::pairing::Engine;
     use sapling_crypto::bellman::{Circuit, ConstraintSystem};
     use sapling_crypto::circuit::num::AllocatedNum;
@@ -199,6 +210,14 @@ pub mod circuit {
             cs: CS,
             inputs: &[AllocatedNum<Self::E>],
         ) -> CResult<AllocatedNum<Self::E>>;
+
+        fn allocate_hash_chain<CS: ConstraintSystem<Self::E>>(&self, mut cs: CS, inputs: &[AllocatedNum<Self::E>]) -> CResult<AllocatedNum<Self::E>> {
+            let mut acc = AllocatedNum::alloc(cs.namespace(|| "zero"), || Ok(<<Self::E as ScalarEngine>::Fr as Field>::zero()))?;
+            for (i, input) in inputs.into_iter().enumerate() {
+                acc = self.allocate_hash(cs.namespace(|| format!("chain {}", i)), &[acc, input.clone()])?;
+            }
+            Ok(acc)
+        }
     }
 
     impl<E> CircuitHasher for Poseidon<E>
@@ -276,7 +295,7 @@ pub mod circuit {
 
     impl<E> CircuitHasher for Mimc<E>
     where
-        E: Engine
+        E: Engine,
     {
         type E = E;
         fn allocate_hash<CS: ConstraintSystem<E>>(
