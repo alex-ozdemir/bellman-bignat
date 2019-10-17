@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use bignat::BigNat;
 use gadget::Gadget;
-use group::{CircuitRsaGroup, CircuitRsaGroupParams, CircuitSemiGroup, RsaGroup, SemiGroup};
+use group::{CircuitRsaQuotientGroup, CircuitRsaGroupParams, CircuitSemiGroup, RsaQuotientGroup, SemiGroup};
 use hash::{pocklington, rsa, HashDomain, MaybeHashed};
 use hash::tree::{Poseidon};
 use hash::tree::circuit::CircuitHasher;
@@ -399,7 +399,7 @@ where
 impl<E, Inner> SetBenchInputs<E, Inner>
 where
     E: PoseidonEngine<SBox = QuinticSBox<E>>,
-    Inner: IntSet<G = RsaGroup>,
+    Inner: IntSet<G = RsaQuotientGroup>,
 {
     pub fn from_counts(
         n_untouched: usize,
@@ -409,7 +409,7 @@ where
         hash: Rc<E::Params>,
         n_bits_elem: usize,
         limb_width: usize,
-        group: RsaGroup,
+        group: RsaQuotientGroup,
     ) -> Self {
         let untouched_items: Vec<Vec<String>> = (0..n_untouched)
             .map(|i| {
@@ -450,7 +450,7 @@ where
         hash: Rc<E::Params>,
         n_bits_elem: usize,
         limb_width: usize,
-        group: RsaGroup,
+        group: RsaQuotientGroup,
     ) -> Self {
         let untouched: Vec<Vec<E::Fr>> = untouched_items
             .iter()
@@ -498,7 +498,7 @@ where
 
 #[derive(Clone)]
 pub struct SetBenchParams<E: PoseidonEngine> {
-    pub group: RsaGroup,
+    pub group: RsaQuotientGroup,
     pub limb_width: usize,
     pub n_bits_base: usize,
     pub n_bits_elem: usize,
@@ -519,7 +519,7 @@ where
     pub params: SetBenchParams<E>,
 }
 
-impl<E> Circuit<E> for SetBench<E, NaiveExpSet<RsaGroup>>
+impl<E> Circuit<E> for SetBench<E, NaiveExpSet<RsaQuotientGroup>>
 where
     E: PoseidonEngine<SBox = QuinticSBox<E>>,
 {
@@ -607,7 +607,7 @@ where
             .inputs
             .as_ref()
             .map(|s| s.initial_state.group().clone());
-        let group = CircuitRsaGroup::alloc(
+        let group = CircuitRsaQuotientGroup::alloc(
             cs.namespace(|| "group"),
             raw_group.as_ref(),
             (),
@@ -621,7 +621,7 @@ where
         if self.params.verbose {
             println!("Constructing Set");
         }
-        let set: CircuitSet<E, CircuitRsaGroup<E>, NaiveExpSet<RsaGroup>> = CircuitSet::alloc(
+        let set: CircuitSet<E, CircuitRsaQuotientGroup<E>, NaiveExpSet<RsaQuotientGroup>> = CircuitSet::alloc(
             cs.namespace(|| "set init"),
             self.inputs.as_ref().map(|is| &is.initial_state),
             (group, challenge),
@@ -682,13 +682,13 @@ mod test {
                             Rc::new(Bn256PoseidonParams::new::<Keccak256Hasher>()),
                             128,
                             32,
-                            RsaGroup {
+                            RsaQuotientGroup {
                                 g: BigUint::from(2usize),
                                 m: BigUint::from_str(RSA_512).unwrap(),
                             },
                     )),
                     params: SetBenchParams {
-                        group: RsaGroup {
+                        group: RsaQuotientGroup {
                             g: BigUint::from(2usize),
                             m: BigUint::from_str(RSA_512).unwrap(),
                         },

@@ -7,7 +7,7 @@ extern crate serde;
 
 use bellman_bignat::bench::{ConstraintCounter, ConstraintProfiler};
 use bellman_bignat::bignat::nat_to_limbs;
-use bellman_bignat::group::RsaGroup;
+use bellman_bignat::group::RsaQuotientGroup;
 use bellman_bignat::set::merkle::{MerkleSetBench, MerkleSetBenchInputs, MerkleSetBenchParams};
 use bellman_bignat::set::GenSet;
 use bellman_bignat::set::rsa::{SetBench, SetBenchInputs, SetBenchParams};
@@ -83,7 +83,7 @@ fn rsa_bench(t: usize, _c: usize, profile: bool) -> usize {
         sapling_crypto::group_hash::Keccak256Hasher,
     >());
 
-    let group = RsaGroup {
+    let group = RsaQuotientGroup {
         g: BigUint::from(2usize),
         m: BigUint::from_str(RSA_2048).unwrap(),
     };
@@ -97,7 +97,7 @@ fn rsa_bench(t: usize, _c: usize, profile: bool) -> usize {
             hash.clone(),
             RSA_SIZE,
             32,
-            RsaGroup {
+            RsaQuotientGroup {
                 g: BigUint::from(2usize),
                 m: BigUint::from_str(RSA_2048).unwrap(),
             },

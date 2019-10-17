@@ -61,7 +61,7 @@ fn main() {
 
 fn rsa_bench(t: usize, c: usize, profile: bool) -> usize {
     let circuit = RollupBench::<Bn256>::from_counts(
-        c,
+        1 << c,
         t,
         AltJubjubBn256::new(),
         Bn256PoseidonParams::new::<Keccak256Hasher>(),

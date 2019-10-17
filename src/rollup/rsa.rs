@@ -13,7 +13,7 @@ use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
 use bignat::BigNat;
 use f_to_usize;
 use gadget::Gadget;
-use group::{CircuitRsaGroup, CircuitRsaGroupParams, RsaGroup};
+use group::{CircuitRsaQuotientGroup, CircuitRsaGroupParams, RsaQuotientGroup};
 use hash;
 use hash::tree::circuit::CircuitHasher;
 use hash::tree::{Pedersen, Poseidon};
@@ -84,7 +84,7 @@ where
     E: JubjubEngine + PoseidonEngine<SBox = QuinticSBox<E>>,
 {
     map: HashMap<Vec<u8>, Account<E>>,
-    set: Set<E, NaiveExpSet<RsaGroup>>,
+    set: Set<E, NaiveExpSet<RsaQuotientGroup>>,
 }
 
 impl<E> Accounts<E>
@@ -366,7 +366,7 @@ where
 }
 
 pub struct RsaParams<E: PoseidonEngine> {
-    pub group: RsaGroup,
+    pub group: RsaQuotientGroup,
     pub limb_width: usize,
     pub n_bits_base: usize,
     pub n_bits_elem: usize,
@@ -413,7 +413,7 @@ where
             gen: FixedGenerators::SpendingKeyGenerator,
             n_tx: t,
             set_params: RsaParams {
-                group: RsaGroup {
+                group: RsaQuotientGroup {
                     g: BigUint::from(2usize),
                     m: BigUint::from_str(RSA_2048).unwrap(),
                 },
@@ -543,7 +543,7 @@ where
         )?;
 
         let raw_group = self.input.as_ref().map(|s| s.accounts.set.group().clone());
-        let group = CircuitRsaGroup::alloc(
+        let group = CircuitRsaQuotientGroup::alloc(
             cs.namespace(|| "group"),
             raw_group.as_ref(),
             (),
@@ -554,7 +554,7 @@ where
         )?;
         group.inputize(cs.namespace(|| "group input"))?;
 
-        let set: CircuitSet<E, CircuitRsaGroup<E>, NaiveExpSet<RsaGroup>> = CircuitSet::alloc(
+        let set: CircuitSet<E, CircuitRsaQuotientGroup<E>, NaiveExpSet<RsaQuotientGroup>> = CircuitSet::alloc(
             cs.namespace(|| "set init"),
             self.input.as_ref().map(|is| &is.accounts.set),
             (group, challenge),
