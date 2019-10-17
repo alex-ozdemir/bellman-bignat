@@ -581,16 +581,3 @@ where
     }
 }
 
-#[cfg(test)]
-mod test {
-    use super::*;
-    use test_helpers::*;
-
-    use sapling_crypto::alt_babyjubjub::AltJubjubBn256;
-    use sapling_crypto::bellman::pairing::bn256::Bn256;
-    use sapling_crypto::group_hash::Keccak256Hasher;
-    use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
-
-    circuit_tests! {
-    }
-}
