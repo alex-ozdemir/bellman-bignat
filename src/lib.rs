@@ -1,6 +1,5 @@
 #![feature(hash_raw_entry)]
 
-extern crate byteorder;
 extern crate fnv;
 extern crate num_bigint;
 extern crate num_integer;
@@ -107,5 +106,6 @@ pub fn usize_to_f<F: PrimeField>(n: usize) -> F {
 /// Convert a `usize` to a field element.
 /// Panics if the field is too small.
 pub fn f_to_usize<F: PrimeField>(n: F) -> usize {
-    usize::from_str(&format!("{}", n)).unwrap()
+    let s = format!("{}", n);
+    usize::from_str_radix(&(s.as_str()[6..(s.len()-1)]), 16).unwrap()
 }

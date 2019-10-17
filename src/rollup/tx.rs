@@ -1,6 +1,3 @@
-use byteorder::LittleEndian;
-use byteorder::WriteBytesExt;
-
 use rand::Rng;
 
 use sapling_crypto::bellman::pairing::ff::{PrimeField, PrimeFieldRepr};
@@ -11,7 +8,7 @@ use hash::tree::Hasher;
 
 use usize_to_f;
 
-const MAX_SIGNED_MESSAGE_SIZE: usize = 8 + 8 + 32 * 2;
+use std::fmt::{Debug, Error, Formatter};
 
 #[derive(Derivative)]
 #[derivative(Clone(bound = ""))]
@@ -19,6 +16,22 @@ pub struct Action<E: JubjubEngine> {
     pub dst: PublicKey<E>,
     pub amt: u64,
     pub tx_no: u64,
+}
+
+impl<E> Debug for Action<E>
+where
+    E: JubjubEngine,
+{
+    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+        f.debug_struct("Action")
+            .field(
+                "dst",
+                &format_args!("({}, {})", self.dst.0.into_xy().0, self.dst.0.into_xy().1,),
+            )
+            .field("amt", &format_args!("{}", self.amt))
+            .field("tx_no", &format_args!("{}", self.tx_no))
+            .finish()
+    }
 }
 
 impl<E: JubjubEngine> Action<E> {
@@ -59,6 +72,21 @@ pub struct Tx<E: JubjubEngine> {
     pub action: Action<E>,
 }
 
+impl<E> Debug for Tx<E>
+where
+    E: JubjubEngine,
+{
+    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+        f.debug_struct("Tx")
+            .field(
+                "src",
+                &format_args!("({}, {})", self.src.0.into_xy().0, self.src.0.into_xy().1,),
+            )
+            .field("action", &self.action)
+            .finish()
+    }
+}
+
 #[derive(Derivative)]
 #[derivative(Clone(bound = ""))]
 pub struct SignedTx<E: JubjubEngine> {
@@ -67,7 +95,7 @@ pub struct SignedTx<E: JubjubEngine> {
 }
 
 pub mod circuit {
-    use super::{Action, SignedTx, MAX_SIGNED_MESSAGE_SIZE};
+    use super::{Action, SignedTx};
     use gadget::Gadget;
     use hash::tree::circuit::CircuitHasher;
     use rollup::sig::allocate_sig;
