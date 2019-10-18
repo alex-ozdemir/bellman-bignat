@@ -1,7 +1,5 @@
 use rand::Rng;
 
-use num_bigint::BigUint;
-
 use sapling_crypto::bellman::{Circuit, ConstraintSystem};
 use sapling_crypto::circuit::ecc::EdwardsPoint;
 use sapling_crypto::circuit::num::AllocatedNum;
@@ -13,13 +11,12 @@ use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
 use f_to_usize;
 use gadget::Gadget;
 use hash;
-use hash::tree::circuit::CircuitHasher;
 use hash::tree::{Pedersen, Poseidon};
-use set::merkle::{MerkleSet, MerkleCircuitSet, MerkleCircuitSetParams};
 use num::Num;
 use rollup::sig::allocate_point;
 use rollup::tx::circuit::CircuitSignedTx;
 use rollup::tx::{Action, SignedTx, Tx};
+use set::merkle::{MerkleCircuitSet, MerkleSet};
 use set::{CircuitGenSet, GenSet};
 use usize_to_f;
 use CResult;
@@ -28,8 +25,6 @@ use OptionExt;
 use std::collections::HashMap;
 use std::fmt::{Debug, Error, Formatter};
 use std::rc::Rc;
-use std::str::FromStr;
-
 
 #[derive(Derivative)]
 #[derivative(Clone(bound = ""))]
@@ -87,21 +82,17 @@ where
     E: JubjubEngine + PoseidonEngine<SBox = QuinticSBox<E>>,
 {
     pub fn new(s: &MerkleParams<E>, list_of_accounts: Vec<Account<E>>) -> Accounts<E> {
+        let list: Vec<Vec<E::Fr>> = list_of_accounts.iter().map(Account::as_elems).collect();
         Self {
             map: HashMap::new(),
-            set: MerkleSet::new_with(
-                s.hasher.clone(),
-                s.depth,
-                list_of_accounts.iter().map(Account::as_elems),
-            ),
+            set: MerkleSet::new_with(s.hasher.clone(), s.depth, list.iter().map(Vec::as_slice)),
         }
     }
 
-    pub fn insert(&mut self, a: Account<E>) -> Option<Account<E>> {
+    pub fn swap(&mut self, a: Account<E>, b: Account<E>) {
         let mut key = Vec::new();
         a.id.write(&mut key).unwrap();
-        self.set.insert(a.as_elems());
-        self.map.insert(key, a)
+        self.set.swap(&a.as_elems(), b.as_elems());
     }
 
     pub fn get(&self, k: &PublicKey<E>) -> Option<&Account<E>> {
@@ -110,22 +101,12 @@ where
         self.map.get(&key)
     }
 
-    pub fn remove(&mut self, k: &PublicKey<E>) -> Option<Account<E>> {
-        let mut key = Vec::new();
-        k.write(&mut key).unwrap();
-        let r = self.map.remove(&key);
-        if let Some(ref r) = r {
-            self.set.remove(&r.as_elems());
-        }
-        r
-    }
-
     /// Applies this transaction to the accounts:
     ///    * mutating the state and
     ///    * returning the changes made
     pub fn apply_tx(&mut self, t: &Tx<E>) -> Option<TxAccountChanges<E>> {
-        let dst_init = self.remove(&t.action.dst)?;
-        let src_init = self.remove(&t.src)?;
+        let dst_init = self.get(&t.action.dst)?.clone();
+        let src_init = self.get(&t.src)?.clone();
         let src_final = {
             let mut src = src_init.clone();
             if src.amt < t.action.amt || src.next_tx_no != t.action.tx_no {
@@ -140,8 +121,8 @@ where
             dst.amt = dst.amt.checked_add(t.action.amt)?;
             dst
         };
-        self.insert(src_final.clone());
-        self.insert(dst_final.clone());
+        self.swap(src_init.clone(), src_final.clone());
+        self.swap(dst_init.clone(), dst_final.clone());
         Some(TxAccountChanges {
             src_init,
             src_final,
@@ -156,9 +137,9 @@ pub fn public_key_value<E: JubjubEngine>(
     p: &E::Params,
 ) -> Option<PublicKey<E>> {
     Some(PublicKey(Point::from_xy(
-                k.get_x().get_value()?,
-                k.get_y().get_value()?,
-                p,
+        k.get_x().get_value()?,
+        k.get_y().get_value()?,
+        p,
     )?))
 }
 
@@ -178,7 +159,7 @@ where
     } else {
         AllocatedNum::alloc(cs.namespace(|| "next_tx_no"), || {
             Ok(usize_to_f(
-                    accounts
+                accounts
                     .grab()?
                     .get(public_key_value(&k, p).grab()?)
                     .grab()?
@@ -188,7 +169,7 @@ where
     };
     let amt = AllocatedNum::alloc(cs.namespace(|| "amt"), || {
         Ok(usize_to_f(
-                accounts
+            accounts
                 .grab()?
                 .get(public_key_value(&k, p).grab()?)
                 .grab()?
@@ -244,14 +225,14 @@ where
         Num::from(diff.clone()).fits_in_bits(cs.namespace(|| "rangecheck diff"), 64)?;
         let new_amt = AllocatedNum::alloc(cs.namespace(|| "new amt"), || {
             Ok(usize_to_f(
-                    f_to_usize(self.amt.get_value().grab()?.clone())
+                f_to_usize(self.amt.get_value().grab()?.clone())
                     - f_to_usize(diff.get_value().grab()?.clone()),
             ))
         })?;
         Num::from(new_amt.clone()).fits_in_bits(cs.namespace(|| "rangecheck new amt"), 64)?;
         let new_next_tx_no = AllocatedNum::alloc(cs.namespace(|| "new next_tx_no"), || {
             Ok(usize_to_f(
-                    f_to_usize(self.next_tx_no.get_value().grab()?.clone()) + 1,
+                f_to_usize(self.next_tx_no.get_value().grab()?.clone()) + 1,
             ))
         })?;
         Num::from(new_next_tx_no.clone())
@@ -270,7 +251,7 @@ where
     ) -> CResult<Self> {
         let new_amt = AllocatedNum::alloc(cs.namespace(|| "new amt"), || {
             Ok(usize_to_f(
-                    f_to_usize(self.amt.get_value().grab()?.clone())
+                f_to_usize(self.amt.get_value().grab()?.clone())
                     + f_to_usize(diff.get_value().grab()?.clone()),
             ))
         })?;
@@ -291,8 +272,6 @@ where
     pub transactions: Vec<SignedTx<E>>,
     /// The initial account state
     pub accounts: Accounts<E>,
-    /// The expected final state
-    pub final_digest: BigUint,
 }
 
 impl<E> RollupBenchInputs<E>
@@ -314,15 +293,14 @@ where
             .iter()
             .map(|k| PublicKey::from_private(k, gens, p.jj_params.as_ref()))
             .collect();
-        for i in 0..c {
-        let list_of_accounts = (0..c).map(|i| {
-            Account {
+        let list_of_accounts = (0..c)
+            .map(|i| Account {
                 id: pks[i].clone(),
                 amt: if i == 0 { 1 } else { 0 },
                 next_tx_no: 0,
-            }
-        }).collect::<Vec<_>>();
-        let mut accounts = Accounts::new(&p.set_params, list_of_accounts);
+            })
+            .collect::<Vec<_>>();
+        let accounts = Accounts::new(&p.set_params, list_of_accounts);
         let mut transactions = Vec::new();
         for i in 0..t {
             let action = Action {
@@ -331,30 +309,23 @@ where
                 tx_no: (i / c) as u64,
             };
             transactions.push(action.sign(
-                    &mut rng,
-                    gens,
-                    p.jj_params.as_ref(),
-                    &hasher,
-                    &sks[i % c],
+                &mut rng,
+                gens,
+                p.jj_params.as_ref(),
+                &hasher,
+                &sks[i % c],
             ));
         }
-        let final_digest = {
-            let mut accounts = accounts.clone();
-            for t in &transactions {
-                accounts.apply_tx(&t.tx);
-            }
-            accounts.digest()
-        };
         Self {
             transactions,
             accounts,
-            final_digest,
         }
     }
 }
 
 pub struct MerkleParams<E: PoseidonEngine>
-where E: JubjubEngine + PoseidonEngine<SBox = QuinticSBox<E>>,
+where
+    E: JubjubEngine + PoseidonEngine<SBox = QuinticSBox<E>>,
 {
     pub depth: usize,
     pub hasher: Poseidon<E>,
@@ -400,10 +371,8 @@ where
             n_tx: t,
             set_params: MerkleParams {
                 depth: c,
-                hasher: Poseidon {
-                    params: pos_params,
-                }
-            }
+                hasher: Poseidon { params: pos_params },
+            },
         };
         Self {
             input: Some(RollupBenchInputs::from_counts(c, t, &params)),
@@ -465,37 +434,33 @@ where
             inserted_accounts.push(dst_final);
         }
 
-        let hasher = Poseidon {
-            params: self.params.set_params.hash.clone(),
-        };
+        let hasher = self.params.set_params.hasher.clone();
         let insertions = inserted_accounts
             .into_iter()
-            .map(|act| {
-                act.as_elems()
-            })
-        .collect::<Vec<_>>();
-    let removals = removed_accounts
-        .into_iter()
-        .map(|act| {
-            act.as_elems()
-        })
-    .collect::<Vec<_>>();
+            .map(|act| act.as_elems())
+            .collect::<Vec<_>>();
+        let removals = removed_accounts
+            .into_iter()
+            .map(|act| act.as_elems())
+            .collect::<Vec<_>>();
 
-let set = MerkleCircuitSet::alloc(
-    cs.namespace(|| "set init"),
-    self.input.as_ref().map(|is| &is.initial_state),
-    hasher,
-    &self.params.depth,
-)?;
-set.inputize(cs.namespace(|| "initial_state input"))?;
-let new_set = set.swap_all(
-    cs.namespace(|| "swap"),
-    removals.into_iter().map(MaybeHashed::from_values).collect(),
-    insertions.into_iter().map(MaybeHashed::from_values).collect(),
-)?;
+        let set = MerkleCircuitSet::alloc(
+            cs.namespace(|| "set init"),
+            self.input.as_ref().map(|is| &is.accounts.set),
+            hasher,
+            &self.params.set_params.depth,
+        )?;
+        set.inputize(cs.namespace(|| "initial_state input"))?;
+        let new_set = set.swap_all(
+            cs.namespace(|| "swap"),
+            removals.into_iter().map(hash::MaybeHashed::from_values).collect(),
+            insertions
+                .into_iter()
+                .map(hash::MaybeHashed::from_values)
+                .collect(),
+        )?;
 
-new_set.inputize(cs.namespace(|| "final_state input"))?;
-Ok(())
+        new_set.inputize(cs.namespace(|| "final_state input"))?;
+        Ok(())
     }
 }
-
