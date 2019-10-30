@@ -8,11 +8,11 @@ use std::rc::Rc;
 
 pub trait Hasher: Clone {
     type F: Field;
-    fn hash(&self, inputs: &[Self::F]) -> Self::F;
-    fn hash_chain(&self, inputs: &[Self::F]) -> Self::F {
+    fn hash2(&self, a: Self::F, b: Self::F) -> Self::F;
+    fn hash(&self, inputs: &[Self::F]) -> Self::F {
         let mut acc = Self::F::zero();
         for input in inputs {
-            acc = self.hash(&[acc, input.clone()]);
+            acc = self.hash2(acc, input.clone());
         }
         acc
     }
@@ -46,6 +46,10 @@ where
         assert_eq!(self.params.output_len(), 1);
         poseidon_hash::<E>(&self.params, inputs).pop().unwrap()
     }
+
+    fn hash2(&self, a: Self::F, b: Self::F) -> Self::F {
+        poseidon_hash::<E>(&self.params, &[a, b]).pop().unwrap()
+    }
 }
 
 pub struct Pedersen<E>
@@ -68,12 +72,12 @@ where
 
 impl<E: JubjubEngine> Hasher for Pedersen<E> {
     type F = E::Fr;
-    fn hash(&self, inputs: &[E::Fr]) -> E::Fr {
+    fn hash2(&self, a: Self::F, b: Self::F) -> Self::F {
         use sapling_crypto::bellman::pairing::ff::PrimeField;
         use sapling_crypto::pedersen_hash::pedersen_hash;
         use sapling_crypto::pedersen_hash::Personalization;
         let mut bits: Vec<bool> = Vec::new();
-        for i in inputs {
+        for i in &[a, b] {
             bits.extend(
                 i.into_repr()
                     .as_ref()
@@ -108,12 +112,12 @@ where
 
 impl<E: sapling_crypto::babyjubjub::JubjubEngine> Hasher for BabyPedersen<E> {
     type F = E::Fr;
-    fn hash(&self, inputs: &[E::Fr]) -> E::Fr {
+    fn hash2(&self, a: Self::F, b: Self::F) -> Self::F {
         use sapling_crypto::baby_pedersen_hash::pedersen_hash;
         use sapling_crypto::baby_pedersen_hash::Personalization;
         use sapling_crypto::bellman::pairing::ff::PrimeField;
         let mut bits: Vec<bool> = Vec::new();
-        for i in inputs {
+        for i in &[a, b] {
             bits.extend(
                 i.into_repr()
                     .as_ref()
@@ -159,9 +163,9 @@ where
 
 impl<E: Engine> Hasher for Mimc<E> {
     type F = E::Fr;
-    fn hash(&self, inputs: &[E::Fr]) -> E::Fr {
+    fn hash2(&self, a: Self::F, b: Self::F) -> Self::F {
         use hash::mimc;
-        mimc::helper::hash(inputs)
+        mimc::helper::compression(a, b)
     }
 }
 
@@ -205,16 +209,17 @@ pub mod circuit {
 
     pub trait CircuitHasher: Clone {
         type E: Engine;
-        fn allocate_hash<CS: ConstraintSystem<Self::E>>(
+        fn allocate_hash2<CS: ConstraintSystem<Self::E>>(
             &self,
             cs: CS,
-            inputs: &[AllocatedNum<Self::E>],
+            a: &AllocatedNum<Self::E>,
+            b: &AllocatedNum<Self::E>,
         ) -> CResult<AllocatedNum<Self::E>>;
 
-        fn allocate_hash_chain<CS: ConstraintSystem<Self::E>>(&self, mut cs: CS, inputs: &[AllocatedNum<Self::E>]) -> CResult<AllocatedNum<Self::E>> {
+        fn allocate_hash<CS: ConstraintSystem<Self::E>>(&self, mut cs: CS, inputs: &[AllocatedNum<Self::E>]) -> CResult<AllocatedNum<Self::E>> {
             let mut acc = AllocatedNum::alloc(cs.namespace(|| "zero"), || Ok(<<Self::E as ScalarEngine>::Fr as Field>::zero()))?;
             for (i, input) in inputs.into_iter().enumerate() {
-                acc = self.allocate_hash(cs.namespace(|| format!("chain {}", i)), &[acc, input.clone()])?;
+                acc = self.allocate_hash2(cs.namespace(|| format!("chain {}", i)), &acc, input)?;
             }
             Ok(acc)
         }
@@ -225,10 +230,21 @@ pub mod circuit {
         E: PoseidonEngine<SBox = QuinticSBox<E>>,
     {
         type E = E;
+        fn allocate_hash2<CS: ConstraintSystem<E>>(
+            &self,
+            cs: CS,
+            a: &AllocatedNum<Self::E>,
+            b: &AllocatedNum<Self::E>,
+        ) -> CResult<AllocatedNum<E>> {
+            assert_eq!(self.params.output_len(), 1);
+            Ok(poseidon_hash::<E, CS>(cs, &[a.clone(), b.clone()], &self.params)?
+                .pop()
+                .unwrap())
+        }
         fn allocate_hash<CS: ConstraintSystem<E>>(
             &self,
             cs: CS,
-            inputs: &[AllocatedNum<E>],
+            inputs: &[AllocatedNum<Self::E>],
         ) -> CResult<AllocatedNum<E>> {
             assert_eq!(self.params.output_len(), 1);
             Ok(poseidon_hash::<E, CS>(cs, inputs, &self.params)?
@@ -242,16 +258,17 @@ pub mod circuit {
         E: JubjubEngine,
     {
         type E = E;
-        fn allocate_hash<CS: ConstraintSystem<E>>(
+        fn allocate_hash2<CS: ConstraintSystem<E>>(
             &self,
             mut cs: CS,
-            inputs: &[AllocatedNum<E>],
+            a: &AllocatedNum<Self::E>,
+            b: &AllocatedNum<Self::E>,
         ) -> CResult<AllocatedNum<E>> {
             use sapling_crypto::circuit::boolean::Boolean;
             use sapling_crypto::circuit::pedersen_hash::pedersen_hash;
             use sapling_crypto::pedersen_hash::Personalization;
             let mut bits: Vec<Boolean> = Vec::new();
-            for (i, in_) in inputs.into_iter().enumerate() {
+            for (i, in_) in [a, b].into_iter().enumerate() {
                 bits.extend(in_.into_bits_le(cs.namespace(|| format!("bit split {}", i)))?);
             }
             Ok(pedersen_hash::<E, _>(
@@ -270,16 +287,17 @@ pub mod circuit {
         E: sapling_crypto::babyjubjub::JubjubEngine,
     {
         type E = E;
-        fn allocate_hash<CS: ConstraintSystem<E>>(
+        fn allocate_hash2<CS: ConstraintSystem<E>>(
             &self,
             mut cs: CS,
-            inputs: &[AllocatedNum<E>],
+            a: &AllocatedNum<Self::E>,
+            b: &AllocatedNum<Self::E>,
         ) -> CResult<AllocatedNum<E>> {
             use sapling_crypto::baby_pedersen_hash::Personalization;
             use sapling_crypto::circuit::baby_pedersen_hash::pedersen_hash;
             use sapling_crypto::circuit::boolean::Boolean;
             let mut bits: Vec<Boolean> = Vec::new();
-            for (i, in_) in inputs.into_iter().enumerate() {
+            for (i, in_) in [a, b].into_iter().enumerate() {
                 bits.extend(in_.into_bits_le(cs.namespace(|| format!("bit split {}", i)))?);
             }
             Ok(pedersen_hash::<E, _>(
@@ -298,13 +316,15 @@ pub mod circuit {
         E: Engine,
     {
         type E = E;
-        fn allocate_hash<CS: ConstraintSystem<E>>(
+        fn allocate_hash2<CS: ConstraintSystem<E>>(
             &self,
-            cs: CS,
-            inputs: &[AllocatedNum<E>],
+            mut cs: CS,
+            a: &AllocatedNum<Self::E>,
+            b: &AllocatedNum<Self::E>,
         ) -> CResult<AllocatedNum<E>> {
             use hash::mimc;
-            mimc::hash(cs, inputs)
+            let num = mimc::compression(cs.namespace(|| "hash"), a.clone(), b.clone())?;
+            mimc::allocate_num(cs.namespace(|| "copy"), num)
         }
     }
 

@@ -51,7 +51,7 @@ impl<E: JubjubEngine> Action<E> {
         hasher: &H,
         sk: &PrivateKey<E>,
     ) -> SignedTx<E> {
-        let hash = hasher.hash_chain(&self.as_elems());
+        let hash = hasher.hash(&self.as_elems());
         let mut bytes = Vec::new();
         hash.into_repr().write_le(&mut bytes).unwrap();
         bytes.truncate((E::Fr::CAPACITY / 8) as usize);
@@ -199,7 +199,7 @@ pub mod circuit {
             signature: EddsaSignature<E>,
         ) -> CResult<()> {
             let elems = self.as_elems();
-            let hash = hasher.allocate_hash_chain(cs.namespace(|| "hash"), &elems)?;
+            let hash = hasher.allocate_hash(cs.namespace(|| "hash"), &elems)?;
             let mut bits = hash.into_bits_le_strict(cs.namespace(|| "bits"))?;
             bits.truncate((E::Fr::CAPACITY / 8 * 8) as usize);
             signature.verify_raw_message_signature(

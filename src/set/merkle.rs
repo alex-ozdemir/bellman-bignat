@@ -68,7 +68,7 @@ where
             let mut d = vec![usize_to_f::<E::Fr>(0)];
             while d.len() <= depth {
                 let prev = d.last().unwrap().clone();
-                d.push(hasher.hash(&[prev.clone(), prev]));
+                d.push(hasher.hash2(prev.clone(), prev));
             }
             d.reverse();
             d
@@ -97,16 +97,12 @@ where
             .unwrap_or_else(|| &self.defaults[level])
     }
 
-    fn hash(&self, child_1: &E::Fr, child_2: &E::Fr) -> E::Fr {
-        self.hasher.hash(&[child_1.clone(), child_2.clone()])
-    }
-
     fn update_hashes_from_leaf_index(&mut self, mut index: usize) {
         index /= 2;
         for level in (0..self.depth).rev() {
             let child_1 = self.get_node(level + 1, 2 * index);
             let child_2 = self.get_node(level + 1, 2 * index + 1);
-            let hash = self.hash(child_1, child_2);
+            let hash = self.hasher.hash2(child_1.clone(), child_2.clone());
             self.nodes.insert((level, index), hash);
             index /= 2;
         }
