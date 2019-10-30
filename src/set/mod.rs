@@ -2,7 +2,7 @@ use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::ConstraintSystem;
 
 use CResult;
-use hash::MaybeHashed;
+use hash::circuit::MaybeHashed;
 
 pub mod int_set;
 pub mod merkle;

@@ -4,7 +4,7 @@ use sapling_crypto::bellman::pairing::ff::{PrimeField, PrimeFieldRepr};
 use sapling_crypto::eddsa::{PrivateKey, PublicKey, Signature};
 use sapling_crypto::jubjub::{FixedGenerators, JubjubEngine};
 
-use hash::tree::Hasher;
+use hash::Hasher;
 
 use usize_to_f;
 
@@ -97,7 +97,7 @@ pub struct SignedTx<E: JubjubEngine> {
 pub mod circuit {
     use super::{Action, SignedTx};
     use gadget::Gadget;
-    use hash::tree::circuit::CircuitHasher;
+    use hash::circuit::CircuitHasher;
     use rollup::sig::allocate_sig;
     use sapling_crypto::bellman::pairing::ff::ScalarEngine;
     use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};

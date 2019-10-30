@@ -5,7 +5,7 @@ use sapling_crypto::circuit::num::AllocatedNum;
 
 use bignat::BigNat;
 use bit::{Bit, Bitvector};
-use hash::mimc;
+use hash::hashes::mimc;
 
 use gadget::Gadget;
 
@@ -111,7 +111,7 @@ pub mod helper {
     use sapling_crypto::bellman::pairing::ff::PrimeField;
 
     use f_to_nat;
-    use hash::mimc;
+    use hash::hashes::mimc;
 
     pub struct EntropySource {
         bits: Vec<bool>,

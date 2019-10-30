@@ -15,8 +15,8 @@ use f_to_usize;
 use gadget::Gadget;
 use group::{CircuitRsaQuotientGroup, CircuitRsaGroupParams, RsaQuotientGroup};
 use hash;
-use hash::tree::circuit::CircuitHasher;
-use hash::tree::{Pedersen, Poseidon};
+use hash::circuit::CircuitHasher;
+use hash::hashes::{Pedersen, Poseidon};
 use num::Num;
 use rollup::sig::allocate_point;
 use rollup::tx::circuit::CircuitSignedTx;
@@ -494,7 +494,7 @@ where
                 let elems = act.as_elems();
                 let hash =
                     hasher.allocate_hash(cs.namespace(|| format!("insert hash {}", i)), &elems)?;
-                Ok(hash::MaybeHashed::new(elems, hash))
+                Ok(hash::circuit::MaybeHashed::new(elems, hash))
             })
             .collect::<CResult<Vec<_>>>()?;
         let removals = removed_accounts
@@ -504,7 +504,7 @@ where
                 let elems = act.as_elems();
                 let hash =
                     hasher.allocate_hash(cs.namespace(|| format!("remove hash {}", i)), &elems)?;
-                Ok(hash::MaybeHashed::new(elems, hash))
+                Ok(hash::circuit::MaybeHashed::new(elems, hash))
             })
             .collect::<CResult<Vec<_>>>()?;
 

@@ -11,9 +11,9 @@ use std::rc::Rc;
 
 use super::{GenSet, CircuitGenSet};
 use gadget::Gadget;
-use hash::MaybeHashed;
-use hash::tree::circuit::{CircuitHasher};
-use hash::tree::{Hasher, Poseidon};
+use hash::circuit::{MaybeHashed, CircuitHasher};
+use hash::Hasher;
+use hash::hashes::Poseidon;
 use usize_to_f;
 use OptionExt;
 

@@ -11,7 +11,7 @@ use std::str::FromStr;
 use super::HashDomain;
 use bignat::BigNat;
 use bit::{Bit, Bitvector};
-use hash::MaybeHashed;
+use hash::circuit::MaybeHashed;
 use num::Num;
 use wesolowski::Reduced;
 use OptionExt;
@@ -22,7 +22,7 @@ const OFFSET_128: &str = "320302797835264872593630364493262722277";
 
 pub mod helper {
     use f_to_nat;
-    use hash::helper::low_k_bits;
+    use hash::low_k_bits;
     use hash::HashDomain;
     use num_bigint::BigUint;
     use num_traits::One;
@@ -264,7 +264,7 @@ pub fn hash_to_modded_rsa_element<
 #[cfg(test)]
 mod test {
     use hash::HashDomain;
-    use hash::MaybeHashed;
+    use hash::circuit::MaybeHashed;
     use num_bigint::BigUint;
     use sapling_crypto::bellman::pairing::ff::PrimeField;
     use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};

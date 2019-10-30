@@ -11,7 +11,7 @@ use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
 use f_to_usize;
 use gadget::Gadget;
 use hash;
-use hash::tree::{Pedersen, Poseidon};
+use hash::hashes::{Pedersen, Poseidon};
 use num::Num;
 use rollup::sig::allocate_point;
 use rollup::tx::circuit::CircuitSignedTx;
@@ -453,10 +453,10 @@ where
         set.inputize(cs.namespace(|| "initial_state input"))?;
         let new_set = set.swap_all(
             cs.namespace(|| "swap"),
-            removals.into_iter().map(hash::MaybeHashed::from_values).collect(),
+            removals.into_iter().map(hash::circuit::MaybeHashed::from_values).collect(),
             insertions
                 .into_iter()
-                .map(hash::MaybeHashed::from_values)
+                .map(hash::circuit::MaybeHashed::from_values)
                 .collect(),
         )?;
 
