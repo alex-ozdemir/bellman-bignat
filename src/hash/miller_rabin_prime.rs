@@ -9,8 +9,6 @@ use hash::HashDomain;
 use num::Num;
 use OptionExt;
 
-const MILLER_RABIN_ROUNDS: usize = 3;
-
 pub mod helper {
     use hash::rsa::helper::hash_to_integer;
     use hash::HashDomain;
@@ -103,6 +101,7 @@ pub fn hash_to_prime<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: ConstraintSys
     limb_width: usize,
     domain: &HashDomain,
     params: &E::Params,
+    rounds: usize,
 ) -> Result<BigNat<E>, SynthesisError> {
     if domain.n_trailing_ones < 2 {
         return Err(SynthesisError::Unsatisfiable);
@@ -124,7 +123,7 @@ pub fn hash_to_prime<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: ConstraintSys
     .fits_in_bits(cs.namespace(|| "nonce bound"), domain.nonce_width())?;
     inputs.push(nonce);
     let hash = hash_to_integer(cs.namespace(|| "hash"), &inputs, limb_width, domain, params)?;
-    let res = hash.miller_rabin(cs.namespace(|| "primeck"), MILLER_RABIN_ROUNDS)?;
+    let res = hash.miller_rabin(cs.namespace(|| "primeck"), rounds)?;
     Boolean::enforce_equal(cs.namespace(|| "result"), &Boolean::constant(true), &res)?;
     Ok(hash)
 }
@@ -176,6 +175,7 @@ mod test {
     pub struct PrimeHashParams<E: PoseidonEngine<SBox = QuinticSBox<E>>> {
         pub desired_bits: usize,
         pub hash: E::Params,
+        pub n_rounds: usize,
     }
 
     pub struct PrimeHash<'a, E: PoseidonEngine<SBox = QuinticSBox<E>>> {
@@ -217,6 +217,7 @@ mod test {
                 32,
                 &domain,
                 &self.params.hash,
+                self.params.n_rounds,
             )?;
             assert_eq!(
                 hash.limbs.len() * hash.params.limb_width,
@@ -239,6 +240,7 @@ mod test {
                     params: PrimeHashParams {
                         desired_bits: 128,
                         hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+                        n_rounds: 3,
                     }
         }, true),
         prime_hash_one_32b: (PrimeHash {
@@ -252,6 +254,7 @@ mod test {
                     params: PrimeHashParams {
                         desired_bits: 32,
                         hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+                        n_rounds: 3,
                     }
         }, true),
         prime_hash_ten: (PrimeHash {
@@ -273,6 +276,7 @@ mod test {
                     params: PrimeHashParams {
                         desired_bits: 128,
                         hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+                        n_rounds: 3,
                     }
         }, true),
     }
