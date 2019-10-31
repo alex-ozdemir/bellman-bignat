@@ -156,20 +156,15 @@ where
     }
 }
 
+#[derive(Derivative)]
+#[derivative(Clone(bound = ""))]
 pub struct MerkleCircuitSetParams<HParams> {
     hash: Rc<HParams>,
     depth: usize,
 }
 
-impl<HParams> std::clone::Clone for MerkleCircuitSetParams<HParams> {
-    fn clone(&self) -> Self {
-        Self {
-            hash: self.hash.clone(),
-            depth: self.depth,
-        }
-    }
-}
-
+#[derive(Derivative)]
+#[derivative(Clone(bound = ""))]
 pub struct MerkleCircuitSet<E, H, CH>
 where
     E: Engine,
@@ -180,22 +175,6 @@ where
     pub digest: AllocatedNum<E>,
     pub depth: usize,
     pub hasher: CH,
-}
-
-impl<E, H, CH> std::clone::Clone for MerkleCircuitSet<E, H, CH>
-where
-    E: Engine,
-    H: Hasher<F = E::Fr>,
-    CH: CircuitHasher<E = E>,
-{
-    fn clone(&self) -> Self {
-        Self {
-            value: self.value.clone(),
-            depth: self.depth,
-            hasher: self.hasher.clone(),
-            digest: self.digest.clone(),
-        }
-    }
 }
 
 impl<E, H, CH> Gadget for MerkleCircuitSet<E, H, CH>

@@ -20,6 +20,8 @@ use wesolowski::Reduced;
 use CResult;
 use OptionExt;
 
+#[derive(Derivative)]
+#[derivative(Clone(bound = ""))]
 pub struct Set<E, Inner>
 where
     E: PoseidonEngine<SBox = QuinticSBox<E>>,
@@ -41,19 +43,6 @@ where
 {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "{:?}", self.inner)
-    }
-}
-
-impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> std::clone::Clone for Set<E, Inner> {
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            offset: self.offset.clone(),
-            hash_domain: self.hash_domain.clone(),
-            hash_params: self.hash_params.clone(),
-            limb_width: self.limb_width.clone(),
-            _phant: self._phant,
-        }
     }
 }
 
@@ -156,6 +145,8 @@ where
     }
 }
 
+#[derive(Derivative)]
+#[derivative(Clone(bound = ""))]
 pub struct CircuitSetParams<HParams> {
     pub hash: Rc<HParams>,
     pub n_bits: usize,
@@ -171,16 +162,8 @@ impl<HParams> CircuitSetParams<HParams> {
     }
 }
 
-impl<HParams> std::clone::Clone for CircuitSetParams<HParams> {
-    fn clone(&self) -> Self {
-        Self {
-            hash: self.hash.clone(),
-            n_bits: self.n_bits,
-            limb_width: self.limb_width,
-        }
-    }
-}
-
+#[derive(Derivative)]
+#[derivative(Clone(bound = ""))]
 pub struct CircuitSet<E, CG, Inner>
 where
     E: PoseidonEngine<SBox = QuinticSBox<E>>,
@@ -193,24 +176,6 @@ where
     pub access: (CG, BigNat<E>),
     pub inner: CircuitIntSet<E, CG, Inner>,
     pub params: CircuitSetParams<E::Params>,
-}
-
-impl<E, CG, Inner> std::clone::Clone for CircuitSet<E, CG, Inner>
-where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
-    CG: CircuitSemiGroup<E = E> + Gadget<E = E, Value = <CG as CircuitSemiGroup>::Group>,
-    CG::Elem: Gadget<E = E, Value = <CG::Group as SemiGroup>::Elem, Access = ()>,
-    Inner: IntSet<G = <CG as CircuitSemiGroup>::Group>,
-{
-    fn clone(&self) -> Self {
-        Self {
-            value: self.value.clone(),
-            inner: self.inner.clone(),
-            params: self.params.clone(),
-            access: self.access.clone(),
-            offset: self.offset.clone(),
-        }
-    }
 }
 
 impl<E, CG, Inner> Gadget for CircuitSet<E, CG, Inner>
