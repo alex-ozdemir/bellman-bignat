@@ -443,7 +443,7 @@ where
         let final_digest = untouched_hashes
             .clone()
             .chain(inserted_hashes)
-            .fold(group.g.clone(), |g, i| g.modpow(&i, &group.m));
+            .fold(group.g.clone(), |g, i| group.power(&g, &i));
         let initial_state = Set::new_with(
             group,
             offset,
