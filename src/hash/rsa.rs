@@ -226,8 +226,8 @@ where
         limb_width,
     );
     let r = x
-        .red_mod(cs.namespace(|| "x % l"), challenge)?
-        .add::<CS>(&offset.reduced)?;
+        .add::<CS>(&offset.reduced)?
+        .red_mod(cs.namespace(|| "x % l"), challenge)?;
     Ok(Reduced {
         raw: offset.raw.add::<CS>(&x)?,
         reduced: r,
@@ -320,7 +320,6 @@ mod test {
                 &challenge,
                 &self.params.hasher,
             )?;
-            println!("{:#?} {:#?}", hash.reduced, allocated_expected_output);
             hash.reduced
                 .equal_when_carried_regroup(cs.namespace(|| "eq"), &allocated_expected_output)?;
             Ok(())
