@@ -6,11 +6,11 @@ pub mod helper {
     use hash::low_k_bits;
     use hash::miller_rabin_prime::helper::miller_rabin_32b;
     use hash::hashes::mimc;
+    use hash::Hasher;
     use num_bigint::BigUint;
     use num_integer::Integer;
     use num_traits::One;
     use sapling_crypto::bellman::pairing::ff::{Field, PrimeField};
-    use sapling_crypto::poseidon::{poseidon_hash, PoseidonEngine, QuinticSBox};
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct PocklingtonPlan {
@@ -231,20 +231,20 @@ pub mod helper {
         Some(certificate)
     }
 
-    pub fn hash_to_pocklington_prime<E: PoseidonEngine<SBox = QuinticSBox<E>>>(
-        inputs: &[E::Fr],
+    pub fn hash_to_pocklington_prime<H: Hasher>(
+        inputs: &[H::F],
         entropy: usize,
-        params: &E::Params,
+        base_hash: &H,
     ) -> Option<PocklingtonCertificate> {
         let plan = PocklingtonPlan::new(entropy);
-        let mut inputs: Vec<E::Fr> = inputs.iter().copied().collect();
-        inputs.push(E::Fr::zero());
+        let mut inputs: Vec<H::F> = inputs.iter().copied().collect();
+        inputs.push(H::F::zero());
         for nonce in 0..(1 << plan.nonce_bits) {
-            let hash = poseidon_hash::<E>(params, &inputs).pop().unwrap();
+            let hash = base_hash.hash(&inputs);
             if let Some(cert) = execute_pocklington_plan(hash, &plan, nonce) {
                 return Some(cert);
             }
-            inputs.last_mut().unwrap().add_assign(&E::Fr::one());
+            inputs.last_mut().unwrap().add_assign(&H::F::one());
         }
         None
     }
@@ -275,26 +275,28 @@ use sapling_crypto::bellman::pairing::ff::Field;
 use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
 use sapling_crypto::circuit::boolean::Boolean;
 use sapling_crypto::circuit::num::AllocatedNum;
-use sapling_crypto::circuit::poseidon_hash::poseidon_hash;
-use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
+use sapling_crypto::bellman::pairing::Engine;
 
 use bignat::BigNat;
 use entropy::{EntropySource, NatTemplate};
 use gadget::Gadget;
 use hash::hashes::mimc;
+use hash::Hasher;
+use hash::circuit::CircuitHasher;
 use num::Num;
 use usize_to_f;
 use OptionExt;
 
 pub fn hash_to_pocklington_prime<
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: Engine,
+    H: Hasher<F = E::Fr> + CircuitHasher<E = E>,
     CS: ConstraintSystem<E>,
 >(
     mut cs: CS,
     input: &[AllocatedNum<E>],
     limb_width: usize,
     entropy: usize,
-    params: &E::Params,
+    base_hash: &H,
 ) -> Result<BigNat<E>, SynthesisError> {
     use self::helper::{PocklingtonCertificate, PocklingtonPlan};
     let plan = PocklingtonPlan::new(entropy);
@@ -302,15 +304,13 @@ pub fn hash_to_pocklington_prime<
         .iter()
         .map(|n| n.get_value().clone())
         .collect::<Option<Vec<E::Fr>>>()
-        .and_then(|is| helper::hash_to_pocklington_prime::<E>(&is, entropy, params));
+        .and_then(|is| helper::hash_to_pocklington_prime(&is, entropy, base_hash));
     let base_nonce = AllocatedNum::alloc(cs.namespace(|| "nonce"), || {
         Ok(usize_to_f::<E::Fr>(cert.as_ref().grab()?.base_nonce))
     })?;
     let mut inputs = input.to_vec();
     inputs.push(base_nonce);
-    let hash = poseidon_hash::<E, _>(cs.namespace(|| "base hash"), &inputs, params)?
-        .pop()
-        .unwrap();
+    let hash = base_hash.allocate_hash(cs.namespace(|| "base hash"), &inputs)?;
     let mut entropy_source =
         EntropySource::alloc(cs.namespace(|| "entropy source"), Some(&()), hash, &entropy)?;
 
@@ -379,15 +379,15 @@ pub fn hash_to_pocklington_prime<
 #[cfg(test)]
 mod test {
     use super::{hash_to_pocklington_prime, helper};
-    use sapling_crypto::bellman::pairing::ff::PrimeField;
+    use sapling_crypto::bellman::pairing::ff::{ScalarEngine, PrimeField};
+    use sapling_crypto::bellman::pairing::Engine;
     use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
     use sapling_crypto::circuit::num::AllocatedNum;
-    use sapling_crypto::group_hash::Keccak256Hasher;
-    use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
-    use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
 
     use bignat::BigNat;
-    use sapling_crypto::bellman::pairing::ff::ScalarEngine;
+    use hash::hashes::Poseidon;
+    use hash::Hasher;
+    use hash::circuit::CircuitHasher;
     use OptionExt;
 
     use test_helpers::*;
@@ -425,8 +425,8 @@ mod test {
                         .iter()
                         .map(|s| <Bn256 as ScalarEngine>::Fr::from_str(s).unwrap())
                         .collect();
-                    let params = Bn256PoseidonParams::new::<Keccak256Hasher>();
-                    let cert = helper::hash_to_pocklington_prime::<Bn256>(&input_values, entropy, &params).expect("pocklington generation failed");
+                    let hash = Poseidon::default();
+                    let cert = helper::hash_to_pocklington_prime(&input_values, entropy, &hash).expect("pocklington generation failed");
                     assert!(crate::hash::miller_rabin_prime::helper::miller_rabin(cert.number(), 20));
                 }
             )*
@@ -446,17 +446,17 @@ mod test {
     }
 
     #[derive(Debug)]
-    pub struct PockHashParams<E: PoseidonEngine<SBox = QuinticSBox<E>>> {
+    pub struct PockHashParams<H> {
         pub entropy: usize,
-        pub hash: E::Params,
+        pub hash: H,
     }
 
-    pub struct PockHash<'a, E: PoseidonEngine<SBox = QuinticSBox<E>>> {
+    pub struct PockHash<'a, H> {
         inputs: Option<PockHashInputs<'a>>,
-        params: PockHashParams<E>,
+        params: PockHashParams<H>,
     }
 
-    impl<'a, E: PoseidonEngine<SBox = QuinticSBox<E>>> Circuit<E> for PockHash<'a, E> {
+    impl<'a, E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>> Circuit<E> for PockHash<'a, H> {
         fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
             let input_values: Vec<E::Fr> = self
                 .inputs
@@ -465,7 +465,7 @@ mod test {
                 .iter()
                 .map(|s| E::Fr::from_str(s).unwrap())
                 .collect();
-            let cert = helper::hash_to_pocklington_prime::<E>(
+            let cert = helper::hash_to_pocklington_prime(
                 &input_values,
                 self.params.entropy,
                 &self.params.hash,
@@ -505,7 +505,7 @@ mod test {
                 }),
                 params: PockHashParams {
                     entropy: 29,
-                    hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+                    hash: Poseidon::default(),
                 },
             },
             true,
@@ -517,7 +517,7 @@ mod test {
                 }),
                 params: PockHashParams {
                     entropy: 30,
-                    hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+                    hash: Poseidon::default(),
                 },
             },
             true,
@@ -529,7 +529,7 @@ mod test {
                 }),
                 params: PockHashParams {
                     entropy: 50,
-                    hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+                    hash: Poseidon::default(),
                 },
             },
             true,
@@ -541,7 +541,7 @@ mod test {
                 }),
                 params: PockHashParams {
                     entropy: 80,
-                    hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+                    hash: Poseidon::default(),
                 },
             },
             true,
@@ -553,7 +553,7 @@ mod test {
                 }),
                 params: PockHashParams {
                     entropy: 128,
-                    hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+                    hash: Poseidon::default(),
                 },
             },
             true,

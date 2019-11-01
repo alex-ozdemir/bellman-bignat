@@ -8,6 +8,7 @@ extern crate serde;
 use bellman_bignat::bench::{ConstraintCounter, ConstraintProfiler};
 use bellman_bignat::bignat::nat_to_limbs;
 use bellman_bignat::group::RsaQuotientGroup;
+use bellman_bignat::hash::hashes::Poseidon;
 use bellman_bignat::set::merkle::{MerkleSetBench, MerkleSetBenchInputs, MerkleSetBenchParams};
 use bellman_bignat::set::GenSet;
 use bellman_bignat::set::rsa::{SetBench, SetBenchInputs, SetBenchParams};
@@ -79,22 +80,18 @@ fn main() {
 }
 
 fn rsa_bench(t: usize, _c: usize, profile: bool) -> usize {
-    let hash = Rc::new(Bn256PoseidonParams::new::<
-        sapling_crypto::group_hash::Keccak256Hasher,
-    >());
-
     let group = RsaQuotientGroup {
         g: BigUint::from(2usize),
         m: BigUint::from_str(RSA_2048).unwrap(),
     };
 
-    let circuit = SetBench::<Bn256, _> {
+    let circuit = SetBench::<Poseidon<Bn256>, _> {
         inputs: Some(SetBenchInputs::from_counts(
             0,
             t,
             t,
             ELEMENT_SIZE,
-            hash.clone(),
+            Poseidon::default(),
             RSA_SIZE,
             32,
             RsaQuotientGroup {
@@ -111,7 +108,7 @@ fn rsa_bench(t: usize, _c: usize, profile: bool) -> usize {
             item_size: ELEMENT_SIZE,
             n_inserts: t,
             n_removes: t,
-            hash,
+            hasher: Poseidon::default(),
             verbose: false,
         },
     };

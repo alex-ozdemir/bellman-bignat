@@ -1,20 +1,20 @@
+use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
 use sapling_crypto::circuit::boolean::Boolean;
 use sapling_crypto::circuit::num::AllocatedNum;
-use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
 
 use bignat::BigNat;
+use hash::circuit::CircuitHasher;
 use hash::rsa::hash_to_integer;
-use hash::HashDomain;
+use hash::{HashDomain, Hasher};
 use num::Num;
 use OptionExt;
 
 pub mod helper {
     use hash::rsa::helper::hash_to_integer;
-    use hash::HashDomain;
+    use hash::{HashDomain, Hasher};
     use num_bigint::BigUint;
     use sapling_crypto::bellman::pairing::ff::Field;
-    use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
 
     /// Returns whether `n` passes Miller-Rabin checks with the first `rounds` primes as bases
     pub fn miller_rabin(n: &BigUint, rounds: usize) -> bool {
@@ -74,35 +74,40 @@ pub mod helper {
     /// and returns a tupe `(hash, nonce, bitwidth)`.
     ///
     /// If, by misfortune, there is no such nonce, returns `None`.
-    pub fn hash_to_prime<E: PoseidonEngine<SBox = QuinticSBox<E>>>(
-        inputs: &[E::Fr],
+    pub fn hash_to_prime<H: Hasher>(
+        inputs: &[H::F],
         domain: &HashDomain,
-        params: &E::Params,
-    ) -> Option<(BigUint, E::Fr, usize)> {
+        hasher: &H,
+    ) -> Option<(BigUint, H::F, usize)> {
         let n_bits = domain.nonce_width();
-        let mut inputs: Vec<E::Fr> = inputs.iter().copied().collect();
-        inputs.push(E::Fr::zero());
+        let mut inputs: Vec<H::F> = inputs.iter().copied().collect();
+        inputs.push(H::F::zero());
         for _ in 0..(1 << n_bits) {
-            let hash = hash_to_integer::<E>(&inputs, domain, params);
+            let hash = hash_to_integer::<H>(&inputs, domain, hasher);
             if miller_rabin(&hash, 30) {
                 // unwrap is safe because of the push above
                 return Some((hash, inputs.pop().unwrap(), n_bits));
             }
             // unwrap is safe because of the push above
-            inputs.last_mut().unwrap().add_assign(&E::Fr::one());
+            inputs.last_mut().unwrap().add_assign(&H::F::one());
         }
         None
     }
 }
 
-pub fn hash_to_prime<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: ConstraintSystem<E>>(
+pub fn hash_to_prime<E, H, CS>(
     mut cs: CS,
     input: &[AllocatedNum<E>],
     limb_width: usize,
     domain: &HashDomain,
-    params: &E::Params,
+    hasher: &H,
     rounds: usize,
-) -> Result<BigNat<E>, SynthesisError> {
+) -> Result<BigNat<E>, SynthesisError>
+where
+    E: Engine,
+    H: CircuitHasher<E = E> + Hasher<F = E::Fr>,
+    CS: ConstraintSystem<E>,
+{
     if domain.n_trailing_ones < 2 {
         return Err(SynthesisError::Unsatisfiable);
     }
@@ -112,7 +117,7 @@ pub fn hash_to_prime<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: ConstraintSys
             .iter()
             .map(|i| i.get_value())
             .collect::<Option<Vec<E::Fr>>>();
-        let (_, nonce, _) = helper::hash_to_prime::<E>(&inputs.grab()?, domain, params)
+        let (_, nonce, _) = helper::hash_to_prime::<H>(&inputs.grab()?, domain, hasher)
             .ok_or(SynthesisError::Unsatisfiable)?;
         Ok(nonce)
     })?;
@@ -122,7 +127,7 @@ pub fn hash_to_prime<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: ConstraintSys
     )
     .fits_in_bits(cs.namespace(|| "nonce bound"), domain.nonce_width())?;
     inputs.push(nonce);
-    let hash = hash_to_integer(cs.namespace(|| "hash"), &inputs, limb_width, domain, params)?;
+    let hash = hash_to_integer(cs.namespace(|| "hash"), &inputs, limb_width, domain, hasher)?;
     let res = hash.miller_rabin(cs.namespace(|| "primeck"), rounds)?;
     Boolean::enforce_equal(cs.namespace(|| "result"), &Boolean::constant(true), &res)?;
     Ok(hash)
@@ -130,17 +135,15 @@ pub fn hash_to_prime<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: ConstraintSys
 
 #[cfg(test)]
 mod test {
+    use super::*;
+
     use num_bigint::BigUint;
     use sapling_crypto::bellman::pairing::ff::PrimeField;
     use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
     use sapling_crypto::circuit::num::AllocatedNum;
-    use sapling_crypto::group_hash::Keccak256Hasher;
-    use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
-    use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
-
-    use super::{hash_to_prime, helper};
 
     use bignat::BigNat;
+    use hash::hashes::Poseidon;
     use hash::HashDomain;
     use OptionExt;
 
@@ -172,18 +175,18 @@ mod test {
     }
 
     #[derive(Debug)]
-    pub struct PrimeHashParams<E: PoseidonEngine<SBox = QuinticSBox<E>>> {
+    pub struct PrimeHashParams<H> {
         pub desired_bits: usize,
-        pub hash: E::Params,
+        pub hasher: H,
         pub n_rounds: usize,
     }
 
-    pub struct PrimeHash<'a, E: PoseidonEngine<SBox = QuinticSBox<E>>> {
+    pub struct PrimeHash<'a, H> {
         inputs: Option<PrimeHashInputs<'a>>,
-        params: PrimeHashParams<E>,
+        params: PrimeHashParams<H>,
     }
 
-    impl<'a, E: PoseidonEngine<SBox = QuinticSBox<E>>> Circuit<E> for PrimeHash<'a, E> {
+    impl<'a, E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>> Circuit<E> for PrimeHash<'a, H> {
         fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
             let input_values: Vec<E::Fr> = self
                 .inputs
@@ -197,7 +200,7 @@ mod test {
                 n_trailing_ones: 2,
             };
             let (expected_ouput, _, _) =
-                helper::hash_to_prime::<E>(&input_values, &domain, &self.params.hash).unwrap();
+                helper::hash_to_prime(&input_values, &domain, &self.params.hasher).unwrap();
             let allocated_expected_output = BigNat::alloc_from_nat(
                 cs.namespace(|| "output"),
                 || Ok(expected_ouput),
@@ -216,7 +219,7 @@ mod test {
                 &allocated_inputs,
                 32,
                 &domain,
-                &self.params.hash,
+                &self.params.hasher,
                 self.params.n_rounds,
             )?;
             assert_eq!(
@@ -239,7 +242,7 @@ mod test {
                     ),
                     params: PrimeHashParams {
                         desired_bits: 128,
-                        hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+                        hasher: Poseidon::default(),
                         n_rounds: 3,
                     }
         }, true),
@@ -253,7 +256,7 @@ mod test {
                     ),
                     params: PrimeHashParams {
                         desired_bits: 32,
-                        hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+                        hasher: Poseidon::default(),
                         n_rounds: 3,
                     }
         }, true),
@@ -275,7 +278,7 @@ mod test {
                     ),
                     params: PrimeHashParams {
                         desired_bits: 128,
-                        hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+                        hasher: Poseidon::default(),
                         n_rounds: 3,
                     }
         }, true),

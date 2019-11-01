@@ -7,6 +7,7 @@ extern crate serde;
 
 use bellman_bignat::bench::{ConstraintCounter, ConstraintProfiler};
 use bellman_bignat::rollup::{rsa, merkle};
+use bellman_bignat::hash::hashes::Poseidon;
 use docopt::Docopt;
 use sapling_crypto::alt_babyjubjub::AltJubjubBn256;
 use sapling_crypto::bellman::pairing::bn256::Bn256;
@@ -67,11 +68,11 @@ fn main() {
 }
 
 fn rsa_bench(t: usize, _c: usize, profile: bool) -> usize {
-    let circuit = rsa::RollupBench::<Bn256>::from_counts(
+    let circuit = rsa::RollupBench::<Bn256, Poseidon<Bn256>>::from_counts(
         t, // Use `t` in place of `c` for sparse-ness.
         t,
         AltJubjubBn256::new(),
-        Bn256PoseidonParams::new::<Keccak256Hasher>(),
+        Poseidon::default(),
     );
 
     if profile {

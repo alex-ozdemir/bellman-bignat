@@ -5,13 +5,12 @@ extern crate sapling_crypto;
 
 use bellman_bignat::bignat::nat_to_limbs;
 use bellman_bignat::group::RsaQuotientGroup;
+use bellman_bignat::hash::hashes::Poseidon;
 use bellman_bignat::set::int_set::NaiveExpSet;
 use bellman_bignat::set::GenSet;
 use bellman_bignat::set::rsa::{SetBench, SetBenchInputs, SetBenchParams};
 use num_bigint::BigUint;
-use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
 
-use std::rc::Rc;
 use std::str::FromStr;
 use std::time::Instant;
 
@@ -28,9 +27,6 @@ fn main() {
         .and_then(|a| usize::from_str(&a).ok())
         .expect("Provide the number of transactions as the first argument");
 
-    let hash = Rc::new(Bn256PoseidonParams::new::<
-        sapling_crypto::group_hash::Keccak256Hasher,
-    >());
     use rand::thread_rng;
 
     use sapling_crypto::bellman::groth16::{
@@ -46,7 +42,7 @@ fn main() {
     let generate_params_start = Instant::now();
 
     let params = {
-        let c = SetBench::<Bn256, NaiveExpSet<RsaQuotientGroup>> {
+        let c = SetBench::<Poseidon<Bn256>, NaiveExpSet<RsaQuotientGroup>> {
             inputs: None,
             params: SetBenchParams {
                 group: group.clone(),
@@ -57,7 +53,7 @@ fn main() {
                 item_size: ELEMENT_SIZE,
                 n_inserts: n_swaps,
                 n_removes: n_swaps,
-                hash: hash.clone(),
+                hasher: Poseidon::default(),
                 verbose: true,
             },
         };
@@ -83,7 +79,7 @@ fn main() {
             n_swaps,
             n_swaps,
             ELEMENT_SIZE,
-            hash.clone(),
+            Poseidon::default(),
             RSA_SIZE,
             32,
             RsaQuotientGroup {
@@ -100,7 +96,7 @@ fn main() {
             item_size: ELEMENT_SIZE,
             n_inserts: n_swaps,
             n_removes: n_swaps,
-            hash,
+            hasher: Poseidon::default(),
             verbose: true,
         },
     };

@@ -1,17 +1,18 @@
 use num_bigint::BigUint;
 use sapling_crypto::bellman::pairing::ff::Field;
+use sapling_crypto::bellman::pairing::ff::PrimeField;
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
 use sapling_crypto::circuit::boolean::Boolean;
 use sapling_crypto::circuit::num::AllocatedNum;
-use sapling_crypto::poseidon::{PoseidonEngine, PoseidonHashParams, QuinticSBox};
 
 use std::str::FromStr;
 
 use super::HashDomain;
 use bignat::BigNat;
 use bit::{Bit, Bitvector};
-use hash::circuit::MaybeHashed;
+use hash::circuit::{CircuitHasher, MaybeHashed};
+use hash::Hasher;
 use num::Num;
 use wesolowski::Reduced;
 use OptionExt;
@@ -24,33 +25,26 @@ pub mod helper {
     use f_to_nat;
     use hash::low_k_bits;
     use hash::HashDomain;
+    use hash::Hasher;
     use num_bigint::BigUint;
     use num_traits::One;
     use sapling_crypto::bellman::pairing::ff::Field;
-    use sapling_crypto::poseidon::{
-        poseidon_hash, PoseidonEngine, PoseidonHashParams, QuinticSBox,
-    };
+    use sapling_crypto::bellman::pairing::ff::PrimeField;
 
-    pub fn hash_to_integer<E: PoseidonEngine<SBox = QuinticSBox<E>>>(
-        inputs: &[E::Fr],
-        domain: &HashDomain,
-        params: &E::Params,
-    ) -> BigUint {
-        assert_eq!(params.output_len(), 1);
-        assert_eq!(params.security_level(), 126);
-        let bits_per_hash = params.security_level() as usize * 2;
+    pub fn hash_to_integer<H: Hasher>(inputs: &[H::F], domain: &HashDomain, hasher: &H) -> BigUint {
+        let bits_per_hash = <H::F as PrimeField>::CAPACITY as usize;
 
         let bits_from_hash = domain.n_bits - 1 - domain.n_trailing_ones;
         let n_hashes = (bits_from_hash - 1) / bits_per_hash + 1;
 
-        // First we hash the inputs, using poseidon.
-        let hash = poseidon_hash::<E>(params, inputs).pop().unwrap();
+        // First we hash the inputs
+        let hash = hasher.hash(inputs);
 
-        // Then, to get more bits, we extend with MiMC
+        // Then, to get more bits, we extend additively
         let mut sum_of_hashes = low_k_bits(&f_to_nat(&hash), bits_per_hash);
         let mut perm = hash;
         for i in 1..n_hashes {
-            perm.add_assign(&E::Fr::one());
+            perm.add_assign(&H::F::one());
             let low_bits = low_k_bits(&f_to_nat(&perm), bits_per_hash);
             sum_of_hashes += low_bits << (bits_per_hash * i);
         }
@@ -62,20 +56,16 @@ pub mod helper {
         acc
     }
 
-    pub fn hash_to_rsa_element<E: PoseidonEngine<SBox = QuinticSBox<E>>>(
-        inputs: &[E::Fr],
+    pub fn hash_to_rsa_element<H: Hasher>(
+        inputs: &[H::F],
         offset: &BigUint,
         domain: &HashDomain,
         limb_width: usize,
-        params: &E::Params,
+        hasher: &H,
     ) -> BigUint {
-        assert_eq!(params.output_len(), 1);
-        assert_eq!(params.security_level(), 126);
-        let bits_per_hash = params.security_level() as usize * 2;
+        let bits_per_hash = H::F::CAPACITY as usize;
         assert!(domain.n_bits % limb_width == 0);
-        let hash: E::Fr = sapling_crypto::poseidon::poseidon_hash::<E>(params, &inputs)
-            .pop()
-            .unwrap();
+        let hash = hasher.hash(inputs);
         let x = low_k_bits(&f_to_nat(&hash), bits_per_hash);
         offset + x
     }
@@ -110,28 +100,24 @@ pub fn allocate_offset<E: Engine, CS: ConstraintSystem<E>>(
     })
 }
 
-pub fn hash_to_integer<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: ConstraintSystem<E>>(
+pub fn hash_to_integer<E, H, CS>(
     mut cs: CS,
     input: &[AllocatedNum<E>],
     limb_width: usize,
     domain: &HashDomain,
-    params: &E::Params,
-) -> Result<BigNat<E>, SynthesisError> {
-    if params.output_len() != 1 && params.security_level() != 126 {
-        return Err(SynthesisError::Unsatisfiable);
-    }
-    let bits_per_hash = params.security_level() as usize * 2;
+    hasher: &H,
+) -> Result<BigNat<E>, SynthesisError>
+where
+    E: Engine,
+    H: CircuitHasher<E = E>,
+    CS: ConstraintSystem<E>,
+{
+    let bits_per_hash = E::Fr::CAPACITY as usize;
     let bits_from_hash = domain.n_bits - 1 - domain.n_trailing_ones;
     let n_hashes = (bits_from_hash - 1) / bits_per_hash + 1;
 
     // First we hash the inputs, with poseidon
-    let hash = sapling_crypto::circuit::poseidon_hash::poseidon_hash(
-        cs.namespace(|| "inputs"),
-        &input,
-        params,
-    )?
-    .pop()
-    .unwrap();
+    let hash = hasher.allocate_hash(cs.namespace(|| "inputs"), &input)?;
 
     let mut hash_bits = hash.into_bits_le_strict(cs.namespace(|| "bitify"))?;
     hash_bits.truncate(bits_per_hash);
@@ -181,28 +167,23 @@ pub fn hash_to_integer<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: ConstraintS
     Ok(nat.group_limbs(limb_width))
 }
 
-pub fn hash_to_rsa_element<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: ConstraintSystem<E>>(
+pub fn hash_to_rsa_element<E, H, CS>(
     mut cs: CS,
     input: &mut MaybeHashed<E>,
     limb_width: usize,
     domain: &HashDomain,
     offset: Reduced<E>,
-    params: &E::Params,
-) -> Result<BigNat<E>, SynthesisError> {
-    if params.output_len() != 1 && params.security_level() != 126 {
-        return Err(SynthesisError::Unsatisfiable);
-    }
-    let bits_per_hash = params.security_level() as usize * 2;
+    hasher: &H,
+) -> Result<BigNat<E>, SynthesisError>
+where
+    E: Engine,
+    H: CircuitHasher<E = E> + Hasher<F = E::Fr>,
+    CS: ConstraintSystem<E>,
+{
+    let bits_per_hash = H::F::CAPACITY as usize;
     assert!(domain.n_bits % limb_width == 0);
-    let hash: AllocatedNum<E> = input.get_hash(|values| {
-        Ok(sapling_crypto::circuit::poseidon_hash::poseidon_hash(
-            cs.namespace(|| "inputs"),
-            values,
-            params,
-        )?
-        .pop()
-        .unwrap())
-    })?;
+    let hash: AllocatedNum<E> =
+        input.get_hash(|values| hasher.allocate_hash(cs.namespace(|| "inputs"), values))?;
     let hash_bits = hash.into_bits_le_strict(cs.namespace(|| "bitify"))?;
     let bits: Vec<Boolean> = hash_bits.into_iter().take(bits_per_hash).collect();
     let x = BigNat::<E>::recompose(
@@ -216,32 +197,24 @@ pub fn hash_to_rsa_element<E: PoseidonEngine<SBox = QuinticSBox<E>>, CS: Constra
     x.add::<CS>(&offset.raw)
 }
 
-pub fn hash_to_modded_rsa_element<
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
-    CS: ConstraintSystem<E>,
->(
+pub fn hash_to_modded_rsa_element<E, H, CS>(
     mut cs: CS,
     input: &mut MaybeHashed<E>,
     limb_width: usize,
     domain: &HashDomain,
     offset: &Reduced<E>,
     challenge: &BigNat<E>,
-    params: &E::Params,
-) -> Result<Reduced<E>, SynthesisError> {
-    if params.output_len() != 1 && params.security_level() != 126 {
-        return Err(SynthesisError::Unsatisfiable);
-    }
-    let bits_per_hash = params.security_level() as usize * 2;
+    hasher: &H,
+) -> Result<Reduced<E>, SynthesisError>
+where
+    E: Engine,
+    H: CircuitHasher<E = E> + Hasher<F = E::Fr>,
+    CS: ConstraintSystem<E>,
+{
+    let bits_per_hash = H::F::CAPACITY as usize;
     assert!(domain.n_bits % limb_width == 0);
-    let hash: AllocatedNum<E> = input.get_hash(|values| {
-        Ok(sapling_crypto::circuit::poseidon_hash::poseidon_hash(
-            cs.namespace(|| "inputs"),
-            values,
-            params,
-        )?
-        .pop()
-        .unwrap())
-    })?;
+    let hash: AllocatedNum<E> =
+        input.get_hash(|values| hasher.allocate_hash(cs.namespace(|| "inputs"), values))?;
     let hash_bits = hash.into_bits_le_strict(cs.namespace(|| "bitify"))?;
     let bits: Vec<Boolean> = hash_bits.into_iter().take(bits_per_hash).collect();
     let x = BigNat::<E>::recompose(
@@ -263,41 +236,39 @@ pub fn hash_to_modded_rsa_element<
 
 #[cfg(test)]
 mod test {
-    use hash::HashDomain;
-    use hash::circuit::MaybeHashed;
+    use super::*;
+
     use num_bigint::BigUint;
     use sapling_crypto::bellman::pairing::ff::PrimeField;
     use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
     use sapling_crypto::circuit::num::AllocatedNum;
-    use sapling_crypto::group_hash::Keccak256Hasher;
-    use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
-    use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
 
     use std::str::FromStr;
 
+    use hash::Hasher;
+    use hash::circuit::CircuitHasher;
+    use hash::hashes::Poseidon;
     use bignat::BigNat;
     use OptionExt;
 
     use test_helpers::*;
 
-    #[derive(Debug)]
     pub struct RsaHashInputs<'a> {
         pub inputs: &'a [&'a str],
     }
 
-    #[derive(Debug)]
-    pub struct RsaHashParams<E: PoseidonEngine<SBox = QuinticSBox<E>>> {
+    pub struct RsaHashParams<H> {
         pub desired_bits: usize,
         pub limb_width: usize,
-        pub hash: E::Params,
+        pub hasher: H,
     }
 
-    pub struct RsaHash<'a, E: PoseidonEngine<SBox = QuinticSBox<E>>> {
+    pub struct RsaHash<'a, H> {
         inputs: Option<RsaHashInputs<'a>>,
-        params: RsaHashParams<E>,
+        params: RsaHashParams<H>,
     }
 
-    impl<'a, E: PoseidonEngine<SBox = QuinticSBox<E>>> Circuit<E> for RsaHash<'a, E> {
+    impl<'a, E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>> Circuit<E> for RsaHash<'a, H> {
         fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
             let input_values: Vec<E::Fr> = self
                 .inputs
@@ -312,7 +283,7 @@ mod test {
             let challenge =
                 BigNat::alloc_from_nat(cs.namespace(|| "challenge"), || Ok(cv.clone()), 32, 6)?;
             let offset = super::allocate_offset(cs.namespace(|| "offset"), &challenge, 2048)?;
-            let expected_ouput = super::helper::hash_to_rsa_element::<E>(
+            let expected_ouput = super::helper::hash_to_rsa_element(
                 &input_values,
                 offset.raw.value.as_ref().unwrap(),
                 &HashDomain {
@@ -320,7 +291,7 @@ mod test {
                     n_trailing_ones: 1,
                 },
                 self.params.limb_width,
-                &self.params.hash,
+                &self.params.hasher,
             ) % &cv;
 
             let allocated_expected_output = BigNat::alloc_from_nat(
@@ -347,8 +318,9 @@ mod test {
                 },
                 &offset,
                 &challenge,
-                &self.params.hash,
+                &self.params.hasher,
             )?;
+            println!("{:#?} {:#?}", hash.reduced, allocated_expected_output);
             hash.reduced
                 .equal_when_carried_regroup(cs.namespace(|| "eq"), &allocated_expected_output)?;
             Ok(())
@@ -367,7 +339,7 @@ mod test {
                     params: RsaHashParams {
                         desired_bits: 2048,
                         limb_width: 32,
-                        hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+                        hasher: Poseidon::default(),
                     }
         }, true),
         hash_ten_2048_bit_flip: (RsaHash {
@@ -381,7 +353,7 @@ mod test {
                     params: RsaHashParams {
                         desired_bits: 2048,
                         limb_width: 32,
-                        hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+                        hasher: Poseidon::default(),
                     }
         }, true),
         hash_ten_2048: (RsaHash {
@@ -395,7 +367,7 @@ mod test {
                     params: RsaHashParams {
                         desired_bits: 2048,
                         limb_width: 32,
-                        hash: Bn256PoseidonParams::new::<Keccak256Hasher>(),
+                        hasher: Poseidon::default(),
                     }
         }, true),
     }

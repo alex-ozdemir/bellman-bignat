@@ -1,11 +1,14 @@
 use sapling_crypto::jubjub::JubjubEngine;
-use sapling_crypto::poseidon::{PoseidonEngine, PoseidonHashParams, QuinticSBox};
+use sapling_crypto::poseidon::{PoseidonEngine, PoseidonHashParams, QuinticSBox, bn256::Bn256PoseidonParams};
+use sapling_crypto::bellman::pairing::bn256::Bn256;
+use sapling_crypto::group_hash::Keccak256Hasher;
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::ConstraintSystem;
 use sapling_crypto::circuit::num::AllocatedNum;
 
 use std::marker::PhantomData;
 use std::rc::Rc;
+use std::default::Default;
 
 use super::circuit::CircuitHasher;
 use super::Hasher;
@@ -21,6 +24,15 @@ where
     E: PoseidonEngine<SBox = QuinticSBox<E>>,
 {
     pub params: Rc<E::Params>,
+}
+
+impl Default for Poseidon<Bn256>
+{
+    fn default() -> Self {
+        Self {
+            params: Rc::new(Bn256PoseidonParams::new::<Keccak256Hasher>()),
+        }
+    }
 }
 
 impl<E> Hasher for Poseidon<E>

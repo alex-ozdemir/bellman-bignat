@@ -74,7 +74,7 @@ where
     E: JubjubEngine + PoseidonEngine<SBox = QuinticSBox<E>>,
 {
     map: HashMap<Vec<u8>, Account<E>>,
-    set: MerkleSet<E, Poseidon<E>>,
+    set: MerkleSet<Poseidon<E>>,
 }
 
 impl<E> Accounts<E>

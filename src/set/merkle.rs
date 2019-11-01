@@ -21,40 +21,38 @@ use OptionExt;
 /// Unoccupied leaves are assumed to be zero. This allows nodes with no occupied children to have a
 /// pre-determined hash.
 #[derive(Clone)]
-pub struct MerkleSet<E, H>
+pub struct MerkleSet<H>
 where
-    E: Engine,
-    H: Hasher<F = E::Fr>,
+    H: Hasher,
 {
     pub hasher: H,
 
     /// Level i holds 2 ** i elements. Level 0 is the root.
     /// Maps (level, idx in level) -> hash value
-    pub nodes: FnvHashMap<(usize, usize), E::Fr>,
+    pub nodes: FnvHashMap<(usize, usize), H::F>,
 
     /// default[i] is the hash value for a node at level i which has no occupied descendents
-    pub defaults: Vec<E::Fr>,
+    pub defaults: Vec<H::F>,
 
     /// The number of non-root levels. The number of leaves is 2 ** depth.
     pub depth: usize,
 
     /// Map from a leave to its index in the array of leaves
-    pub leaf_indices: BTreeMap<<E::Fr as PrimeField>::Repr, usize>,
+    pub leaf_indices: BTreeMap<<H::F as PrimeField>::Repr, usize>,
 }
 
-impl<E, H> MerkleSet<E, H>
+impl<H> MerkleSet<H>
 where
-    E: Engine,
-    H: Hasher<F = E::Fr>,
+    H: Hasher,
 {
     pub fn new_with<'b>(
         hasher: H,
         depth: usize,
-        items: impl IntoIterator<Item = &'b [E::Fr]>,
+        items: impl IntoIterator<Item = &'b [H::F]>,
     ) -> Self {
-        let leaves: Vec<E::Fr> = items.into_iter().map(|s| hasher.hash(s)).collect();
+        let leaves: Vec<H::F> = items.into_iter().map(|s| hasher.hash(s)).collect();
         let n = leaves.len();
-        let leaf_indices: BTreeMap<<E::Fr as PrimeField>::Repr, usize> = leaves
+        let leaf_indices: BTreeMap<<H::F as PrimeField>::Repr, usize> = leaves
             .iter()
             .enumerate()
             .map(|(i, e)| (e.into_repr(), i))
@@ -65,7 +63,7 @@ where
             nodes.insert((depth, i), hash);
         }
         let defaults = {
-            let mut d = vec![usize_to_f::<E::Fr>(0)];
+            let mut d = vec![usize_to_f::<H::F>(0)];
             while d.len() <= depth {
                 let prev = d.last().unwrap().clone();
                 d.push(hasher.hash2(prev.clone(), prev));
@@ -86,12 +84,11 @@ where
         this
     }
 }
-impl<E, H> MerkleSet<E, H>
+impl<H> MerkleSet<H>
 where
-    E: Engine,
-    H: Hasher<F = E::Fr>,
+    H: Hasher,
 {
-    fn get_node(&self, level: usize, index: usize) -> &E::Fr {
+    fn get_node(&self, level: usize, index: usize) -> &H::F {
         self.nodes
             .get(&(level, index))
             .unwrap_or_else(|| &self.defaults[level])
@@ -111,7 +108,7 @@ where
     /// Given an item, returns the witness that the item is in the set. The witness is a sequence
     /// of pairs (bit, hash), where bit is true if hash is a right child on the path to the item.
     /// The sequence starts at the top of the tree, going down.
-    fn witness(&self, item: &[E::Fr]) -> Vec<(bool, E::Fr)> {
+    fn witness(&self, item: &[H::F]) -> Vec<(bool, H::F)> {
         println!("{:?}", self.leaf_indices);
         let o_r = self.hasher.hash(item).into_repr();
         let i = *self
@@ -129,14 +126,14 @@ where
     }
 }
 
-impl<E, H> GenSet<E> for MerkleSet<E, H>
+impl<H> GenSet<H::F> for MerkleSet<H>
 where
-    E: Engine,
-    H: Hasher<F = E::Fr>,
+    H: Hasher,
+    H::F: PrimeField,
 {
-    type Digest = E::Fr;
+    type Digest = H::F;
 
-    fn swap(&mut self, old: &[E::Fr], new: Vec<E::Fr>) {
+    fn swap(&mut self, old: &[H::F], new: Vec<H::F>) {
         let o_r = self.hasher.hash(old).into_repr();
         let n = self.hasher.hash(&new);
         let n_r = n.into_repr();
@@ -171,7 +168,7 @@ where
     H: Hasher<F = E::Fr>,
     CH: CircuitHasher<E = E>,
 {
-    pub value: Option<MerkleSet<E, H>>,
+    pub value: Option<MerkleSet<H>>,
     pub digest: AllocatedNum<E>,
     pub depth: usize,
     pub hasher: CH,
@@ -184,7 +181,7 @@ where
     CH: CircuitHasher<E = E>,
 {
     type E = E;
-    type Value = MerkleSet<E, H>;
+    type Value = MerkleSet<H>;
     type Access = CH;
     type Params = usize;
     fn alloc<CS: ConstraintSystem<Self::E>>(
@@ -327,7 +324,7 @@ where
     E: PoseidonEngine<SBox = QuinticSBox<E>>,
 {
     /// The initial state of the set
-    pub initial_state: MerkleSet<E, Poseidon<E>>,
+    pub initial_state: MerkleSet<Poseidon<E>>,
     /// The items to remove from the set
     pub to_remove: Vec<Vec<E::Fr>>,
     /// The items to insert into the set

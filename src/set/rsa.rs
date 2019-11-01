@@ -1,19 +1,18 @@
 use num_bigint::BigUint;
 use sapling_crypto::bellman::pairing::ff::{PrimeField, ScalarEngine};
+use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{Circuit, ConstraintSystem, LinearCombination, SynthesisError};
 use sapling_crypto::circuit::num::AllocatedNum;
 use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
 
 use std::fmt::{self, Debug, Formatter};
-use std::marker::PhantomData;
-use std::rc::Rc;
 
 use bignat::BigNat;
 use gadget::Gadget;
 use group::{CircuitRsaQuotientGroup, CircuitRsaGroupParams, CircuitSemiGroup, RsaQuotientGroup, SemiGroup};
 use hash::{pocklington, rsa, HashDomain};
 use hash::circuit::{MaybeHashed, CircuitHasher};
-use hash::hashes::Poseidon;
+use hash::Hasher;
 use set::{GenSet, CircuitGenSet};
 use set::int_set::{CircuitIntSet, IntSet, NaiveExpSet};
 use wesolowski::Reduced;
@@ -22,23 +21,21 @@ use OptionExt;
 
 #[derive(Derivative)]
 #[derivative(Clone(bound = ""))]
-pub struct Set<E, Inner>
+pub struct Set<H, Inner>
 where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    H: Hasher,
     Inner: IntSet,
 {
     pub inner: Inner,
     pub offset: BigUint,
-    pub hash_params: Rc<<E as PoseidonEngine>::Params>,
+    pub hasher: H,
     pub hash_domain: HashDomain,
     pub limb_width: usize,
-    // TODO revisit upon the resolution of https://github.com/rust-lang/rust/issues/64155
-    pub _phant: PhantomData<E>,
 }
 
-impl<E, Inner> Debug for Set<E, Inner>
+impl<H, Inner> Debug for Set<H, Inner>
 where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    H: Hasher,
     Inner: IntSet,
 {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
@@ -46,14 +43,14 @@ where
     }
 }
 
-impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> Set<E, Inner> {
+impl<H: Hasher, Inner: IntSet> Set<H, Inner> {
     pub fn new_with<'b>(
         group: Inner::G,
         offset: BigUint,
-        hash_params: Rc<E::Params>,
+        hasher: H,
         element_bits: usize,
         limb_width: usize,
-        items: impl IntoIterator<Item = &'b [E::Fr]>,
+        items: impl IntoIterator<Item = &'b [<H as Hasher>::F]>,
     ) -> Self {
         let hash_domain = HashDomain {
             n_bits: element_bits,
@@ -62,12 +59,12 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> Set<E, Inner> {
         let inner = Inner::new_with(
             group,
             items.into_iter().map(|slice| {
-                rsa::helper::hash_to_rsa_element::<E>(
+                rsa::helper::hash_to_rsa_element::<H>(
                     slice,
                     &offset,
                     &hash_domain,
                     limb_width,
-                    &hash_params,
+                    &hasher,
                 )
             }),
         );
@@ -75,9 +72,8 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> Set<E, Inner> {
             inner,
             offset: offset,
             hash_domain,
-            hash_params,
+            hasher,
             limb_width,
-            _phant: PhantomData::default(),
         }
     }
 
@@ -87,29 +83,29 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> Set<E, Inner> {
     }
 
     /// Add `n` to the set.
-    pub fn insert(&mut self, n: Vec<E::Fr>) {
-        let x = rsa::helper::hash_to_rsa_element::<E>(
+    pub fn insert(&mut self, n: Vec<H::F>) {
+        let x = rsa::helper::hash_to_rsa_element::<H>(
             &n,
             &self.offset,
             &self.hash_domain,
             self.limb_width,
-            &self.hash_params,
+            &self.hasher,
         );
         self.inner.insert(x)
     }
     /// Remove `n` from the set, returning whether `n` was present.
-    pub fn remove(&mut self, n: &[E::Fr]) -> bool {
-        let x = rsa::helper::hash_to_rsa_element::<E>(
+    pub fn remove(&mut self, n: &[H::F]) -> bool {
+        let x = rsa::helper::hash_to_rsa_element::<H>(
             &n,
             &self.offset,
             &self.hash_domain,
             self.limb_width,
-            &self.hash_params,
+            &self.hasher,
         );
         self.inner.remove(&x)
     }
 
-    pub fn remove_all<'b, I: IntoIterator<Item = &'b [E::Fr]>>(&mut self, ns: I) -> bool
+    pub fn remove_all<'b, I: IntoIterator<Item = &'b [H::F]>>(&mut self, ns: I) -> bool
     where
         <Inner::G as SemiGroup>::Elem: 'b,
     {
@@ -120,21 +116,21 @@ impl<E: PoseidonEngine<SBox = QuinticSBox<E>>, Inner: IntSet> Set<E, Inner> {
         all_present
     }
 
-    pub fn insert_all<I: IntoIterator<Item = Vec<E::Fr>>>(&mut self, ns: I) {
+    pub fn insert_all<I: IntoIterator<Item = Vec<H::F>>>(&mut self, ns: I) {
         for n in ns {
             self.insert(n);
         }
     }
 }
 
-impl<E, Inner> GenSet<E> for Set<E, Inner>
+impl<H, Inner> GenSet<H::F> for Set<H, Inner>
 where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    H: Hasher,
     Inner: IntSet,
 {
     type Digest = <Inner::G as SemiGroup>::Elem;
 
-    fn swap(&mut self, old: &[E::Fr], new: Vec<E::Fr>) {
+    fn swap(&mut self, old: &[H::F], new: Vec<H::F>) {
         self.insert(new);
         self.remove(old);
     }
@@ -145,15 +141,14 @@ where
     }
 }
 
-#[derive(Derivative)]
-#[derivative(Clone(bound = ""))]
-pub struct CircuitSetParams<HParams> {
-    pub hash: Rc<HParams>,
+#[derive(Clone)]
+pub struct CircuitSetParams<H> {
+    pub hasher: H,
     pub n_bits: usize,
     pub limb_width: usize,
 }
 
-impl<HParams> CircuitSetParams<HParams> {
+impl<H> CircuitSetParams<H> {
     fn hash_domain(&self) -> HashDomain {
         HashDomain {
             n_bits: self.n_bits,
@@ -164,32 +159,34 @@ impl<HParams> CircuitSetParams<HParams> {
 
 #[derive(Derivative)]
 #[derivative(Clone(bound = ""))]
-pub struct CircuitSet<E, CG, Inner>
+pub struct CircuitSet<E, H, CG, Inner>
 where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: Engine,
+    H: CircuitHasher<E = E> + Hasher<F = E::Fr>,
     CG: CircuitSemiGroup<E = E> + Gadget<E = E, Value = <CG as CircuitSemiGroup>::Group>,
     CG::Elem: Gadget<E = E, Value = <CG::Group as SemiGroup>::Elem, Access = ()>,
     Inner: IntSet<G = <CG as CircuitSemiGroup>::Group>,
 {
-    pub value: Option<Set<E, Inner>>,
+    pub value: Option<Set<H, Inner>>,
     pub offset: Reduced<E>,
     pub access: (CG, BigNat<E>),
     pub inner: CircuitIntSet<E, CG, Inner>,
-    pub params: CircuitSetParams<E::Params>,
+    pub params: CircuitSetParams<H>,
 }
 
-impl<E, CG, Inner> Gadget for CircuitSet<E, CG, Inner>
+impl<E, H, CG, Inner> Gadget for CircuitSet<E, H, CG, Inner>
 where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: Engine,
+    H: CircuitHasher<E = E> + Hasher<F = E::Fr>,
     CG: CircuitSemiGroup<E = E> + Gadget<E = E, Value = <CG as CircuitSemiGroup>::Group>,
     CG::Elem: Gadget<E = E, Value = <CG::Group as SemiGroup>::Elem, Access = ()>,
     Inner: IntSet<G = <CG as CircuitSemiGroup>::Group>,
 {
     type E = E;
-    type Value = Set<E, Inner>;
+    type Value = Set<H, Inner>;
     /// Access is the circuit group and the challenge.
     type Access = (CG, BigNat<E>);
-    type Params = CircuitSetParams<E::Params>;
+    type Params = CircuitSetParams<H>;
     fn alloc<CS: ConstraintSystem<Self::E>>(
         mut cs: CS,
         value: Option<&Self::Value>,
@@ -231,9 +228,10 @@ where
     }
 }
 
-impl<E, CG, Inner> CircuitSet<E, CG, Inner>
+impl<E, H, CG, Inner> CircuitSet<E, H, CG, Inner>
 where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: Engine,
+    H: CircuitHasher<E = E> + Hasher<F = E::Fr>,
     CG: CircuitSemiGroup<E = E> + Gadget<E = E, Value = <CG as CircuitSemiGroup>::Group>,
     CG::Elem: Gadget<E = E, Value = <CG::Group as SemiGroup>::Elem, Access = ()>,
     Inner: IntSet<G = <CG as CircuitSemiGroup>::Group>,
@@ -254,7 +252,7 @@ where
                     &self.params.hash_domain(),
                     &self.offset,
                     &self.access.1,
-                    &self.params.hash,
+                    &self.params.hasher,
                 )
             })
             .collect::<Result<Vec<Reduced<E>>, SynthesisError>>()?;
@@ -297,7 +295,7 @@ where
                     &self.params.hash_domain(),
                     &self.offset,
                     &self.access.1,
-                    &self.params.hash,
+                    &self.params.hasher,
                 )
             })
             .collect::<Result<Vec<Reduced<E>>, SynthesisError>>()?;
@@ -327,9 +325,10 @@ where
     }
 }
 
-impl<E, CG, Inner> CircuitGenSet for CircuitSet<E, CG, Inner>
+impl<E, H, CG, Inner> CircuitGenSet for CircuitSet<E, H, CG, Inner>
 where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: Engine,
+    H: CircuitHasher<E = E> + Hasher<F = E::Fr>,
     CG: CircuitSemiGroup<E = E> + Gadget<E = E, Value = <CG as CircuitSemiGroup>::Group>,
     CG::Elem: Gadget<E = E, Value = <CG::Group as SemiGroup>::Elem, Access = ()>,
     Inner: IntSet<G = <CG as CircuitSemiGroup>::Group>,
@@ -347,23 +346,23 @@ where
     }
 }
 
-pub struct SetBenchInputs<E, Inner>
+pub struct SetBenchInputs<H, Inner>
 where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    H: Hasher,
     Inner: IntSet,
 {
     /// The initial state of the set
-    pub initial_state: Set<E, Inner>,
+    pub initial_state: Set<H, Inner>,
     pub final_digest: BigUint,
     /// The items to remove from the set
-    pub to_remove: Vec<Vec<E::Fr>>,
+    pub to_remove: Vec<Vec<H::F>>,
     /// The items to insert into the set
-    pub to_insert: Vec<Vec<E::Fr>>,
+    pub to_insert: Vec<Vec<H::F>>,
 }
 
-impl<E, Inner> SetBenchInputs<E, Inner>
+impl<H, Inner> SetBenchInputs<H, Inner>
 where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    H: Hasher,
     Inner: IntSet<G = RsaQuotientGroup>,
 {
     pub fn from_counts(
@@ -371,7 +370,7 @@ where
         n_removed: usize,
         n_inserted: usize,
         item_len: usize,
-        hash: Rc<E::Params>,
+        hasher: H,
         n_bits_elem: usize,
         limb_width: usize,
         group: RsaQuotientGroup,
@@ -402,7 +401,7 @@ where
             untouched_items,
             removed_items,
             inserted_items,
-            hash,
+            hasher,
             n_bits_elem,
             limb_width,
             group,
@@ -412,22 +411,22 @@ where
         untouched_items: Vec<Vec<String>>,
         removed_items: Vec<Vec<String>>,
         inserted_items: Vec<Vec<String>>,
-        hash: Rc<E::Params>,
+        hasher: H,
         n_bits_elem: usize,
         limb_width: usize,
         group: RsaQuotientGroup,
     ) -> Self {
-        let untouched: Vec<Vec<E::Fr>> = untouched_items
+        let untouched: Vec<Vec<H::F>> = untouched_items
             .iter()
-            .map(|i| i.iter().map(|j| E::Fr::from_str(j).unwrap()).collect())
+            .map(|i| i.iter().map(|j| H::F::from_str(j).unwrap()).collect())
             .collect();
-        let removed: Vec<Vec<E::Fr>> = removed_items
+        let removed: Vec<Vec<H::F>> = removed_items
             .iter()
-            .map(|i| i.iter().map(|j| E::Fr::from_str(j).unwrap()).collect())
+            .map(|i| i.iter().map(|j| H::F::from_str(j).unwrap()).collect())
             .collect();
-        let inserted: Vec<Vec<E::Fr>> = inserted_items
+        let inserted: Vec<Vec<H::F>> = inserted_items
             .iter()
-            .map(|i| i.iter().map(|j| E::Fr::from_str(j).unwrap()).collect())
+            .map(|i| i.iter().map(|j| H::F::from_str(j).unwrap()).collect())
             .collect();
         let hash_domain = HashDomain {
             n_bits: n_bits_elem,
@@ -435,10 +434,10 @@ where
         };
         let offset = rsa::offset(n_bits_elem);
         let untouched_hashes = untouched.iter().map(|xs| {
-            rsa::helper::hash_to_rsa_element::<E>(&xs, &offset, &hash_domain, limb_width, &hash)
+            rsa::helper::hash_to_rsa_element::<H>(&xs, &offset, &hash_domain, limb_width, &hasher)
         });
         let inserted_hashes = inserted.iter().map(|xs| {
-            rsa::helper::hash_to_rsa_element::<E>(&xs, &offset, &hash_domain, limb_width, &hash)
+            rsa::helper::hash_to_rsa_element::<H>(&xs, &offset, &hash_domain, limb_width, &hasher)
         });
         let final_digest = untouched_hashes
             .clone()
@@ -447,7 +446,7 @@ where
         let initial_state = Set::new_with(
             group,
             offset,
-            hash,
+            hasher,
             n_bits_elem,
             limb_width,
             untouched.iter().chain(&removed).map(|v| v.as_slice()),
@@ -461,8 +460,7 @@ where
     }
 }
 
-#[derive(Clone)]
-pub struct SetBenchParams<E: PoseidonEngine> {
+pub struct SetBenchParams<H> {
     pub group: RsaQuotientGroup,
     pub limb_width: usize,
     pub n_bits_base: usize,
@@ -471,30 +469,28 @@ pub struct SetBenchParams<E: PoseidonEngine> {
     pub item_size: usize,
     pub n_removes: usize,
     pub n_inserts: usize,
-    pub hash: Rc<E::Params>,
+    pub hasher: H,
     pub verbose: bool,
 }
 
-pub struct SetBench<E, Inner>
+pub struct SetBench<H, Inner>
 where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    H: Hasher,
     Inner: IntSet,
 {
-    pub inputs: Option<SetBenchInputs<E, Inner>>,
-    pub params: SetBenchParams<E>,
+    pub inputs: Option<SetBenchInputs<H, Inner>>,
+    pub params: SetBenchParams<H>,
 }
 
-impl<E> Circuit<E> for SetBench<E, NaiveExpSet<RsaQuotientGroup>>
+impl<E, H> Circuit<E> for SetBench<H, NaiveExpSet<RsaQuotientGroup>>
 where
     E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    H: Hasher<F = E::Fr> + CircuitHasher<E = E>,
 {
     fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
         if self.params.verbose {
             println!("Allocating Deletions...");
         }
-        let hasher = Poseidon {
-            params: self.params.hash.clone(),
-        };
         let removals = (0..self.params.n_removes)
             .map(|i| {
                 let mut cs = cs.namespace(|| "init removals");
@@ -505,7 +501,7 @@ where
                         })
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                let hash = hasher.allocate_hash(cs.namespace(|| format!("hash {}", i)), &values)?;
+                let hash = self.params.hasher.allocate_hash(cs.namespace(|| format!("hash {}", i)), &values)?;
                 Ok(MaybeHashed::new(values, hash))
             })
             .collect::<Result<Vec<MaybeHashed<E>>, SynthesisError>>()?;
@@ -523,7 +519,7 @@ where
                         })
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                let hash = hasher.allocate_hash(cs.namespace(|| format!("hash {}", i)), &values)?;
+                let hash = self.params.hasher.allocate_hash(cs.namespace(|| format!("hash {}", i)), &values)?;
                 Ok(MaybeHashed::new(values, hash))
             })
             .collect::<Result<Vec<MaybeHashed<E>>, SynthesisError>>()?;
@@ -562,7 +558,7 @@ where
             &to_hash_to_challenge,
             self.params.limb_width,
             self.params.n_bits_challenge,
-            &self.params.hash,
+            &self.params.hasher,
         )?;
 
         if self.params.verbose {
@@ -586,12 +582,12 @@ where
         if self.params.verbose {
             println!("Constructing Set");
         }
-        let set: CircuitSet<E, CircuitRsaQuotientGroup<E>, NaiveExpSet<RsaQuotientGroup>> = CircuitSet::alloc(
+        let set: CircuitSet<E, H, CircuitRsaQuotientGroup<E>, NaiveExpSet<RsaQuotientGroup>> = CircuitSet::alloc(
             cs.namespace(|| "set init"),
             self.inputs.as_ref().map(|is| &is.initial_state),
             (group, challenge),
             &CircuitSetParams {
-                hash: self.params.hash.clone(),
+                hasher: self.params.hasher.clone(),
                 n_bits: self.params.n_bits_elem,
                 limb_width: self.params.limb_width,
             },
@@ -629,8 +625,7 @@ mod test {
     const RSA_512: &str = "11834783464130424096695514462778870280264989938857328737807205623069291535525952722847913694296392927890261736769191982212777933726583565708193466779811767";
 
     use super::*;
-    use sapling_crypto::group_hash::Keccak256Hasher;
-    use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
+    use hash::hashes::Poseidon;
     use std::str::FromStr;
     use test_helpers::*;
 
@@ -644,7 +639,7 @@ mod test {
                             [
                             ["0", "1", "2", "3", "5"].iter().map(|s| s.to_string()).collect(),
                             ].to_vec(),
-                            Rc::new(Bn256PoseidonParams::new::<Keccak256Hasher>()),
+                            Poseidon::default(),
                             128,
                             32,
                             RsaQuotientGroup {
@@ -664,7 +659,7 @@ mod test {
                         item_size: 5,
                         n_inserts: 1,
                         n_removes: 1,
-                        hash: Rc::new(Bn256PoseidonParams::new::<Keccak256Hasher>()),
+                        hasher: Poseidon::default(),
                         verbose: true,
                     },
         }, true),

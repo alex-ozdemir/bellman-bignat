@@ -7,6 +7,7 @@ use std::clone::Clone;
 
 use num_bigint::BigUint;
 use num_traits::One;
+use sapling_crypto::bellman::pairing::ff::PrimeField;
 use sapling_crypto::bellman::pairing::ff::Field;
 
 /// A representation of an integer domain to hash to
@@ -30,7 +31,7 @@ pub fn low_k_bits(n: &BigUint, k: usize) -> BigUint {
 }
 
 pub trait Hasher: Clone {
-    type F: Field;
+    type F: PrimeField;
     fn hash2(&self, a: Self::F, b: Self::F) -> Self::F;
     fn hash(&self, inputs: &[Self::F]) -> Self::F {
         let mut acc = Self::F::zero();

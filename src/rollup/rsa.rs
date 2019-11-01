@@ -8,15 +8,15 @@ use sapling_crypto::circuit::num::AllocatedNum;
 use sapling_crypto::eddsa::{PrivateKey, PublicKey};
 use sapling_crypto::jubjub::edwards::Point;
 use sapling_crypto::jubjub::{FixedGenerators, JubjubEngine, JubjubParams, PrimeOrder};
-use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
 
 use bignat::BigNat;
 use f_to_usize;
 use gadget::Gadget;
-use group::{CircuitRsaQuotientGroup, CircuitRsaGroupParams, RsaQuotientGroup};
+use group::{CircuitRsaGroupParams, CircuitRsaQuotientGroup, RsaQuotientGroup};
 use hash;
 use hash::circuit::CircuitHasher;
-use hash::hashes::{Pedersen, Poseidon};
+use hash::hashes::Pedersen;
+use hash::Hasher;
 use num::Num;
 use rollup::sig::allocate_point;
 use rollup::tx::circuit::CircuitSignedTx;
@@ -79,25 +79,27 @@ where
 #[derive(Derivative)]
 #[derivative(Clone(bound = ""))]
 #[derivative(Debug(bound = ""))]
-pub struct Accounts<E>
+pub struct Accounts<E, H>
 where
-    E: JubjubEngine + PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: JubjubEngine,
+    H: Hasher<F = E::Fr>,
 {
     map: HashMap<Vec<u8>, Account<E>>,
-    set: Set<E, NaiveExpSet<RsaQuotientGroup>>,
+    set: Set<H, NaiveExpSet<RsaQuotientGroup>>,
 }
 
-impl<E> Accounts<E>
+impl<H, E> Accounts<E, H>
 where
-    E: JubjubEngine + PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: JubjubEngine,
+    H: Hasher<F = E::Fr>,
 {
-    pub fn new(s: &RsaParams<E>) -> Accounts<E> {
+    pub fn new(s: &RsaParams<H>) -> Self {
         Self {
             map: HashMap::new(),
             set: Set::new_with(
                 s.group.clone(),
                 hash::rsa::offset(s.n_bits_elem),
-                s.hash.clone(),
+                s.hasher.clone(),
                 s.n_bits_elem,
                 s.limb_width,
                 vec![],
@@ -174,15 +176,16 @@ pub fn public_key_value<E: JubjubEngine>(
     )?))
 }
 
-pub fn allocate_account<E, CS>(
+pub fn allocate_account<E, H, CS>(
     mut cs: CS,
-    accounts: Option<&Accounts<E>>,
+    accounts: Option<&Accounts<E, H>>,
     k: EdwardsPoint<E>,
     next_tx_no: Option<AllocatedNum<E>>,
     p: &<E as JubjubEngine>::Params,
 ) -> CResult<CircuitAccount<E>>
 where
-    E: JubjubEngine + PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: JubjubEngine,
+    H: Hasher<F = E::Fr> + CircuitHasher<E = E>,
     CS: ConstraintSystem<E>,
 {
     let next_tx_no = if let Some(next_tx_no) = next_tx_no {
@@ -295,24 +298,26 @@ where
     }
 }
 
-pub struct RollupBenchInputs<E>
+pub struct RollupBenchInputs<E, H>
 where
-    E: JubjubEngine + PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: JubjubEngine,
+    H: Hasher<F = E::Fr> + CircuitHasher<E = E>,
 {
     /// The transactions to do
     pub transactions: Vec<SignedTx<E>>,
     /// The initial account state
-    pub accounts: Accounts<E>,
+    pub accounts: Accounts<E, H>,
     /// The expected final state
     pub final_digest: BigUint,
 }
 
-impl<E> RollupBenchInputs<E>
+impl<E, H> RollupBenchInputs<E, H>
 where
-    E: JubjubEngine + PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: JubjubEngine,
+    H: Hasher<F = E::Fr> + CircuitHasher<E = E>,
 {
     /// Creates a benchmark where `t` coins are exchanged in a pool of size `c`.
-    pub fn from_counts(c: usize, t: usize, p: &RollupBenchParams<E>) -> Self {
+    pub fn from_counts(c: usize, t: usize, p: &RollupBenchParams<E, H>) -> Self {
         let gens = FixedGenerators::SpendingKeyGenerator;
         let hasher = Pedersen::<E> {
             params: p.jj_params.clone(),
@@ -365,46 +370,48 @@ where
     }
 }
 
-pub struct RsaParams<E: PoseidonEngine> {
+pub struct RsaParams<H> {
     pub group: RsaQuotientGroup,
     pub limb_width: usize,
     pub n_bits_base: usize,
     pub n_bits_elem: usize,
     pub n_bits_challenge: usize,
-    pub hash: Rc<E::Params>,
+    pub hasher: H,
 }
 
-pub struct RollupBenchParams<E>
+pub struct RollupBenchParams<E, H>
 where
-    E: JubjubEngine + PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: JubjubEngine,
+    H: Hasher<F = E::Fr> + CircuitHasher<E = E>,
 {
     pub jj_params: Rc<<E as JubjubEngine>::Params>,
     pub sig_hasher: Pedersen<E>,
     pub gen: FixedGenerators,
     pub n_tx: usize,
-    pub set_params: RsaParams<E>,
+    pub set_params: RsaParams<H>,
 }
 
-pub struct RollupBench<E>
+pub struct RollupBench<E, H>
 where
-    E: JubjubEngine + PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: JubjubEngine,
+    H: Hasher<F = E::Fr> + CircuitHasher<E = E>,
 {
-    pub input: Option<RollupBenchInputs<E>>,
-    pub params: RollupBenchParams<E>,
+    pub input: Option<RollupBenchInputs<E, H>>,
+    pub params: RollupBenchParams<E, H>,
 }
 
-impl<E> RollupBench<E>
+impl<E, H> RollupBench<E, H>
 where
-    E: JubjubEngine + PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: JubjubEngine,
+    H: Hasher<F = E::Fr> + CircuitHasher<E = E>,
 {
     pub fn from_counts(
         c: usize,
         t: usize,
         jj_params: <E as JubjubEngine>::Params,
-        pos_params: <E as PoseidonEngine>::Params,
+        set_hash: H,
     ) -> Self {
         let jj_params = Rc::new(jj_params);
-        let pos_params = Rc::new(pos_params);
         let params = RollupBenchParams {
             jj_params: jj_params.clone(),
             sig_hasher: Pedersen {
@@ -421,7 +428,7 @@ where
                 n_bits_base: 2048,
                 n_bits_challenge: 128,
                 n_bits_elem: 2048,
-                hash: pos_params.clone(),
+                hasher: set_hash,
             },
         };
         Self {
@@ -431,9 +438,10 @@ where
     }
 }
 
-impl<E> Circuit<E> for RollupBench<E>
+impl<E, H> Circuit<E> for RollupBench<E, H>
 where
-    E: JubjubEngine + PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: JubjubEngine,
+    H: Hasher<F = E::Fr> + CircuitHasher<E = E>,
 {
     fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> CResult<()> {
         let gen_value = self
@@ -484,16 +492,16 @@ where
             inserted_accounts.push(dst_final);
         }
 
-        let hasher = Poseidon {
-            params: self.params.set_params.hash.clone(),
-        };
         let insertions = inserted_accounts
             .into_iter()
             .enumerate()
             .map(|(i, act)| {
                 let elems = act.as_elems();
-                let hash =
-                    hasher.allocate_hash(cs.namespace(|| format!("insert hash {}", i)), &elems)?;
+                let hash = self
+                    .params
+                    .set_params
+                    .hasher
+                    .allocate_hash(cs.namespace(|| format!("insert hash {}", i)), &elems)?;
                 Ok(hash::circuit::MaybeHashed::new(elems, hash))
             })
             .collect::<CResult<Vec<_>>>()?;
@@ -502,8 +510,11 @@ where
             .enumerate()
             .map(|(i, act)| {
                 let elems = act.as_elems();
-                let hash =
-                    hasher.allocate_hash(cs.namespace(|| format!("remove hash {}", i)), &elems)?;
+                let hash = self
+                    .params
+                    .set_params
+                    .hasher
+                    .allocate_hash(cs.namespace(|| format!("remove hash {}", i)), &elems)?;
                 Ok(hash::circuit::MaybeHashed::new(elems, hash))
             })
             .collect::<CResult<Vec<_>>>()?;
@@ -539,7 +550,7 @@ where
             &to_hash_to_challenge,
             self.params.set_params.limb_width,
             self.params.set_params.n_bits_challenge,
-            &self.params.set_params.hash,
+            &self.params.set_params.hasher,
         )?;
 
         let raw_group = self.input.as_ref().map(|s| s.accounts.set.group().clone());
@@ -554,16 +565,17 @@ where
         )?;
         group.inputize(cs.namespace(|| "group input"))?;
 
-        let set: CircuitSet<E, CircuitRsaQuotientGroup<E>, NaiveExpSet<RsaQuotientGroup>> = CircuitSet::alloc(
-            cs.namespace(|| "set init"),
-            self.input.as_ref().map(|is| &is.accounts.set),
-            (group, challenge),
-            &CircuitSetParams {
-                hash: self.params.set_params.hash.clone(),
-                n_bits: self.params.set_params.n_bits_elem,
-                limb_width: self.params.set_params.limb_width,
-            },
-        )?;
+        let set: CircuitSet<E, H, CircuitRsaQuotientGroup<E>, NaiveExpSet<RsaQuotientGroup>> =
+            CircuitSet::alloc(
+                cs.namespace(|| "set init"),
+                self.input.as_ref().map(|is| &is.accounts.set),
+                (group, challenge),
+                &CircuitSetParams {
+                    hasher: self.params.set_params.hasher.clone(),
+                    n_bits: self.params.set_params.n_bits_elem,
+                    limb_width: self.params.set_params.limb_width,
+                },
+            )?;
         set.inputize(cs.namespace(|| "initial_state input"))?;
         set.inner.digest.equal(
             cs.namespace(|| "initial digest matches"),
@@ -580,4 +592,3 @@ where
         Ok(())
     }
 }
-
