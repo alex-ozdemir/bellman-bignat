@@ -4,7 +4,6 @@ use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{Circuit, ConstraintSystem, LinearCombination, SynthesisError};
 use sapling_crypto::circuit::boolean::{AllocatedBit, Boolean};
 use sapling_crypto::circuit::num::AllocatedNum;
-use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -13,7 +12,6 @@ use super::{GenSet, CircuitGenSet};
 use gadget::Gadget;
 use hash::circuit::{MaybeHashed, CircuitHasher};
 use hash::Hasher;
-use hash::hashes::Poseidon;
 use usize_to_f;
 use OptionExt;
 
@@ -319,27 +317,27 @@ where
 }
 
 
-pub struct MerkleSetBenchInputs<E>
+pub struct MerkleSetBenchInputs<H>
 where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    H: Hasher,
 {
     /// The initial state of the set
-    pub initial_state: MerkleSet<Poseidon<E>>,
+    pub initial_state: MerkleSet<H>,
     /// The items to remove from the set
-    pub to_remove: Vec<Vec<E::Fr>>,
+    pub to_remove: Vec<Vec<H::F>>,
     /// The items to insert into the set
-    pub to_insert: Vec<Vec<E::Fr>>,
+    pub to_insert: Vec<Vec<H::F>>,
 }
 
-impl<E> MerkleSetBenchInputs<E>
+impl<H> MerkleSetBenchInputs<H>
 where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    H: Hasher,
 {
     pub fn from_counts(
         n_untouched: usize,
         n_swaps: usize,
         item_len: usize,
-        hash: Rc<E::Params>,
+        hash: H,
         depth: usize,
     ) -> Self {
         assert!(n_untouched < (1 << depth));
@@ -360,27 +358,24 @@ where
         initial_items: Vec<Vec<String>>,
         removed_items: Vec<Vec<String>>,
         inserted_items: Vec<Vec<String>>,
-        hash: Rc<E::Params>,
+        hash: H,
         depth: usize,
     ) -> Self {
-        let initial: Vec<Vec<E::Fr>> = initial_items
+        let initial: Vec<Vec<H::F>> = initial_items
             .iter()
-            .map(|i| i.iter().map(|j| E::Fr::from_str(j).unwrap()).collect())
+            .map(|i| i.iter().map(|j| H::F::from_str(j).unwrap()).collect())
             .collect();
-        let removed: Vec<Vec<E::Fr>> = removed_items
+        let removed: Vec<Vec<H::F>> = removed_items
             .iter()
-            .map(|i| i.iter().map(|j| E::Fr::from_str(j).unwrap()).collect())
+            .map(|i| i.iter().map(|j| H::F::from_str(j).unwrap()).collect())
             .collect();
-        let inserted: Vec<Vec<E::Fr>> = inserted_items
+        let inserted: Vec<Vec<H::F>> = inserted_items
             .iter()
-            .map(|i| i.iter().map(|j| E::Fr::from_str(j).unwrap()).collect())
+            .map(|i| i.iter().map(|j| H::F::from_str(j).unwrap()).collect())
             .collect();
         assert!((1 << depth) >= initial.len());
         assert_eq!(removed.len(), inserted.len());
-        let hasher = Poseidon {
-            params: hash,
-        };
-        let initial_state = MerkleSet::new_with(hasher, depth, initial.iter().map(Vec::as_slice));
+        let initial_state = MerkleSet::new_with(hash, depth, initial.iter().map(Vec::as_slice));
         Self {
             initial_state,
             to_remove: removed,
@@ -390,37 +385,35 @@ where
 }
 
 #[derive(Clone)]
-pub struct MerkleSetBenchParams<E: PoseidonEngine> {
+pub struct MerkleSetBenchParams<H> {
     pub item_size: usize,
     pub n_swaps: usize,
-    pub hash: Rc<E::Params>,
+    pub hash: H,
     pub depth: usize,
     pub verbose: bool,
 }
 
-pub struct MerkleSetBench<E>
+pub struct MerkleSetBench<H>
 where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    H: Hasher,
 {
-    pub inputs: Option<MerkleSetBenchInputs<E>>,
-    pub params: MerkleSetBenchParams<E>,
+    pub inputs: Option<MerkleSetBenchInputs<H>>,
+    pub params: MerkleSetBenchParams<H>,
 }
 
-impl<E> Circuit<E> for MerkleSetBench<E>
+impl<E, H> Circuit<E> for MerkleSetBench<H>
 where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: Engine,
+    H: CircuitHasher<E = E> + Hasher<F = E::Fr>,
 {
     fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
         if self.params.verbose {
             println!("Constructing Set");
         }
-        let hasher = Poseidon::<E> {
-            params: self.params.hash.clone(),
-        };
         let set = MerkleCircuitSet::alloc(
             cs.namespace(|| "set init"),
             self.inputs.as_ref().map(|is| &is.initial_state),
-            hasher,
+            self.params.hash.clone(),
             &self.params.depth,
         )?;
         set.inputize(cs.namespace(|| "initial_state input"))?;
@@ -473,9 +466,8 @@ where
 
 #[cfg(test)]
 mod test {
-    use super::*;
-    use sapling_crypto::group_hash::Keccak256Hasher;
-    use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
+    use super::{MerkleSetBenchParams, MerkleSetBenchInputs, MerkleSetBench};
+    use hash::hashes::Poseidon;
     use test_helpers::*;
     circuit_tests! {
         merkle_1_swap_3_depth: (MerkleSetBench {
@@ -483,13 +475,13 @@ mod test {
                             0,
                             1,
                             5,
-                            Rc::new(Bn256PoseidonParams::new::<Keccak256Hasher>()),
+                            Poseidon::default(),
                             3
                     )),
                     params: MerkleSetBenchParams {
                         item_size: 5,
                         n_swaps: 1,
-                        hash: Rc::new(Bn256PoseidonParams::new::<Keccak256Hasher>()),
+                        hash: Poseidon::default(),
                         verbose: true,
                         depth: 3,
                     },
@@ -499,13 +491,13 @@ mod test {
                             0,
                             1,
                             5,
-                            Rc::new(Bn256PoseidonParams::new::<Keccak256Hasher>()),
+                            Poseidon::default(),
                             10
                     )),
                     params: MerkleSetBenchParams {
                         item_size: 5,
                         n_swaps: 1,
-                        hash: Rc::new(Bn256PoseidonParams::new::<Keccak256Hasher>()),
+                        hash: Poseidon::default(),
                         verbose: true,
                         depth: 10,
                     },
@@ -515,13 +507,13 @@ mod test {
                             0,
                             1,
                             5,
-                            Rc::new(Bn256PoseidonParams::new::<Keccak256Hasher>()),
+                            Poseidon::default(),
                             25
                     )),
                     params: MerkleSetBenchParams {
                         item_size: 5,
                         n_swaps: 1,
-                        hash: Rc::new(Bn256PoseidonParams::new::<Keccak256Hasher>()),
+                        hash: Poseidon::default(),
                         verbose: true,
                         depth: 25,
                     },
@@ -531,13 +523,13 @@ mod test {
                             0,
                             3,
                             5,
-                            Rc::new(Bn256PoseidonParams::new::<Keccak256Hasher>()),
+                            Poseidon::default(),
                             25
                     )),
                     params: MerkleSetBenchParams {
                         item_size: 5,
                         n_swaps: 3,
-                        hash: Rc::new(Bn256PoseidonParams::new::<Keccak256Hasher>()),
+                        hash: Poseidon::default(),
                         verbose: true,
                         depth: 25,
                     },

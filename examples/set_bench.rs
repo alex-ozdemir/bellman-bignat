@@ -17,10 +17,8 @@ use num_bigint::BigUint;
 use sapling_crypto::bellman::pairing::bn256::Bn256;
 use sapling_crypto::bellman::pairing::ff::ScalarEngine;
 use sapling_crypto::bellman::Circuit;
-use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
 use serde::Deserialize;
 
-use std::rc::Rc;
 use std::str::FromStr;
 
 const USAGE: &str = "
@@ -142,22 +140,19 @@ fn rsa_bench(t: usize, _c: usize, profile: bool) -> usize {
 }
 
 fn merkle_bench(t: usize, c: usize, profile: bool) -> usize {
-    let hash = Rc::new(Bn256PoseidonParams::new::<
-        sapling_crypto::group_hash::Keccak256Hasher,
-    >());
 
-    let circuit = MerkleSetBench::<Bn256> {
+    let circuit = MerkleSetBench {
         inputs: Some(MerkleSetBenchInputs::from_counts(
             0,
             t,
             ELEMENT_SIZE,
-            hash.clone(),
+            Poseidon::default(),
             c,
         )),
         params: MerkleSetBenchParams {
             item_size: ELEMENT_SIZE,
             n_swaps: t,
-            hash,
+            hash: Poseidon::default(),
             verbose: false,
             depth: c,
         },

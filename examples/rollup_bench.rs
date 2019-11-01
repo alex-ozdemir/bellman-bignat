@@ -12,8 +12,6 @@ use docopt::Docopt;
 use sapling_crypto::alt_babyjubjub::AltJubjubBn256;
 use sapling_crypto::bellman::pairing::bn256::Bn256;
 use sapling_crypto::bellman::Circuit;
-use sapling_crypto::group_hash::Keccak256Hasher;
-use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
 use serde::Deserialize;
 
 const USAGE: &str = "
@@ -88,11 +86,11 @@ fn rsa_bench(t: usize, _c: usize, profile: bool) -> usize {
 }
 
 fn merkle_bench(t: usize, c: usize, profile: bool) -> usize {
-    let circuit = merkle::RollupBench::<Bn256>::from_counts(
+    let circuit = merkle::RollupBench::from_counts(
         c,
         t,
         AltJubjubBn256::new(),
-        Bn256PoseidonParams::new::<Keccak256Hasher>(),
+        Poseidon::default(),
     );
 
     if profile {

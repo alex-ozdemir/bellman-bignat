@@ -10,17 +10,15 @@ use sapling_crypto::jubjub::edwards::Point;
 use sapling_crypto::jubjub::{FixedGenerators, JubjubEngine, JubjubParams, PrimeOrder};
 
 use bignat::BigNat;
-use f_to_usize;
 use gadget::Gadget;
 use group::{CircuitRsaGroupParams, CircuitRsaQuotientGroup, RsaQuotientGroup};
 use hash;
 use hash::circuit::CircuitHasher;
 use hash::hashes::Pedersen;
 use hash::Hasher;
-use num::Num;
 use rollup::sig::allocate_point;
-use rollup::tx::circuit::CircuitSignedTx;
-use rollup::tx::{Action, SignedTx, Tx};
+use rollup::tx::circuit::{CircuitSignedTx, CircuitAccount};
+use rollup::tx::{Action, SignedTx, Tx, Account, TxAccountChanges};
 use set::int_set::NaiveExpSet;
 use set::rsa::{CircuitSet, CircuitSetParams, Set};
 use set::{CircuitGenSet, GenSet};
@@ -29,52 +27,10 @@ use CResult;
 use OptionExt;
 
 use std::collections::HashMap;
-use std::fmt::{Debug, Error, Formatter};
 use std::rc::Rc;
 use std::str::FromStr;
 
 const RSA_2048: &str = "25195908475657893494027183240048398571429282126204032027777137836043662020707595556264018525880784406918290641249515082189298559149176184502808489120072844992687392807287776735971418347270261896375014971824691165077613379859095700097330459748808428401797429100642458691817195118746121515172654632282216869987549182422433637259085141865462043576798423387184774447920739934236584823824281198163815010674810451660377306056201619676256133844143603833904414952634432190114657544454178424020924616515723350778707749817125772467962926386356373289912154831438167899885040445364023527381951378636564391212010397122822120720357";
-
-#[derive(Derivative)]
-#[derivative(Clone(bound = ""))]
-pub struct Account<E>
-where
-    E: JubjubEngine,
-{
-    pub id: PublicKey<E>,
-    pub amt: u64,
-    pub next_tx_no: u64,
-}
-
-impl<E> Debug for Account<E>
-where
-    E: JubjubEngine,
-{
-    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-        f.debug_struct("Account")
-            .field(
-                "id",
-                &format_args!("({}, {})", self.id.0.into_xy().0, self.id.0.into_xy().1,),
-            )
-            .field("amt", &format_args!("{}", self.amt))
-            .field("next_tx_no", &format_args!("{}", self.next_tx_no))
-            .finish()
-    }
-}
-
-impl<E> Account<E>
-where
-    E: JubjubEngine,
-{
-    pub fn as_elems(&self) -> Vec<E::Fr> {
-        vec![
-            self.id.0.into_xy().0.clone(),
-            self.id.0.into_xy().1.clone(),
-            usize_to_f(self.amt as usize),
-            usize_to_f(self.next_tx_no as usize),
-        ]
-    }
-}
 
 #[derive(Derivative)]
 #[derivative(Clone(bound = ""))]
@@ -215,87 +171,6 @@ where
         next_tx_no,
         amt,
     })
-}
-
-pub struct TxAccountChanges<E>
-where
-    E: JubjubEngine,
-{
-    pub src_init: Account<E>,
-    pub src_final: Account<E>,
-    pub dst_init: Account<E>,
-    pub dst_final: Account<E>,
-}
-
-#[derive(Derivative)]
-#[derivative(Clone(bound = ""))]
-pub struct CircuitAccount<E>
-where
-    E: JubjubEngine,
-{
-    pub id: EdwardsPoint<E>,
-    pub amt: AllocatedNum<E>,
-    pub next_tx_no: AllocatedNum<E>,
-}
-
-impl<E> CircuitAccount<E>
-where
-    E: JubjubEngine,
-{
-    pub fn as_elems(&self) -> Vec<AllocatedNum<E>> {
-        vec![
-            self.id.get_x().clone(),
-            self.id.get_y().clone(),
-            self.amt.clone(),
-            self.next_tx_no.clone(),
-        ]
-    }
-
-    pub fn with_less<CS: ConstraintSystem<E>>(
-        &self,
-        mut cs: CS,
-        diff: &AllocatedNum<E>,
-    ) -> CResult<Self> {
-        Num::from(diff.clone()).fits_in_bits(cs.namespace(|| "rangecheck diff"), 64)?;
-        let new_amt = AllocatedNum::alloc(cs.namespace(|| "new amt"), || {
-            Ok(usize_to_f(
-                f_to_usize(self.amt.get_value().grab()?.clone())
-                    - f_to_usize(diff.get_value().grab()?.clone()),
-            ))
-        })?;
-        Num::from(new_amt.clone()).fits_in_bits(cs.namespace(|| "rangecheck new amt"), 64)?;
-        let new_next_tx_no = AllocatedNum::alloc(cs.namespace(|| "new next_tx_no"), || {
-            Ok(usize_to_f(
-                f_to_usize(self.next_tx_no.get_value().grab()?.clone()) + 1,
-            ))
-        })?;
-        Num::from(new_next_tx_no.clone())
-            .fits_in_bits(cs.namespace(|| "rangecheck new next_tx_no"), 64)?;
-        Ok(Self {
-            id: self.id.clone(),
-            amt: new_amt,
-            next_tx_no: new_next_tx_no,
-        })
-    }
-
-    pub fn with_more<CS: ConstraintSystem<E>>(
-        &self,
-        mut cs: CS,
-        diff: &AllocatedNum<E>,
-    ) -> CResult<Self> {
-        let new_amt = AllocatedNum::alloc(cs.namespace(|| "new amt"), || {
-            Ok(usize_to_f(
-                f_to_usize(self.amt.get_value().grab()?.clone())
-                    + f_to_usize(diff.get_value().grab()?.clone()),
-            ))
-        })?;
-        Num::from(new_amt.clone()).fits_in_bits(cs.namespace(|| "rangecheck new amt"), 64)?;
-        Ok(Self {
-            id: self.id.clone(),
-            amt: new_amt,
-            next_tx_no: self.next_tx_no.clone(),
-        })
-    }
 }
 
 pub struct RollupBenchInputs<E, H>

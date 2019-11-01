@@ -6,16 +6,15 @@ use sapling_crypto::circuit::num::AllocatedNum;
 use sapling_crypto::eddsa::{PrivateKey, PublicKey};
 use sapling_crypto::jubjub::edwards::Point;
 use sapling_crypto::jubjub::{FixedGenerators, JubjubEngine, JubjubParams, PrimeOrder};
-use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
 
-use f_to_usize;
 use gadget::Gadget;
 use hash;
-use hash::hashes::{Pedersen, Poseidon};
-use num::Num;
+use hash::circuit::CircuitHasher;
+use hash::hashes::Pedersen;
+use hash::Hasher;
 use rollup::sig::allocate_point;
-use rollup::tx::circuit::CircuitSignedTx;
-use rollup::tx::{Action, SignedTx, Tx};
+use rollup::tx::circuit::{CircuitAccount, CircuitSignedTx};
+use rollup::tx::{Account, Action, SignedTx, Tx, TxAccountChanges};
 use set::merkle::{MerkleCircuitSet, MerkleSet};
 use set::{CircuitGenSet, GenSet};
 use usize_to_f;
@@ -23,65 +22,25 @@ use CResult;
 use OptionExt;
 
 use std::collections::HashMap;
-use std::fmt::{Debug, Error, Formatter};
 use std::rc::Rc;
 
 #[derive(Derivative)]
 #[derivative(Clone(bound = ""))]
-pub struct Account<E>
+pub struct Accounts<E, H>
 where
     E: JubjubEngine,
-{
-    pub id: PublicKey<E>,
-    pub amt: u64,
-    pub next_tx_no: u64,
-}
-
-impl<E> Debug for Account<E>
-where
-    E: JubjubEngine,
-{
-    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-        f.debug_struct("Account")
-            .field(
-                "id",
-                &format_args!("({}, {})", self.id.0.into_xy().0, self.id.0.into_xy().1,),
-            )
-            .field("amt", &format_args!("{}", self.amt))
-            .field("next_tx_no", &format_args!("{}", self.next_tx_no))
-            .finish()
-    }
-}
-
-impl<E> Account<E>
-where
-    E: JubjubEngine,
-{
-    pub fn as_elems(&self) -> Vec<E::Fr> {
-        vec![
-            self.id.0.into_xy().0.clone(),
-            self.id.0.into_xy().1.clone(),
-            usize_to_f(self.amt as usize),
-            usize_to_f(self.next_tx_no as usize),
-        ]
-    }
-}
-
-#[derive(Derivative)]
-#[derivative(Clone(bound = ""))]
-pub struct Accounts<E>
-where
-    E: JubjubEngine + PoseidonEngine<SBox = QuinticSBox<E>>,
+    H: Hasher,
 {
     map: HashMap<Vec<u8>, Account<E>>,
-    set: MerkleSet<Poseidon<E>>,
+    set: MerkleSet<H>,
 }
 
-impl<E> Accounts<E>
+impl<E, H> Accounts<E, H>
 where
-    E: JubjubEngine + PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: JubjubEngine,
+    H: Hasher<F = E::Fr>,
 {
-    pub fn new(s: &MerkleParams<E>, list_of_accounts: Vec<Account<E>>) -> Accounts<E> {
+    pub fn new(s: &MerkleParams<H>, list_of_accounts: Vec<Account<E>>) -> Self {
         let list: Vec<Vec<E::Fr>> = list_of_accounts.iter().map(Account::as_elems).collect();
         Self {
             map: HashMap::new(),
@@ -143,15 +102,16 @@ pub fn public_key_value<E: JubjubEngine>(
     )?))
 }
 
-pub fn allocate_account<E, CS>(
+pub fn allocate_account<E, H, CS>(
     mut cs: CS,
-    accounts: Option<&Accounts<E>>,
+    accounts: Option<&Accounts<E, H>>,
     k: EdwardsPoint<E>,
     next_tx_no: Option<AllocatedNum<E>>,
     p: &<E as JubjubEngine>::Params,
 ) -> CResult<CircuitAccount<E>>
 where
-    E: JubjubEngine + PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: JubjubEngine,
+    H: CircuitHasher<E = E> + Hasher<F = E::Fr>,
     CS: ConstraintSystem<E>,
 {
     let next_tx_no = if let Some(next_tx_no) = next_tx_no {
@@ -183,103 +143,24 @@ where
     })
 }
 
-pub struct TxAccountChanges<E>
+pub struct RollupBenchInputs<E, H>
 where
     E: JubjubEngine,
-{
-    pub src_init: Account<E>,
-    pub src_final: Account<E>,
-    pub dst_init: Account<E>,
-    pub dst_final: Account<E>,
-}
-
-#[derive(Derivative)]
-#[derivative(Clone(bound = ""))]
-pub struct CircuitAccount<E>
-where
-    E: JubjubEngine,
-{
-    pub id: EdwardsPoint<E>,
-    pub amt: AllocatedNum<E>,
-    pub next_tx_no: AllocatedNum<E>,
-}
-
-impl<E> CircuitAccount<E>
-where
-    E: JubjubEngine,
-{
-    pub fn as_elems(&self) -> Vec<AllocatedNum<E>> {
-        vec![
-            self.id.get_x().clone(),
-            self.id.get_y().clone(),
-            self.amt.clone(),
-            self.next_tx_no.clone(),
-        ]
-    }
-
-    pub fn with_less<CS: ConstraintSystem<E>>(
-        &self,
-        mut cs: CS,
-        diff: &AllocatedNum<E>,
-    ) -> CResult<Self> {
-        Num::from(diff.clone()).fits_in_bits(cs.namespace(|| "rangecheck diff"), 64)?;
-        let new_amt = AllocatedNum::alloc(cs.namespace(|| "new amt"), || {
-            Ok(usize_to_f(
-                f_to_usize(self.amt.get_value().grab()?.clone())
-                    - f_to_usize(diff.get_value().grab()?.clone()),
-            ))
-        })?;
-        Num::from(new_amt.clone()).fits_in_bits(cs.namespace(|| "rangecheck new amt"), 64)?;
-        let new_next_tx_no = AllocatedNum::alloc(cs.namespace(|| "new next_tx_no"), || {
-            Ok(usize_to_f(
-                f_to_usize(self.next_tx_no.get_value().grab()?.clone()) + 1,
-            ))
-        })?;
-        Num::from(new_next_tx_no.clone())
-            .fits_in_bits(cs.namespace(|| "rangecheck new next_tx_no"), 64)?;
-        Ok(Self {
-            id: self.id.clone(),
-            amt: new_amt,
-            next_tx_no: new_next_tx_no,
-        })
-    }
-
-    pub fn with_more<CS: ConstraintSystem<E>>(
-        &self,
-        mut cs: CS,
-        diff: &AllocatedNum<E>,
-    ) -> CResult<Self> {
-        let new_amt = AllocatedNum::alloc(cs.namespace(|| "new amt"), || {
-            Ok(usize_to_f(
-                f_to_usize(self.amt.get_value().grab()?.clone())
-                    + f_to_usize(diff.get_value().grab()?.clone()),
-            ))
-        })?;
-        Num::from(new_amt.clone()).fits_in_bits(cs.namespace(|| "rangecheck new amt"), 64)?;
-        Ok(Self {
-            id: self.id.clone(),
-            amt: new_amt,
-            next_tx_no: self.next_tx_no.clone(),
-        })
-    }
-}
-
-pub struct RollupBenchInputs<E>
-where
-    E: JubjubEngine + PoseidonEngine<SBox = QuinticSBox<E>>,
+    H: Hasher,
 {
     /// The transactions to do
     pub transactions: Vec<SignedTx<E>>,
     /// The initial account state
-    pub accounts: Accounts<E>,
+    pub accounts: Accounts<E, H>,
 }
 
-impl<E> RollupBenchInputs<E>
+impl<E, H> RollupBenchInputs<E, H>
 where
-    E: JubjubEngine + PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: JubjubEngine,
+    H: Hasher<F = E::Fr>,
 {
     /// Creates a benchmark where `t` coins are exchanged in a pool of size `c`.
-    pub fn from_counts(c: usize, t: usize, p: &RollupBenchParams<E>) -> Self {
+    pub fn from_counts(c: usize, t: usize, p: &RollupBenchParams<E, H>) -> Self {
         let gens = FixedGenerators::SpendingKeyGenerator;
         let hasher = Pedersen::<E> {
             params: p.jj_params.clone(),
@@ -323,45 +204,43 @@ where
     }
 }
 
-pub struct MerkleParams<E: PoseidonEngine>
-where
-    E: JubjubEngine + PoseidonEngine<SBox = QuinticSBox<E>>,
-{
+pub struct MerkleParams<H> {
     pub depth: usize,
-    pub hasher: Poseidon<E>,
+    pub hasher: H,
 }
 
-pub struct RollupBenchParams<E>
+pub struct RollupBenchParams<E, H>
 where
-    E: JubjubEngine + PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: JubjubEngine,
 {
     pub jj_params: Rc<<E as JubjubEngine>::Params>,
     pub sig_hasher: Pedersen<E>,
     pub gen: FixedGenerators,
     pub n_tx: usize,
-    pub set_params: MerkleParams<E>,
+    pub set_params: MerkleParams<H>,
 }
 
-pub struct RollupBench<E>
+pub struct RollupBench<E, H>
 where
-    E: JubjubEngine + PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: JubjubEngine,
+    H: Hasher,
 {
-    pub input: Option<RollupBenchInputs<E>>,
-    pub params: RollupBenchParams<E>,
+    pub input: Option<RollupBenchInputs<E, H>>,
+    pub params: RollupBenchParams<E, H>,
 }
 
-impl<E> RollupBench<E>
+impl<E, H> RollupBench<E, H>
 where
-    E: JubjubEngine + PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: JubjubEngine,
+    H: Hasher<F = E::Fr>,
 {
     pub fn from_counts(
         c: usize,
         t: usize,
         jj_params: <E as JubjubEngine>::Params,
-        pos_params: <E as PoseidonEngine>::Params,
+        tree_hash: H,
     ) -> Self {
         let jj_params = Rc::new(jj_params);
-        let pos_params = Rc::new(pos_params);
         let params = RollupBenchParams {
             jj_params: jj_params.clone(),
             sig_hasher: Pedersen {
@@ -371,7 +250,7 @@ where
             n_tx: t,
             set_params: MerkleParams {
                 depth: c,
-                hasher: Poseidon { params: pos_params },
+                hasher: tree_hash,
             },
         };
         Self {
@@ -381,9 +260,10 @@ where
     }
 }
 
-impl<E> Circuit<E> for RollupBench<E>
+impl<E, H> Circuit<E> for RollupBench<E, H>
 where
-    E: JubjubEngine + PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: JubjubEngine,
+    H: CircuitHasher<E = E> + Hasher<F = E::Fr>,
 {
     fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> CResult<()> {
         let gen_value = self
@@ -453,7 +333,10 @@ where
         set.inputize(cs.namespace(|| "initial_state input"))?;
         let new_set = set.swap_all(
             cs.namespace(|| "swap"),
-            removals.into_iter().map(hash::circuit::MaybeHashed::from_values).collect(),
+            removals
+                .into_iter()
+                .map(hash::circuit::MaybeHashed::from_values)
+                .collect(),
             insertions
                 .into_iter()
                 .map(hash::circuit::MaybeHashed::from_values)

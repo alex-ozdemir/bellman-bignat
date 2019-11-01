@@ -98,10 +98,11 @@ pub mod circuit {
     use super::{Action, SignedTx};
     use gadget::Gadget;
     use hash::circuit::CircuitHasher;
+    use num::Num;
     use rollup::sig::allocate_sig;
+    use sapling_crypto::bellman::pairing::ff::PrimeField;
     use sapling_crypto::bellman::pairing::ff::ScalarEngine;
     use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
-    use sapling_crypto::bellman::pairing::ff::PrimeField;
     use sapling_crypto::circuit::baby_eddsa::EddsaSignature;
     use sapling_crypto::circuit::ecc::EdwardsPoint;
     use sapling_crypto::circuit::num::AllocatedNum;
@@ -109,6 +110,7 @@ pub mod circuit {
     use std::clone::Clone;
     use std::rc::Rc;
     use usize_to_f;
+    use f_to_usize;
     use CResult;
     use OptionExt;
 
@@ -291,7 +293,130 @@ pub mod circuit {
             hasher: &H,
             gen: EdwardsPoint<E>,
         ) -> CResult<()> {
-            self.action.check_signature(cs, gen, hasher, self.sig.clone())
+            self.action
+                .check_signature(cs, gen, hasher, self.sig.clone())
         }
     }
+
+    #[derive(Derivative)]
+    #[derivative(Clone(bound = ""))]
+    pub struct CircuitAccount<E>
+    where
+        E: JubjubEngine,
+    {
+        pub id: EdwardsPoint<E>,
+        pub amt: AllocatedNum<E>,
+        pub next_tx_no: AllocatedNum<E>,
+    }
+
+    impl<E> CircuitAccount<E>
+    where
+        E: JubjubEngine,
+    {
+        pub fn as_elems(&self) -> Vec<AllocatedNum<E>> {
+            vec![
+                self.id.get_x().clone(),
+                self.id.get_y().clone(),
+                self.amt.clone(),
+                self.next_tx_no.clone(),
+            ]
+        }
+
+        pub fn with_less<CS: ConstraintSystem<E>>(
+            &self,
+            mut cs: CS,
+            diff: &AllocatedNum<E>,
+        ) -> CResult<Self> {
+            Num::from(diff.clone()).fits_in_bits(cs.namespace(|| "rangecheck diff"), 64)?;
+            let new_amt = AllocatedNum::alloc(cs.namespace(|| "new amt"), || {
+                Ok(usize_to_f(
+                    f_to_usize(self.amt.get_value().grab()?.clone())
+                        - f_to_usize(diff.get_value().grab()?.clone()),
+                ))
+            })?;
+            Num::from(new_amt.clone()).fits_in_bits(cs.namespace(|| "rangecheck new amt"), 64)?;
+            let new_next_tx_no = AllocatedNum::alloc(cs.namespace(|| "new next_tx_no"), || {
+                Ok(usize_to_f(
+                    f_to_usize(self.next_tx_no.get_value().grab()?.clone()) + 1,
+                ))
+            })?;
+            Num::from(new_next_tx_no.clone())
+                .fits_in_bits(cs.namespace(|| "rangecheck new next_tx_no"), 64)?;
+            Ok(Self {
+                id: self.id.clone(),
+                amt: new_amt,
+                next_tx_no: new_next_tx_no,
+            })
+        }
+
+        pub fn with_more<CS: ConstraintSystem<E>>(
+            &self,
+            mut cs: CS,
+            diff: &AllocatedNum<E>,
+        ) -> CResult<Self> {
+            let new_amt = AllocatedNum::alloc(cs.namespace(|| "new amt"), || {
+                Ok(usize_to_f(
+                    f_to_usize(self.amt.get_value().grab()?.clone())
+                        + f_to_usize(diff.get_value().grab()?.clone()),
+                ))
+            })?;
+            Num::from(new_amt.clone()).fits_in_bits(cs.namespace(|| "rangecheck new amt"), 64)?;
+            Ok(Self {
+                id: self.id.clone(),
+                amt: new_amt,
+                next_tx_no: self.next_tx_no.clone(),
+            })
+        }
+    }
+}
+
+#[derive(Derivative)]
+#[derivative(Clone(bound = ""))]
+pub struct Account<E>
+where
+    E: JubjubEngine,
+{
+    pub id: PublicKey<E>,
+    pub amt: u64,
+    pub next_tx_no: u64,
+}
+
+impl<E> Debug for Account<E>
+where
+    E: JubjubEngine,
+{
+    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+        f.debug_struct("Account")
+            .field(
+                "id",
+                &format_args!("({}, {})", self.id.0.into_xy().0, self.id.0.into_xy().1,),
+            )
+            .field("amt", &format_args!("{}", self.amt))
+            .field("next_tx_no", &format_args!("{}", self.next_tx_no))
+            .finish()
+    }
+}
+
+impl<E> Account<E>
+where
+    E: JubjubEngine,
+{
+    pub fn as_elems(&self) -> Vec<E::Fr> {
+        vec![
+            self.id.0.into_xy().0.clone(),
+            self.id.0.into_xy().1.clone(),
+            usize_to_f(self.amt as usize),
+            usize_to_f(self.next_tx_no as usize),
+        ]
+    }
+}
+
+pub struct TxAccountChanges<E>
+where
+    E: JubjubEngine,
+{
+    pub src_init: Account<E>,
+    pub src_final: Account<E>,
+    pub dst_init: Account<E>,
+    pub dst_final: Account<E>,
 }
