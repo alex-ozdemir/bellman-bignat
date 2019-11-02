@@ -1,4 +1,6 @@
 use sapling_crypto::jubjub::JubjubEngine;
+use sapling_crypto::babyjubjub::JubjubBn256;
+use sapling_crypto::alt_babyjubjub::AltJubjubBn256;
 use sapling_crypto::poseidon::{PoseidonEngine, PoseidonHashParams, QuinticSBox, bn256::Bn256PoseidonParams};
 use sapling_crypto::bellman::pairing::bn256::Bn256;
 use sapling_crypto::group_hash::Keccak256Hasher;
@@ -84,6 +86,15 @@ impl<E: JubjubEngine> Hasher for Pedersen<E> {
     }
 }
 
+impl Default for Pedersen<Bn256>
+{
+    fn default() -> Self {
+        Self {
+            params: Rc::new(AltJubjubBn256::new()),
+        }
+    }
+}
+
 #[derive(Derivative)]
 #[derivative(Clone(bound = ""))]
 pub struct BabyPedersen<E>
@@ -115,6 +126,15 @@ impl<E: sapling_crypto::babyjubjub::JubjubEngine> Hasher for BabyPedersen<E> {
     }
 }
 
+impl Default for BabyPedersen<Bn256>
+{
+    fn default() -> Self {
+        Self {
+            params: Rc::new(JubjubBn256::new()),
+        }
+    }
+}
+
 #[derive(Derivative)]
 #[derivative(Clone(bound = ""))]
 pub struct Mimc<E>
@@ -124,11 +144,11 @@ where
     _params: PhantomData<E>,
 }
 
-impl<E> Mimc<E>
+impl<E> Default for Mimc<E>
 where
     E: Engine,
 {
-    pub fn new() -> Self {
+    fn default() -> Self {
         Self {
             _params: PhantomData::<E>::default(),
         }

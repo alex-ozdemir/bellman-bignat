@@ -153,7 +153,7 @@ pub mod circuit {
         pub fn mimc_with_inputs(n_inputs: usize) -> Self {
             Self {
                 inputs: (0..n_inputs).map(|i| format!("{}", i)).collect(),
-                hasher: Mimc::new(),
+                hasher: Mimc::default(),
             }
         }
     }
