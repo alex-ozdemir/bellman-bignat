@@ -3,7 +3,6 @@ use sapling_crypto::bellman::pairing::ff::{PrimeField, ScalarEngine};
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{Circuit, ConstraintSystem, LinearCombination, SynthesisError};
 use sapling_crypto::circuit::num::AllocatedNum;
-use sapling_crypto::poseidon::{PoseidonEngine, QuinticSBox};
 
 use std::fmt::{self, Debug, Formatter};
 
@@ -484,7 +483,7 @@ where
 
 impl<E, H> Circuit<E> for SetBench<H, NaiveExpSet<RsaQuotientGroup>>
 where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: Engine,
     H: Hasher<F = E::Fr> + CircuitHasher<E = E>,
 {
     fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
