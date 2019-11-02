@@ -6,16 +6,16 @@ extern crate sapling_crypto;
 extern crate serde;
 
 use bellman_bignat::bench::{ConstraintCounter, ConstraintProfiler};
-use bellman_bignat::bignat::nat_to_limbs;
 use bellman_bignat::group::RsaQuotientGroup;
-use bellman_bignat::hash::hashes::Poseidon;
+use bellman_bignat::hash::Hasher;
+use bellman_bignat::hash::circuit::CircuitHasher;
+use bellman_bignat::hash::hashes::{Pedersen, BabyPedersen, Poseidon, Mimc};
 use bellman_bignat::set::merkle::{MerkleSetBench, MerkleSetBenchInputs, MerkleSetBenchParams};
-use bellman_bignat::set::GenSet;
 use bellman_bignat::set::rsa::{SetBench, SetBenchInputs, SetBenchParams};
 use docopt::Docopt;
 use num_bigint::BigUint;
 use sapling_crypto::bellman::pairing::bn256::Bn256;
-use sapling_crypto::bellman::pairing::ff::ScalarEngine;
+use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::Circuit;
 use serde::Deserialize;
 
@@ -34,6 +34,8 @@ Options:
   -p --profile  Profile constraints, instead of just counting them
                 Emits JSON to stdout
   -h --help     Show this screen.
+  --hash HASH   The hash function to use [default: poseidon]
+                Valid values: poseidon, mimc, pedersen, babypedersen
   --version     Show version.
 ";
 
@@ -43,10 +45,19 @@ const RSA_SIZE: usize = 2048;
 const ELEMENT_SIZE: usize = 5;
 
 #[derive(Debug, Deserialize)]
+enum Hashes {
+    Poseidon,
+    Mimc,
+    Pedersen,
+    BabyPedersen,
+}
+
+#[derive(Debug, Deserialize)]
 struct Args {
     arg_transactions: usize,
     arg_capacity: usize,
     flag_profile: bool,
+    flag_hash: Hashes,
     cmd_rsa: bool,
     cmd_merkle: bool,
 }
@@ -59,12 +70,22 @@ fn main() {
     let (set, constraints) = if args.cmd_rsa {
         (
             "rsa",
-            rsa_bench(args.arg_transactions, args.arg_capacity, args.flag_profile),
+            match args.flag_hash {
+                Hashes::Poseidon => rsa_bench(args.arg_transactions, args.arg_capacity, args.flag_profile, Poseidon::default()),
+                Hashes::Mimc => rsa_bench::<Bn256, _>(args.arg_transactions, args.arg_capacity, args.flag_profile, Mimc::default()),
+                Hashes::Pedersen => rsa_bench(args.arg_transactions, args.arg_capacity, args.flag_profile, Pedersen::default()),
+                Hashes::BabyPedersen => rsa_bench(args.arg_transactions, args.arg_capacity, args.flag_profile, BabyPedersen::default()),
+            }
         )
     } else if args.cmd_merkle {
         (
             "merkle",
-            merkle_bench(args.arg_transactions, args.arg_capacity, args.flag_profile),
+            match args.flag_hash {
+                Hashes::Poseidon => merkle_bench(args.arg_transactions, args.arg_capacity, args.flag_profile, Poseidon::default()),
+                Hashes::Mimc => merkle_bench::<Bn256, _>(args.arg_transactions, args.arg_capacity, args.flag_profile, Mimc::default()),
+                Hashes::Pedersen => merkle_bench(args.arg_transactions, args.arg_capacity, args.flag_profile, Pedersen::default()),
+                Hashes::BabyPedersen => merkle_bench(args.arg_transactions, args.arg_capacity, args.flag_profile, BabyPedersen::default()),
+            }
         )
     } else {
         panic!("Unknown command")
@@ -77,19 +98,19 @@ fn main() {
     }
 }
 
-fn rsa_bench(t: usize, _c: usize, profile: bool) -> usize {
+fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(t: usize, _c: usize, profile: bool, hash: H) -> usize {
     let group = RsaQuotientGroup {
         g: BigUint::from(2usize),
         m: BigUint::from_str(RSA_2048).unwrap(),
     };
 
-    let circuit = SetBench::<Poseidon<Bn256>, _> {
+    let circuit = SetBench {
         inputs: Some(SetBenchInputs::from_counts(
             0,
             t,
             t,
             ELEMENT_SIZE,
-            Poseidon::default(),
+            hash.clone(),
             RSA_SIZE,
             32,
             RsaQuotientGroup {
@@ -106,26 +127,10 @@ fn rsa_bench(t: usize, _c: usize, profile: bool) -> usize {
             item_size: ELEMENT_SIZE,
             n_inserts: t,
             n_removes: t,
-            hasher: Poseidon::default(),
+            hasher: hash,
             verbose: false,
         },
     };
-
-    let ins = circuit.inputs.as_ref().unwrap();
-    let initial_set = ins.initial_state.clone();
-    let final_set = {
-        let mut t = initial_set.clone();
-        t.swap_all(ins.to_remove.clone(), ins.to_insert.clone());
-        t
-    };
-
-    let mut inputs: Vec<<Bn256 as ScalarEngine>::Fr> = nat_to_limbs(&group.g, 32, 64).unwrap();
-    inputs.extend(nat_to_limbs::<<Bn256 as ScalarEngine>::Fr>(&group.m, 32, 64).unwrap());
-    inputs.extend(
-        nat_to_limbs::<<Bn256 as ScalarEngine>::Fr>(&initial_set.digest(), 32, 64).unwrap(),
-    );
-    inputs
-        .extend(nat_to_limbs::<<Bn256 as ScalarEngine>::Fr>(&final_set.digest(), 32, 64).unwrap());
 
     if profile {
         let mut cs = ConstraintProfiler::new();
@@ -139,31 +144,23 @@ fn rsa_bench(t: usize, _c: usize, profile: bool) -> usize {
     }
 }
 
-fn merkle_bench(t: usize, c: usize, profile: bool) -> usize {
+fn merkle_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(t: usize, c: usize, profile: bool, hash: H) -> usize {
 
     let circuit = MerkleSetBench {
         inputs: Some(MerkleSetBenchInputs::from_counts(
             0,
             t,
             ELEMENT_SIZE,
-            Poseidon::default(),
+            hash.clone(),
             c,
         )),
         params: MerkleSetBenchParams {
             item_size: ELEMENT_SIZE,
             n_swaps: t,
-            hash: Poseidon::default(),
+            hash,
             verbose: false,
             depth: c,
         },
-    };
-
-    let ins = circuit.inputs.as_ref().unwrap();
-    let initial_set = ins.initial_state.clone();
-    let _final_set = {
-        let mut t = initial_set.clone();
-        t.swap_all(ins.to_remove.clone(), ins.to_insert.clone());
-        t
     };
 
     if profile {
