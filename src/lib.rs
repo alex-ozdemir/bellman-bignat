@@ -8,6 +8,7 @@ extern crate rand;
 extern crate sapling_crypto;
 #[macro_use]
 extern crate derivative;
+extern crate sha2;
 
 #[cfg(test)]
 extern crate quickcheck;

@@ -18,6 +18,7 @@ use super::Hasher;
 use CResult;
 
 pub mod mimc;
+mod sha;
 
 #[derive(Derivative)]
 #[derivative(Clone(bound = ""))]
@@ -162,6 +163,36 @@ impl<E: Engine> Hasher for Mimc<E> {
     }
 }
 
+#[derive(Derivative)]
+#[derivative(Clone(bound = ""))]
+pub struct Sha256<E>
+where
+    E: Engine,
+{
+    _params: PhantomData<E>,
+}
+
+impl<E> Default for Sha256<E>
+where
+    E: Engine,
+{
+    fn default() -> Self {
+        Self {
+            _params: PhantomData::<E>::default(),
+        }
+    }
+}
+
+impl<E: Engine> Hasher for Sha256<E> {
+    type F = E::Fr;
+    fn hash2(&self, a: Self::F, b: Self::F) -> Self::F {
+        sha::sha256(&[a, b])
+    }
+    fn hash(&self, inputs: &[E::Fr]) -> E::Fr {
+        sha::sha256(inputs)
+    }
+}
+
 impl<E> CircuitHasher for Poseidon<E>
 where
     E: PoseidonEngine<SBox = QuinticSBox<E>>,
@@ -265,5 +296,27 @@ where
     ) -> CResult<AllocatedNum<E>> {
         let num = mimc::compression(cs.namespace(|| "hash"), a.clone(), b.clone())?;
         mimc::allocate_num(cs.namespace(|| "copy"), num)
+    }
+}
+
+impl<E> CircuitHasher for Sha256<E>
+where
+    E: Engine,
+{
+    type E = E;
+    fn allocate_hash2<CS: ConstraintSystem<E>>(
+        &self,
+        cs: CS,
+        a: &AllocatedNum<Self::E>,
+        b: &AllocatedNum<Self::E>,
+    ) -> CResult<AllocatedNum<E>> {
+        sha::circuit::sha256(cs, &[a.clone(), b.clone()])
+    }
+    fn allocate_hash<CS: ConstraintSystem<E>>(
+        &self,
+        cs: CS,
+        inputs: &[AllocatedNum<Self::E>],
+    ) -> CResult<AllocatedNum<E>> {
+        sha::circuit::sha256(cs, inputs)
     }
 }

@@ -59,7 +59,7 @@ pub mod circuit {
 
     use super::Hasher;
     use CResult;
-    use super::hashes::{Poseidon, Pedersen, BabyPedersen, Mimc};
+    use super::hashes::{Poseidon, Pedersen, BabyPedersen, Mimc, Sha256};
 
     #[derive(Derivative)]
     #[derivative(Clone(bound = ""))]
@@ -158,6 +158,15 @@ pub mod circuit {
         }
     }
 
+    impl Bench<Sha256<Bn256>> {
+        pub fn sha256_with_inputs(n_inputs: usize) -> Self {
+            Self {
+                inputs: (0..n_inputs).map(|i| format!("{}", i)).collect(),
+                hasher: Sha256::default(),
+            }
+        }
+    }
+
     impl<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>> Circuit<E> for Bench<H> {
         fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> CResult<()> {
             let inputs_values: Vec<E::Fr> = self
@@ -221,6 +230,8 @@ pub mod circuit {
             mimc_7: (Bench::mimc_with_inputs(7), true),
             mimc_8: (Bench::mimc_with_inputs(8), true),
             mimc_9: (Bench::mimc_with_inputs(9), true),
+
+            sha256_2: (Bench::sha256_with_inputs(2), true),
         }
     }
 }
