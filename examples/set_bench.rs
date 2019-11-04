@@ -9,7 +9,7 @@ use bellman_bignat::bench::{ConstraintCounter, ConstraintProfiler};
 use bellman_bignat::group::RsaQuotientGroup;
 use bellman_bignat::hash::Hasher;
 use bellman_bignat::hash::circuit::CircuitHasher;
-use bellman_bignat::hash::hashes::{Pedersen, BabyPedersen, Poseidon, Mimc};
+use bellman_bignat::hash::hashes::{Pedersen, BabyPedersen, Poseidon, Mimc, Sha256};
 use bellman_bignat::set::merkle::{MerkleSetBench, MerkleSetBenchInputs, MerkleSetBenchParams};
 use bellman_bignat::set::rsa::{SetBench, SetBenchInputs, SetBenchParams};
 use docopt::Docopt;
@@ -35,7 +35,7 @@ Options:
                 Emits JSON to stdout
   -h --help     Show this screen.
   --hash HASH   The hash function to use [default: poseidon]
-                Valid values: poseidon, mimc, pedersen, babypedersen
+                Valid values: poseidon, mimc, pedersen, babypedersen, sha
   --version     Show version.
 ";
 
@@ -50,6 +50,7 @@ enum Hashes {
     Mimc,
     Pedersen,
     BabyPedersen,
+    Sha
 }
 
 #[derive(Debug, Deserialize)]
@@ -75,6 +76,7 @@ fn main() {
                 Hashes::Mimc => rsa_bench::<Bn256, _>(args.arg_transactions, args.arg_capacity, args.flag_profile, Mimc::default()),
                 Hashes::Pedersen => rsa_bench(args.arg_transactions, args.arg_capacity, args.flag_profile, Pedersen::default()),
                 Hashes::BabyPedersen => rsa_bench(args.arg_transactions, args.arg_capacity, args.flag_profile, BabyPedersen::default()),
+                Hashes::Sha => rsa_bench::<Bn256, _>(args.arg_transactions, args.arg_capacity, args.flag_profile, Sha256::default()),
             }
         )
     } else if args.cmd_merkle {
@@ -85,6 +87,7 @@ fn main() {
                 Hashes::Mimc => merkle_bench::<Bn256, _>(args.arg_transactions, args.arg_capacity, args.flag_profile, Mimc::default()),
                 Hashes::Pedersen => merkle_bench(args.arg_transactions, args.arg_capacity, args.flag_profile, Pedersen::default()),
                 Hashes::BabyPedersen => merkle_bench(args.arg_transactions, args.arg_capacity, args.flag_profile, BabyPedersen::default()),
+                Hashes::Sha => merkle_bench::<Bn256, _>(args.arg_transactions, args.arg_capacity, args.flag_profile, Sha256::default()),
             }
         )
     } else {
