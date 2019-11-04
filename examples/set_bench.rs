@@ -95,8 +95,8 @@ fn main() {
     };
     if !args.flag_profile {
         println!(
-            "{},{},{},{}",
-            set, args.arg_transactions, args.arg_capacity, constraints
+            "{},{:?},{},{},{}",
+            set, args.flag_hash, args.arg_transactions, args.arg_capacity, constraints
         );
     }
 }
