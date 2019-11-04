@@ -219,6 +219,7 @@ pub mod circuit {
             poseidon_16: (Bench::poseidon_with_inputs(16), true),
 
             pedersen_2: (Bench::pedersen_with_inputs(2), true),
+            pedersen_5: (Bench::pedersen_with_inputs(5), true),
 
             baby_pedersen_2: (Bench::baby_pedersen_with_inputs(2), true),
 
