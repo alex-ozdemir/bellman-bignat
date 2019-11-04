@@ -3,8 +3,8 @@ pub use sapling_crypto::bellman::{
     ConstraintSystem, Index, LinearCombination, SynthesisError, Variable,
 };
 
-use std::io::Write;
 use std::io::Error;
+use std::io::Write;
 
 pub struct ConstraintCounter {
     n_constraints: usize,
@@ -135,9 +135,13 @@ impl InternedConstraintProfile {
         }
     }
 
-    pub fn emit_as_json<W: Write>(&self, w: &mut W, interner: &Interner) -> Result<(), Error>  {
+    pub fn emit_as_json<W: Write>(&self, w: &mut W, interner: &Interner) -> Result<(), Error> {
         w.write_all(b"{")?;
-        write!(w, "\"_count\":{},\"_cumulative\":{}", self.count, self.cumulative_count)?;
+        write!(
+            w,
+            "\"_count\":{},\"_cumulative\":{}",
+            self.count, self.cumulative_count
+        )?;
         for (n, c) in &self.children {
             write!(w, ",\"{}\":", interner.get_string(*n))?;
             c.emit_as_json(w, interner)?;

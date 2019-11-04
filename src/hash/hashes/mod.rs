@@ -186,10 +186,10 @@ where
 impl<E: Engine> Hasher for Sha256<E> {
     type F = E::Fr;
     fn hash2(&self, a: Self::F, b: Self::F) -> Self::F {
-        sha::sha256(&[a, b])
+        sha::sha256::<E>(&[a, b])
     }
     fn hash(&self, inputs: &[E::Fr]) -> E::Fr {
-        sha::sha256(inputs)
+        sha::sha256::<E>(inputs)
     }
 }
 

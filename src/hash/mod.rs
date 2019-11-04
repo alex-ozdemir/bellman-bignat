@@ -232,6 +232,10 @@ pub mod circuit {
             mimc_9: (Bench::mimc_with_inputs(9), true),
 
             sha256_2: (Bench::sha256_with_inputs(2), true),
+            sha256_3: (Bench::sha256_with_inputs(3), true),
+            sha256_4: (Bench::sha256_with_inputs(4), true),
+            sha256_5: (Bench::sha256_with_inputs(5), true),
+            sha256_10: (Bench::sha256_with_inputs(10), true),
         }
     }
 }
