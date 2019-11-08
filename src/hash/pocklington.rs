@@ -492,6 +492,7 @@ mod test {
                 self.params.entropy,
                 &self.params.hash,
             )?;
+            println!("Pocklington bits in: [{}, {}]", hash.params.min_bits, hash.params.limb_width * hash.params.n_limbs);
             hash.equal(cs.namespace(|| "eq"), &allocated_expected_output)?;
             Ok(())
         }
