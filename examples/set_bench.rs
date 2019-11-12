@@ -5,11 +5,11 @@ extern crate rand;
 extern crate sapling_crypto;
 extern crate serde;
 
-use bellman_bignat::bench::{ConstraintCounter, ConstraintProfiler};
+use bellman_bignat::bench::{ConstraintCounter, ConstraintProfiler, WitnessTimer};
 use bellman_bignat::group::RsaQuotientGroup;
-use bellman_bignat::hash::Hasher;
 use bellman_bignat::hash::circuit::CircuitHasher;
-use bellman_bignat::hash::hashes::{Pedersen, BabyPedersen, Poseidon, Mimc, Sha256};
+use bellman_bignat::hash::hashes::{BabyPedersen, Mimc, Pedersen, Poseidon, Sha256};
+use bellman_bignat::hash::Hasher;
 use bellman_bignat::set::merkle::{MerkleSetBench, MerkleSetBenchInputs, MerkleSetBenchParams};
 use bellman_bignat::set::rsa::{SetBench, SetBenchInputs, SetBenchParams};
 use docopt::Docopt;
@@ -20,6 +20,7 @@ use sapling_crypto::bellman::Circuit;
 use serde::Deserialize;
 
 use std::str::FromStr;
+use std::convert::TryInto;
 
 const USAGE: &str = "
 Set Benchmarker
@@ -31,12 +32,15 @@ Usage:
   set_bench --version
 
 Options:
-  -p --profile  Profile constraints, instead of just counting them
-                Emits JSON to stdout
-  -h --help     Show this screen.
-  --hash HASH   The hash function to use [default: poseidon]
-                Valid values: poseidon, mimc, pedersen, babypedersen, sha
-  --version     Show version.
+  -s --synth TY  Sythesizer to use [default: counter]
+                 Valid values: counter, timer, profiler
+                 profiler: emits JSON to stdout
+                 counter: emits CSV w/ constraints to stdout
+                 timer: emits CSV w/ times to stdout
+  -h --help      Show this screen.
+  --hash HASH    The hash function to use [default: poseidon]
+                 Valid values: poseidon, mimc, pedersen, babypedersen, sha
+  --version      Show version.
 ";
 
 // From https://en.wikipedia.org/wiki/RSA_numbers#RSA-2048
@@ -44,20 +48,27 @@ const RSA_2048: &str = "25195908475657893494027183240048398571429282126204032027
 const RSA_SIZE: usize = 2048;
 const ELEMENT_SIZE: usize = 5;
 
+#[derive(Debug, Deserialize, PartialEq, Clone, Copy)]
+enum Synthesizer {
+    Counter,
+    Timer,
+    Profiler,
+}
+
 #[derive(Debug, Deserialize)]
 enum Hashes {
     Poseidon,
     Mimc,
     Pedersen,
     BabyPedersen,
-    Sha
+    Sha,
 }
 
 #[derive(Debug, Deserialize)]
 struct Args {
     arg_transactions: usize,
     arg_capacity: usize,
-    flag_profile: bool,
+    flag_synth: Synthesizer,
     flag_hash: Hashes,
     cmd_rsa: bool,
     cmd_merkle: bool,
@@ -68,40 +79,95 @@ fn main() {
     let args: Args = Docopt::new(USAGE)
         .and_then(|d| d.deserialize())
         .unwrap_or_else(|e| e.exit());
-    let (set, constraints) = if args.cmd_rsa {
+    let (set, cost) = if args.cmd_rsa {
         (
             "rsa",
             match args.flag_hash {
-                Hashes::Poseidon => rsa_bench(args.arg_transactions, args.arg_capacity, args.flag_profile, Poseidon::default()),
-                Hashes::Mimc => rsa_bench::<Bn256, _>(args.arg_transactions, args.arg_capacity, args.flag_profile, Mimc::default()),
-                Hashes::Pedersen => rsa_bench(args.arg_transactions, args.arg_capacity, args.flag_profile, Pedersen::default()),
-                Hashes::BabyPedersen => rsa_bench(args.arg_transactions, args.arg_capacity, args.flag_profile, BabyPedersen::default()),
-                Hashes::Sha => rsa_bench::<Bn256, _>(args.arg_transactions, args.arg_capacity, args.flag_profile, Sha256::default()),
-            }
+                Hashes::Poseidon => rsa_bench(
+                    args.arg_transactions,
+                    args.arg_capacity,
+                    args.flag_synth,
+                    Poseidon::default(),
+                ),
+                Hashes::Mimc => rsa_bench::<Bn256, _>(
+                    args.arg_transactions,
+                    args.arg_capacity,
+                    args.flag_synth,
+                    Mimc::default(),
+                ),
+                Hashes::Pedersen => rsa_bench(
+                    args.arg_transactions,
+                    args.arg_capacity,
+                    args.flag_synth,
+                    Pedersen::default(),
+                ),
+                Hashes::BabyPedersen => rsa_bench(
+                    args.arg_transactions,
+                    args.arg_capacity,
+                    args.flag_synth,
+                    BabyPedersen::default(),
+                ),
+                Hashes::Sha => rsa_bench::<Bn256, _>(
+                    args.arg_transactions,
+                    args.arg_capacity,
+                    args.flag_synth,
+                    Sha256::default(),
+                ),
+            },
         )
     } else if args.cmd_merkle {
         (
             "merkle",
             match args.flag_hash {
-                Hashes::Poseidon => merkle_bench(args.arg_transactions, args.arg_capacity, args.flag_profile, Poseidon::default()),
-                Hashes::Mimc => merkle_bench::<Bn256, _>(args.arg_transactions, args.arg_capacity, args.flag_profile, Mimc::default()),
-                Hashes::Pedersen => merkle_bench(args.arg_transactions, args.arg_capacity, args.flag_profile, Pedersen::default()),
-                Hashes::BabyPedersen => merkle_bench(args.arg_transactions, args.arg_capacity, args.flag_profile, BabyPedersen::default()),
-                Hashes::Sha => merkle_bench::<Bn256, _>(args.arg_transactions, args.arg_capacity, args.flag_profile, Sha256::default()),
-            }
+                Hashes::Poseidon => merkle_bench(
+                    args.arg_transactions,
+                    args.arg_capacity,
+                    args.flag_synth,
+                    Poseidon::default(),
+                ),
+                Hashes::Mimc => merkle_bench::<Bn256, _>(
+                    args.arg_transactions,
+                    args.arg_capacity,
+                    args.flag_synth,
+                    Mimc::default(),
+                ),
+                Hashes::Pedersen => merkle_bench(
+                    args.arg_transactions,
+                    args.arg_capacity,
+                    args.flag_synth,
+                    Pedersen::default(),
+                ),
+                Hashes::BabyPedersen => merkle_bench(
+                    args.arg_transactions,
+                    args.arg_capacity,
+                    args.flag_synth,
+                    BabyPedersen::default(),
+                ),
+                Hashes::Sha => merkle_bench::<Bn256, _>(
+                    args.arg_transactions,
+                    args.arg_capacity,
+                    args.flag_synth,
+                    Sha256::default(),
+                ),
+            },
         )
     } else {
         panic!("Unknown command")
     };
-    if !args.flag_profile {
+    if args.flag_synth != Synthesizer::Profiler {
         println!(
             "{},{:?},{},{},{}",
-            set, args.flag_hash, args.arg_transactions, args.arg_capacity, constraints
+            set, args.flag_hash, args.arg_transactions, args.arg_capacity, cost
         );
     }
 }
 
-fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(t: usize, _c: usize, profile: bool, hash: H) -> usize {
+fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
+    t: usize,
+    _c: usize,
+    synth: Synthesizer,
+    hash: H,
+) -> usize {
     let group = RsaQuotientGroup {
         g: BigUint::from(2usize),
         m: BigUint::from_str(RSA_2048).unwrap(),
@@ -135,20 +201,32 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(t: usize, _
         },
     };
 
-    if profile {
-        let mut cs = ConstraintProfiler::new();
-        circuit.synthesize(&mut cs).expect("synthesis failed");
-        cs.emit_as_json(&mut std::io::stdout()).unwrap();
-        cs.num_constraints()
-    } else {
-        let mut cs = ConstraintCounter::new();
-        circuit.synthesize(&mut cs).expect("synthesis failed");
-        cs.num_constraints()
+    match synth {
+        Synthesizer::Profiler => {
+            let mut cs = ConstraintProfiler::new();
+            circuit.synthesize(&mut cs).expect("synthesis failed");
+            cs.emit_as_json(&mut std::io::stdout()).unwrap();
+            cs.num_constraints()
+        }
+        Synthesizer::Timer => {
+            let mut cs = WitnessTimer::new();
+            circuit.synthesize(&mut cs).expect("synthesis failed");
+            cs.elapsed().as_millis().try_into().unwrap()
+        }
+        Synthesizer::Counter => {
+            let mut cs = ConstraintCounter::new();
+            circuit.synthesize(&mut cs).expect("synthesis failed");
+            cs.num_constraints()
+        }
     }
 }
 
-fn merkle_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(t: usize, c: usize, profile: bool, hash: H) -> usize {
-
+fn merkle_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
+    t: usize,
+    c: usize,
+    synth: Synthesizer,
+    hash: H,
+) -> usize {
     let circuit = MerkleSetBench {
         inputs: Some(MerkleSetBenchInputs::from_counts(
             0,
@@ -166,14 +244,22 @@ fn merkle_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(t: usize
         },
     };
 
-    if profile {
-        let mut cs = ConstraintProfiler::new();
-        circuit.synthesize(&mut cs).expect("synthesis failed");
-        cs.emit_as_json(&mut std::io::stdout()).unwrap();
-        cs.num_constraints()
-    } else {
-        let mut cs = ConstraintCounter::new();
-        circuit.synthesize(&mut cs).expect("synthesis failed");
-        cs.num_constraints()
+    match synth {
+        Synthesizer::Profiler => {
+            let mut cs = ConstraintProfiler::new();
+            circuit.synthesize(&mut cs).expect("synthesis failed");
+            cs.emit_as_json(&mut std::io::stdout()).unwrap();
+            cs.num_constraints()
+        }
+        Synthesizer::Timer => {
+            let mut cs = WitnessTimer::new();
+            circuit.synthesize(&mut cs).expect("synthesis failed");
+            cs.elapsed().as_millis().try_into().unwrap()
+        }
+        Synthesizer::Counter => {
+            let mut cs = ConstraintCounter::new();
+            circuit.synthesize(&mut cs).expect("synthesis failed");
+            cs.num_constraints()
+        }
     }
 }
