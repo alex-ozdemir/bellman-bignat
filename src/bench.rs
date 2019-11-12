@@ -5,6 +5,7 @@ pub use sapling_crypto::bellman::{
 
 use std::io::Error;
 use std::io::Write;
+use std::time::{Instant, Duration};
 
 pub struct ConstraintCounter {
     n_constraints: usize,
@@ -229,6 +230,66 @@ impl<E: Engine> ConstraintSystem<E> for ConstraintProfiler {
         debug_assert!(self.profiles.len() == self.names.len() + 1);
     }
 
+    fn get_root(&mut self) -> &mut Self::Root {
+        self
+    }
+}
+
+pub struct WitnessTimer {
+    start: Instant,
+}
+
+impl WitnessTimer {
+    pub fn new() -> Self {
+        WitnessTimer {
+            start: Instant::now(),
+        }
+    }
+    pub fn start(&mut self) {
+        self.start = Instant::now();
+    }
+    pub fn elapsed(&self) -> Duration {
+        Instant::now() - self.start
+    }
+}
+
+impl<E: Engine> ConstraintSystem<E> for WitnessTimer {
+    type Root = Self;
+    fn alloc<F, A, AR>(&mut self, _annotation: A, f: F) -> Result<Variable, SynthesisError>
+    where
+        F: FnOnce() -> Result<E::Fr, SynthesisError>,
+        A: FnOnce() -> AR,
+        AR: Into<String>,
+    {
+        f().expect("value computation failed in alloc_input");
+        Ok(Variable::new_unchecked(Index::Aux(0)))
+    }
+    fn alloc_input<F, A, AR>(&mut self, _annotation: A, f: F) -> Result<Variable, SynthesisError>
+    where
+        F: FnOnce() -> Result<E::Fr, SynthesisError>,
+        A: FnOnce() -> AR,
+        AR: Into<String>,
+    {
+        f().expect("value computation failed in alloc_input");
+        Ok(Variable::new_unchecked(Index::Input(0)))
+    }
+
+    fn enforce<A, AR, LA, LB, LC>(&mut self, _annotation: A, _a: LA, _b: LB, _c: LC)
+    where
+        A: FnOnce() -> AR,
+        AR: Into<String>,
+        LA: FnOnce(LinearCombination<E>) -> LinearCombination<E>,
+        LB: FnOnce(LinearCombination<E>) -> LinearCombination<E>,
+        LC: FnOnce(LinearCombination<E>) -> LinearCombination<E>,
+    {
+    }
+    fn push_namespace<NR, N>(&mut self, _name_fn: N)
+    where
+        NR: Into<String>,
+        N: FnOnce() -> NR,
+    {
+    }
+    fn pop_namespace(&mut self) {}
     fn get_root(&mut self) -> &mut Self::Root {
         self
     }

@@ -2,70 +2,11 @@ use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::ConstraintSystem;
 use sapling_crypto::circuit::num::AllocatedNum;
 
-mod constraint {
-    use sapling_crypto::bellman::pairing::Engine;
-    use sapling_crypto::bellman::{
-        ConstraintSystem, Index, LinearCombination, SynthesisError, Variable,
-    };
-
-    pub struct NoEnforcement;
-
-    impl NoEnforcement {
-        pub fn new() -> Self {
-            NoEnforcement
-        }
-    }
-
-    impl<E: Engine> ConstraintSystem<E> for NoEnforcement {
-        type Root = Self;
-        fn alloc<F, A, AR>(&mut self, _annotation: A, f: F) -> Result<Variable, SynthesisError>
-        where
-            F: FnOnce() -> Result<E::Fr, SynthesisError>,
-            A: FnOnce() -> AR,
-            AR: Into<String>,
-        {
-            f().expect("value computation failed in alloc_input");
-            Ok(Variable::new_unchecked(Index::Aux(0)))
-        }
-        fn alloc_input<F, A, AR>(
-            &mut self,
-            _annotation: A,
-            f: F,
-        ) -> Result<Variable, SynthesisError>
-        where
-            F: FnOnce() -> Result<E::Fr, SynthesisError>,
-            A: FnOnce() -> AR,
-            AR: Into<String>,
-        {
-            f().expect("value computation failed in alloc_input");
-            Ok(Variable::new_unchecked(Index::Input(0)))
-        }
-
-        fn enforce<A, AR, LA, LB, LC>(&mut self, _annotation: A, _a: LA, _b: LB, _c: LC)
-        where
-            A: FnOnce() -> AR,
-            AR: Into<String>,
-            LA: FnOnce(LinearCombination<E>) -> LinearCombination<E>,
-            LB: FnOnce(LinearCombination<E>) -> LinearCombination<E>,
-            LC: FnOnce(LinearCombination<E>) -> LinearCombination<E>,
-        {
-        }
-        fn push_namespace<NR, N>(&mut self, _name_fn: N)
-        where
-            NR: Into<String>,
-            N: FnOnce() -> NR,
-        {
-        }
-        fn pop_namespace(&mut self) {}
-        fn get_root(&mut self) -> &mut Self::Root {
-            self
-        }
-    }
-}
+use bench::WitnessTimer;
 
 /// Use the sha256 hash algorithm to digest these items
 pub fn sha256<E: Engine>(inputs: &[E::Fr]) -> E::Fr {
-    let mut cs = constraint::NoEnforcement::new();
+    let mut cs = WitnessTimer::new();
     let nums: Vec<AllocatedNum<E>> = inputs
         .into_iter()
         .enumerate()
