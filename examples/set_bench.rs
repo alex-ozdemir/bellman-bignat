@@ -38,6 +38,7 @@ Options:
                  counter: emits CSV w/ constraints to stdout
                  timer: emits CSV w/ times to stdout
   -h --help      Show this screen.
+  -f --full      Run the test with an initially full accumulator
   --hash HASH    The hash function to use [default: poseidon]
                  Valid values: poseidon, mimc, pedersen, babypedersen, sha
   --version      Show version.
@@ -70,6 +71,7 @@ struct Args {
     arg_capacity: usize,
     flag_synth: Synthesizer,
     flag_hash: Hashes,
+    flag_full: bool,
     cmd_rsa: bool,
     cmd_merkle: bool,
 }
@@ -86,30 +88,35 @@ fn main() {
                 Hashes::Poseidon => rsa_bench(
                     args.arg_transactions,
                     args.arg_capacity,
+                    args.flag_full,
                     args.flag_synth,
                     Poseidon::default(),
                 ),
                 Hashes::Mimc => rsa_bench::<Bn256, _>(
                     args.arg_transactions,
                     args.arg_capacity,
+                    args.flag_full,
                     args.flag_synth,
                     Mimc::default(),
                 ),
                 Hashes::Pedersen => rsa_bench(
                     args.arg_transactions,
                     args.arg_capacity,
+                    args.flag_full,
                     args.flag_synth,
                     Pedersen::default(),
                 ),
                 Hashes::BabyPedersen => rsa_bench(
                     args.arg_transactions,
                     args.arg_capacity,
+                    args.flag_full,
                     args.flag_synth,
                     BabyPedersen::default(),
                 ),
                 Hashes::Sha => rsa_bench::<Bn256, _>(
                     args.arg_transactions,
                     args.arg_capacity,
+                    args.flag_full,
                     args.flag_synth,
                     Sha256::default(),
                 ),
@@ -122,30 +129,35 @@ fn main() {
                 Hashes::Poseidon => merkle_bench(
                     args.arg_transactions,
                     args.arg_capacity,
+                    args.flag_full,
                     args.flag_synth,
                     Poseidon::default(),
                 ),
                 Hashes::Mimc => merkle_bench::<Bn256, _>(
                     args.arg_transactions,
                     args.arg_capacity,
+                    args.flag_full,
                     args.flag_synth,
                     Mimc::default(),
                 ),
                 Hashes::Pedersen => merkle_bench(
                     args.arg_transactions,
                     args.arg_capacity,
+                    args.flag_full,
                     args.flag_synth,
                     Pedersen::default(),
                 ),
                 Hashes::BabyPedersen => merkle_bench(
                     args.arg_transactions,
                     args.arg_capacity,
+                    args.flag_full,
                     args.flag_synth,
                     BabyPedersen::default(),
                 ),
                 Hashes::Sha => merkle_bench::<Bn256, _>(
                     args.arg_transactions,
                     args.arg_capacity,
+                    args.flag_full,
                     args.flag_synth,
                     Sha256::default(),
                 ),
@@ -164,7 +176,8 @@ fn main() {
 
 fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
     t: usize,
-    _c: usize,
+    c: usize,
+    full: bool,
     synth: Synthesizer,
     hash: H,
 ) -> usize {
@@ -173,9 +186,10 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
         m: BigUint::from_str(RSA_2048).unwrap(),
     };
 
+    let n_untouched = if full { (1usize << c).saturating_sub(t) } else { 0 };
     let circuit = SetBench {
         inputs: Some(SetBenchInputs::from_counts(
-            0,
+            n_untouched,
             t,
             t,
             ELEMENT_SIZE,
@@ -224,12 +238,14 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
 fn merkle_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
     t: usize,
     c: usize,
+    full: bool,
     synth: Synthesizer,
     hash: H,
 ) -> usize {
+    let n_untouched = if full { (1usize << c).saturating_sub(t) } else { 0 };
     let circuit = MerkleSetBench {
         inputs: Some(MerkleSetBenchInputs::from_counts(
-            0,
+            n_untouched,
             t,
             ELEMENT_SIZE,
             hash.clone(),
