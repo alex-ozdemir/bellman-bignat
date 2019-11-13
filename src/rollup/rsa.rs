@@ -2,7 +2,7 @@ use rand::Rng;
 
 use num_bigint::BigUint;
 
-use sapling_crypto::bellman::{Circuit, ConstraintSystem};
+use sapling_crypto::bellman::{Circuit, ConstraintSystem, SynthesisError};
 use sapling_crypto::circuit::ecc::EdwardsPoint;
 use sapling_crypto::circuit::num::AllocatedNum;
 use sapling_crypto::eddsa::{PrivateKey, PublicKey};
@@ -86,7 +86,7 @@ where
         r
     }
 
-    pub fn digest(&self) -> BigUint {
+    pub fn digest(&mut self) -> BigUint {
         self.set.digest()
     }
 
@@ -318,7 +318,7 @@ where
     E: JubjubEngine,
     H: Hasher<F = E::Fr> + CircuitHasher<E = E>,
 {
-    fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> CResult<()> {
+    fn synthesize<CS: ConstraintSystem<E>>(mut self, cs: &mut CS) -> CResult<()> {
         let gen_value = self
             .params
             .jj_params
@@ -394,11 +394,13 @@ where
             })
             .collect::<CResult<Vec<_>>>()?;
 
+        let limb_width = self.params.set_params.limb_width;
+        let n_bits_base = self.params.set_params.n_bits_base;
         let expected_initial_digest = BigNat::alloc_from_nat(
             cs.namespace(|| "expected_initial_digest"),
-            || Ok(self.input.grab()?.accounts.digest()),
-            self.params.set_params.limb_width,
-            self.params.set_params.n_bits_base / self.params.set_params.limb_width,
+            || Ok(self.input.as_mut().ok_or(SynthesisError::AssignmentMissing)?.accounts.digest()),
+            limb_width,
+            n_bits_base / limb_width,
         )?;
         let expected_final_digest = BigNat::alloc_from_nat(
             cs.namespace(|| "expected_final_digest"),

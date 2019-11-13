@@ -22,7 +22,7 @@ pub trait IntSet: Sized + Clone + Eq + Debug {
     /// Remove `n` from the set, returning whether `n` was present.
     fn remove(&mut self, n: &BigUint) -> bool;
     /// BigUinthe digest of the current elements (`g` to the product of the elements).
-    fn digest(&self) -> <Self::G as SemiGroup>::Elem;
+    fn digest(&mut self) -> <Self::G as SemiGroup>::Elem;
 
     /// Gets the underlying RSA group
     fn group(&self) -> &Self::G;
@@ -52,9 +52,13 @@ pub trait IntSet: Sized + Clone + Eq + Debug {
 pub struct NaiveExpSet<G: SemiGroup> {
     group: G,
     elements: BTreeMap<BigUint, usize>,
+    digest: Option<G::Elem>,
 }
 
-impl<G: SemiGroup> std::fmt::Debug for NaiveExpSet<G> where G::Elem: std::fmt::Display {
+impl<G: SemiGroup> std::fmt::Debug for NaiveExpSet<G>
+where
+    G::Elem: std::fmt::Display,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         write!(f, "NaiveExpSet ")?;
         let mut d = f.debug_set();
@@ -75,6 +79,7 @@ where
 
     fn new(group: G) -> Self {
         Self {
+            digest: Some(group.generator()),
             group,
             elements: BTreeMap::new(),
         }
@@ -87,6 +92,9 @@ where
     }
 
     fn insert(&mut self, n: BigUint) {
+        if let Some(ref mut d) = self.digest {
+            *d = self.group.power(d, &n);
+        }
         *self.elements.entry(n).or_insert(0) += 1;
     }
 
@@ -96,21 +104,26 @@ where
             if *count == 0 {
                 self.elements.remove(n);
             }
+            self.digest = None;
             return true;
         } else {
             return false;
         }
     }
 
-    fn digest(&self) -> G::Elem {
-        self.elements
-            .iter()
-            .fold(self.group.generator(), |mut acc, (elem, ct)| {
-                for _ in 0..*ct {
-                    acc = self.group.power(&acc, &elem)
-                }
-                acc
-            })
+    fn digest(&mut self) -> G::Elem {
+        if self.digest.is_none() {
+            self.digest = Some(self.elements.iter().fold(
+                self.group.generator(),
+                |mut acc, (elem, ct)| {
+                    for _ in 0..*ct {
+                        acc = self.group.power(&acc, &elem)
+                    }
+                    acc
+                },
+            ))
+        }
+        self.digest.clone().unwrap()
     }
 
     fn group(&self) -> &G {
@@ -148,7 +161,8 @@ where
         access: CG,
         _params: &(),
     ) -> Result<Self, SynthesisError> {
-        let digest_val = value.map(|v| v.digest());
+        let mut value = value.cloned();
+        let digest_val = value.as_mut().map(|v| v.digest());
         let digest: CG::Elem = <CG::Elem as Gadget>::alloc(
             cs.namespace(|| "digest"),
             digest_val.as_ref(),
@@ -157,7 +171,7 @@ where
         )?;
         let group = access;
         Ok(Self {
-            value: value.cloned(),
+            value,
             digest,
             group,
         })

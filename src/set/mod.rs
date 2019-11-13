@@ -28,7 +28,7 @@ where
         }
     }
 
-    fn digest(&self) -> Self::Digest;
+    fn digest(&mut self) -> Self::Digest;
 }
 
 pub trait CircuitGenSet : Sized {

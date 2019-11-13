@@ -107,7 +107,6 @@ where
     /// of pairs (bit, hash), where bit is true if hash is a right child on the path to the item.
     /// The sequence starts at the top of the tree, going down.
     fn witness(&self, item: &[H::F]) -> Vec<(bool, H::F)> {
-        println!("{:?}", self.leaf_indices);
         let o_r = self.hasher.hash(item).into_repr();
         let i = *self
             .leaf_indices
@@ -146,7 +145,7 @@ where
     }
 
     /// The digest of the current elements (`g` to the product of the elements).
-    fn digest(&self) -> Self::Digest {
+    fn digest(&mut self) -> Self::Digest {
         self.get_node(0, 0).clone()
     }
 }
@@ -188,9 +187,10 @@ where
         access: Self::Access,
         params: &Self::Params,
     ) -> Result<Self, SynthesisError> {
-        let digest = AllocatedNum::alloc(cs.namespace(|| "digest"), || Ok(value.grab()?.digest()))?;
+        let mut value = value.cloned();
+        let digest = AllocatedNum::alloc(cs.namespace(|| "digest"), || Ok(value.as_mut().ok_or(SynthesisError::AssignmentMissing)?.digest()))?;
         Ok(Self {
-            value: value.cloned(),
+            value: value,
             hasher: access,
             depth: *params,
             digest,

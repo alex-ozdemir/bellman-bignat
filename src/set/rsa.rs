@@ -135,7 +135,7 @@ where
     }
 
     /// The digest of the current elements (`g` to the product of the elements).
-    fn digest(&self) -> <Inner::G as SemiGroup>::Elem {
+    fn digest(&mut self) -> <Inner::G as SemiGroup>::Elem {
         self.inner.digest()
     }
 }
@@ -364,6 +364,8 @@ where
     H: Hasher,
     Inner: IntSet<G = RsaQuotientGroup>,
 {
+    /// Creates an input to the set benchmark in which fixed numbers of items are present but
+    /// unmodified, a fixed number of items are removed, and a fixed number are added.
     pub fn from_counts(
         n_untouched: usize,
         n_removed: usize,
@@ -427,32 +429,21 @@ where
             .iter()
             .map(|i| i.iter().map(|j| H::F::from_str(j).unwrap()).collect())
             .collect();
-        let hash_domain = HashDomain {
-            n_bits: n_bits_elem,
-            n_trailing_ones: 1,
-        };
         let offset = rsa::offset(n_bits_elem);
-        let untouched_hashes = untouched.iter().map(|xs| {
-            rsa::helper::hash_to_rsa_element::<H>(&xs, &offset, &hash_domain, limb_width, &hasher)
-        });
-        let inserted_hashes = inserted.iter().map(|xs| {
-            rsa::helper::hash_to_rsa_element::<H>(&xs, &offset, &hash_domain, limb_width, &hasher)
-        });
-        let final_digest = untouched_hashes
-            .clone()
-            .chain(inserted_hashes)
-            .fold(group.g.clone(), |g, i| group.power(&g, &i));
-        let initial_state = Set::new_with(
+        let mut initial_state = Set::new_with(
             group,
             offset,
             hasher,
             n_bits_elem,
             limb_width,
-            untouched.iter().chain(&removed).map(|v| v.as_slice()),
+            untouched.iter().map(|v| v.as_slice()),
         );
+        initial_state.insert_all(removed.clone());
+        let mut final_state = initial_state.clone();
+        final_state.insert_all(inserted.clone());
         SetBenchInputs {
             initial_state,
-            final_digest,
+            final_digest: final_state.digest(),
             to_remove: removed,
             to_insert: inserted,
         }
@@ -486,7 +477,7 @@ where
     E: Engine,
     H: Hasher<F = E::Fr> + CircuitHasher<E = E>,
 {
-    fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
+    fn synthesize<CS: ConstraintSystem<E>>(mut self, cs: &mut CS) -> Result<(), SynthesisError> {
         if self.params.verbose {
             println!("Allocating Deletions...");
         }
@@ -523,11 +514,13 @@ where
             })
             .collect::<Result<Vec<MaybeHashed<E>>, SynthesisError>>()?;
 
+        let limb_width = self.params.limb_width;
+        let n_bits_base = self.params.n_bits_base;
         let expected_initial_digest = BigNat::alloc_from_nat(
             cs.namespace(|| "expected_initial_digest"),
-            || Ok(self.inputs.as_ref().grab()?.initial_state.digest()),
-            self.params.limb_width,
-            self.params.n_bits_base / self.params.limb_width,
+            || Ok(self.inputs.as_mut().ok_or(SynthesisError::AssignmentMissing)?.initial_state.digest()),
+            limb_width,
+            n_bits_base / limb_width,
         )?;
         let expected_final_digest = BigNat::alloc_from_nat(
             cs.namespace(|| "expected_final_digest"),

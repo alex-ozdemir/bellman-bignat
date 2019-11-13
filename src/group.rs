@@ -72,6 +72,10 @@ impl SemiGroup for RsaGroup {
     fn generator(&self) -> BigUint {
         self.g.clone()
     }
+
+    fn power(&self, b: &Self::Elem, e: &BigUint) -> Self::Elem {
+        b.modpow(e, &self.m)
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -113,6 +117,12 @@ impl SemiGroup for RsaQuotientGroup {
 
     fn generator(&self) -> BigUint {
         self.g.clone()
+    }
+
+    fn power(&self, b: &Self::Elem, e: &BigUint) -> Self::Elem {
+        let x = b.modpow(e, &self.m);
+        let y = &self.m - &x;
+        min(x, y)
     }
 }
 
