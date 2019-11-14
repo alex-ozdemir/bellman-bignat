@@ -425,7 +425,7 @@ mod test {
                         .iter()
                         .map(|s| <Bn256 as ScalarEngine>::Fr::from_str(s).unwrap())
                         .collect();
-                    let hash = Poseidon::default();
+                    let hash = Poseidon::<Bn256>::default();
                     let cert = helper::hash_to_pocklington_prime(&input_values, entropy, &hash).expect("pocklington generation failed");
                     assert!(crate::hash::miller_rabin_prime::helper::miller_rabin(cert.number(), 20));
                 }

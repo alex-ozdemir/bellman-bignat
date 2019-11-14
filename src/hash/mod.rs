@@ -1,14 +1,14 @@
+pub mod hashes;
 pub mod miller_rabin_prime;
 pub mod pocklington;
 pub mod rsa;
-pub mod hashes;
 
 use std::clone::Clone;
 
 use num_bigint::BigUint;
 use num_traits::One;
-use sapling_crypto::bellman::pairing::ff::PrimeField;
 use sapling_crypto::bellman::pairing::ff::Field;
+use sapling_crypto::bellman::pairing::ff::PrimeField;
 
 /// A representation of an integer domain to hash to
 #[derive(Clone, Debug)]
@@ -43,23 +43,17 @@ pub trait Hasher: Clone {
 }
 
 pub mod circuit {
-    use sapling_crypto::bellman::pairing::bn256::Bn256;
     use sapling_crypto::bellman::pairing::ff::Field;
     use sapling_crypto::bellman::pairing::ff::PrimeField;
     use sapling_crypto::bellman::pairing::ff::ScalarEngine;
     use sapling_crypto::bellman::pairing::Engine;
     use sapling_crypto::bellman::{Circuit, ConstraintSystem};
     use sapling_crypto::circuit::num::AllocatedNum;
-    use sapling_crypto::group_hash::Keccak256Hasher;
-    use sapling_crypto::poseidon::bn256::Bn256PoseidonParams;
-    use sapling_crypto::alt_babyjubjub::AltJubjubBn256;
 
     use std::clone::Clone;
-    use std::rc::Rc;
 
     use super::Hasher;
     use CResult;
-    use super::hashes::{Poseidon, Pedersen, BabyPedersen, Mimc, Sha256};
 
     #[derive(Derivative)]
     #[derivative(Clone(bound = ""))]
@@ -113,56 +107,16 @@ pub mod circuit {
         }
     }
 
-
     pub struct Bench<H: Hasher + CircuitHasher> {
         inputs: Vec<String>,
         hasher: H,
     }
 
-    impl Bench<Poseidon<Bn256>> {
-        pub fn poseidon_with_inputs(n_inputs: usize) -> Self {
-            let p = Rc::new(Bn256PoseidonParams::new::<Keccak256Hasher>());
+    impl<H: Hasher + CircuitHasher> Bench<H> {
+        pub fn from_hasher(hasher: H, n_inputs: usize) -> Self {
             Self {
                 inputs: (0..n_inputs).map(|i| format!("{}", i)).collect(),
-                hasher: Poseidon::<Bn256> { params: p.clone() },
-            }
-        }
-    }
-
-    impl Bench<Pedersen<Bn256>> {
-        pub fn pedersen_with_inputs(n_inputs: usize) -> Self {
-            let p = Rc::new(AltJubjubBn256::new());
-            Self {
-                inputs: (0..n_inputs).map(|i| format!("{}", i)).collect(),
-                hasher: Pedersen::<Bn256> { params: p.clone() },
-            }
-        }
-    }
-
-    impl Bench<BabyPedersen<Bn256>> {
-        pub fn baby_pedersen_with_inputs(n_inputs: usize) -> Self {
-            let p = Rc::new(sapling_crypto::babyjubjub::JubjubBn256::new());
-            Self {
-                inputs: (0..n_inputs).map(|i| format!("{}", i)).collect(),
-                hasher: BabyPedersen::<Bn256> { params: p.clone() },
-            }
-        }
-    }
-
-    impl Bench<Mimc<Bn256>> {
-        pub fn mimc_with_inputs(n_inputs: usize) -> Self {
-            Self {
-                inputs: (0..n_inputs).map(|i| format!("{}", i)).collect(),
-                hasher: Mimc::default(),
-            }
-        }
-    }
-
-    impl Bench<Sha256<Bn256>> {
-        pub fn sha256_with_inputs(n_inputs: usize) -> Self {
-            Self {
-                inputs: (0..n_inputs).map(|i| format!("{}", i)).collect(),
-                hasher: Sha256::default(),
+                hasher,
             }
         }
     }
@@ -199,44 +153,38 @@ pub mod circuit {
     #[cfg(test)]
     mod test {
         use super::Bench;
+        use hash::hashes::{Mimc, Pedersen, Poseidon, Sha256};
+        use sapling_crypto::bellman::pairing::bn256::Bn256;
         use test_helpers::*;
 
         circuit_tests! {
-            poseidon_2: (Bench::poseidon_with_inputs(2), true),
-            poseidon_3: (Bench::poseidon_with_inputs(3), true),
-            poseidon_4: (Bench::poseidon_with_inputs(4), true),
-            poseidon_5: (Bench::poseidon_with_inputs(5), true),
-            poseidon_6: (Bench::poseidon_with_inputs(6), true),
-            poseidon_7: (Bench::poseidon_with_inputs(7), true),
-            poseidon_8: (Bench::poseidon_with_inputs(8), true),
-            poseidon_9: (Bench::poseidon_with_inputs(9), true),
-            poseidon_10: (Bench::poseidon_with_inputs(10), true),
-            poseidon_11: (Bench::poseidon_with_inputs(11), true),
-            poseidon_12: (Bench::poseidon_with_inputs(12), true),
-            poseidon_13: (Bench::poseidon_with_inputs(13), true),
-            poseidon_14: (Bench::poseidon_with_inputs(14), true),
-            poseidon_15: (Bench::poseidon_with_inputs(15), true),
-            poseidon_16: (Bench::poseidon_with_inputs(16), true),
+            bn256_poseidon_2: (Bench::from_hasher(Poseidon::<Bn256>::default(), 2), true),
+            bn256_poseidon_5: (Bench::from_hasher(Poseidon::<Bn256>::default(), 5), true),
+            bn256_poseidon_10: (Bench::from_hasher(Poseidon::<Bn256>::default(), 10), true),
 
-            pedersen_2: (Bench::pedersen_with_inputs(2), true),
-            pedersen_5: (Bench::pedersen_with_inputs(5), true),
+            bn256_pedersen_2: (Bench::from_hasher(Pedersen::<Bn256>::default(), 2), true),
+            bn256_pedersen_5: (Bench::from_hasher(Pedersen::<Bn256>::default(), 5), true),
+            bn256_pedersen_10: (Bench::from_hasher(Pedersen::<Bn256>::default(), 10), true),
 
-            baby_pedersen_2: (Bench::baby_pedersen_with_inputs(2), true),
+            bn256_sha_2: (Bench::from_hasher(Sha256::default(), 2), true),
+            bn256_sha_5: (Bench::from_hasher(Sha256::default(), 5), true),
 
-            mimc_2: (Bench::mimc_with_inputs(2), true),
-            mimc_3: (Bench::mimc_with_inputs(3), true),
-            mimc_4: (Bench::mimc_with_inputs(4), true),
-            mimc_5: (Bench::mimc_with_inputs(5), true),
-            mimc_6: (Bench::mimc_with_inputs(6), true),
-            mimc_7: (Bench::mimc_with_inputs(7), true),
-            mimc_8: (Bench::mimc_with_inputs(8), true),
-            mimc_9: (Bench::mimc_with_inputs(9), true),
+            bn256_mimc_2: (Bench::from_hasher(Mimc::default(), 2), true),
+            bn256_mimc_5: (Bench::from_hasher(Mimc::default(), 5), true),
 
-            sha256_2: (Bench::sha256_with_inputs(2), true),
-            sha256_3: (Bench::sha256_with_inputs(3), true),
-            sha256_4: (Bench::sha256_with_inputs(4), true),
-            sha256_5: (Bench::sha256_with_inputs(5), true),
-            sha256_10: (Bench::sha256_with_inputs(10), true),
+//            bls12_poseidon_2: (Bench::from_hasher(Poseidon::<Bls12>::default(), 2), true),
+//            bls12_poseidon_5: (Bench::from_hasher(Poseidon::<Bls12>::default(), 5), true),
+//            bls12_poseidon_10: (Bench::from_hasher(Poseidon::<Bls12>::default(), 10), true),
+//
+//            bls12_pedersen_2: (Bench::from_hasher(Pedersen::<Bls12>::default(), 2), true),
+//            bls12_pedersen_5: (Bench::from_hasher(Pedersen::<Bls12>::default(), 5), true),
+//            bls12_pedersen_10: (Bench::from_hasher(Pedersen::<Bls12>::default(), 10), true),
+//
+//            bls12_sha_2: (Bench::from_hasher(Sha256::default(), 2), true),
+//            bls12_sha_5: (Bench::from_hasher(Sha256::default(), 5), true),
+//
+//            bls12_mimc_2: (Bench::from_hasher(Mimc::default(), 2), true),
+//            bls12_mimc_5: (Bench::from_hasher(Mimc::default(), 5), true),
         }
     }
 }

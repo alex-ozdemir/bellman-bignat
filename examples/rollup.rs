@@ -102,8 +102,8 @@ fn main() {
     };
 
     let ins = circuit.inputs.as_ref().unwrap();
-    let initial_set = ins.initial_state.clone();
-    let final_set = {
+    let mut initial_set = ins.initial_state.clone();
+    let mut final_set = {
         let mut t = initial_set.clone();
         t.swap_all(ins.to_remove.clone(), ins.to_insert.clone());
         t

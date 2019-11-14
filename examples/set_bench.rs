@@ -8,13 +8,13 @@ extern crate serde;
 use bellman_bignat::bench::{ConstraintCounter, ConstraintProfiler, WitnessTimer};
 use bellman_bignat::group::RsaQuotientGroup;
 use bellman_bignat::hash::circuit::CircuitHasher;
-use bellman_bignat::hash::hashes::{BabyPedersen, Mimc, Pedersen, Poseidon, Sha256};
+use bellman_bignat::hash::hashes::{Mimc, Pedersen, Poseidon, Sha256};
 use bellman_bignat::hash::Hasher;
 use bellman_bignat::set::merkle::{MerkleSetBench, MerkleSetBenchInputs, MerkleSetBenchParams};
 use bellman_bignat::set::rsa::{SetBench, SetBenchInputs, SetBenchParams};
 use docopt::Docopt;
 use num_bigint::BigUint;
-use sapling_crypto::bellman::pairing::bn256::Bn256;
+use sapling_crypto::bellman::pairing::bls12_381::Bls12;
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::Circuit;
 use serde::Deserialize;
@@ -61,7 +61,6 @@ enum Hashes {
     Poseidon,
     Mimc,
     Pedersen,
-    BabyPedersen,
     Sha,
 }
 
@@ -85,35 +84,28 @@ fn main() {
         (
             "rsa",
             match args.flag_hash {
-                Hashes::Poseidon => rsa_bench(
+                Hashes::Poseidon => rsa_bench::<Bls12, _>(
                     args.arg_transactions,
                     args.arg_capacity,
                     args.flag_full,
                     args.flag_synth,
                     Poseidon::default(),
                 ),
-                Hashes::Mimc => rsa_bench::<Bn256, _>(
+                Hashes::Mimc => rsa_bench::<Bls12, _>(
                     args.arg_transactions,
                     args.arg_capacity,
                     args.flag_full,
                     args.flag_synth,
                     Mimc::default(),
                 ),
-                Hashes::Pedersen => rsa_bench(
+                Hashes::Pedersen => rsa_bench::<Bls12, _>(
                     args.arg_transactions,
                     args.arg_capacity,
                     args.flag_full,
                     args.flag_synth,
                     Pedersen::default(),
                 ),
-                Hashes::BabyPedersen => rsa_bench(
-                    args.arg_transactions,
-                    args.arg_capacity,
-                    args.flag_full,
-                    args.flag_synth,
-                    BabyPedersen::default(),
-                ),
-                Hashes::Sha => rsa_bench::<Bn256, _>(
+                Hashes::Sha => rsa_bench::<Bls12, _>(
                     args.arg_transactions,
                     args.arg_capacity,
                     args.flag_full,
@@ -126,35 +118,28 @@ fn main() {
         (
             "merkle",
             match args.flag_hash {
-                Hashes::Poseidon => merkle_bench(
+                Hashes::Poseidon => merkle_bench::<Bls12, _>(
                     args.arg_transactions,
                     args.arg_capacity,
                     args.flag_full,
                     args.flag_synth,
                     Poseidon::default(),
                 ),
-                Hashes::Mimc => merkle_bench::<Bn256, _>(
+                Hashes::Mimc => merkle_bench::<Bls12, _>(
                     args.arg_transactions,
                     args.arg_capacity,
                     args.flag_full,
                     args.flag_synth,
                     Mimc::default(),
                 ),
-                Hashes::Pedersen => merkle_bench(
+                Hashes::Pedersen => merkle_bench::<Bls12, _>(
                     args.arg_transactions,
                     args.arg_capacity,
                     args.flag_full,
                     args.flag_synth,
                     Pedersen::default(),
                 ),
-                Hashes::BabyPedersen => merkle_bench(
-                    args.arg_transactions,
-                    args.arg_capacity,
-                    args.flag_full,
-                    args.flag_synth,
-                    BabyPedersen::default(),
-                ),
-                Hashes::Sha => merkle_bench::<Bn256, _>(
+                Hashes::Sha => merkle_bench::<Bls12, _>(
                     args.arg_transactions,
                     args.arg_capacity,
                     args.flag_full,

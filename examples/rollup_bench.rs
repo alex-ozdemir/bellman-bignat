@@ -9,8 +9,8 @@ use bellman_bignat::bench::{ConstraintCounter, ConstraintProfiler};
 use bellman_bignat::rollup::{rsa, merkle};
 use bellman_bignat::hash::hashes::Poseidon;
 use docopt::Docopt;
-use sapling_crypto::alt_babyjubjub::AltJubjubBn256;
-use sapling_crypto::bellman::pairing::bn256::Bn256;
+use sapling_crypto::jubjub::JubjubBls12;
+use sapling_crypto::bellman::pairing::bls12_381::Bls12;
 use sapling_crypto::bellman::Circuit;
 use serde::Deserialize;
 
@@ -66,10 +66,10 @@ fn main() {
 }
 
 fn rsa_bench(t: usize, _c: usize, profile: bool) -> usize {
-    let circuit = rsa::RollupBench::<Bn256, Poseidon<Bn256>>::from_counts(
+    let circuit = rsa::RollupBench::<Bls12, Poseidon<Bls12>>::from_counts(
         t, // Use `t` in place of `c` for sparse-ness.
         t,
-        AltJubjubBn256::new(),
+        JubjubBls12::new(),
         Poseidon::default(),
     );
 
@@ -86,10 +86,10 @@ fn rsa_bench(t: usize, _c: usize, profile: bool) -> usize {
 }
 
 fn merkle_bench(t: usize, c: usize, profile: bool) -> usize {
-    let circuit = merkle::RollupBench::from_counts(
+    let circuit = merkle::RollupBench::<Bls12, _>::from_counts(
         c,
         t,
-        AltJubjubBn256::new(),
+        JubjubBls12::new(),
         Poseidon::default(),
     );
 
