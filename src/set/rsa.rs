@@ -438,8 +438,8 @@ where
             limb_width,
             untouched.iter().map(|v| v.as_slice()),
         );
-        initial_state.insert_all(removed.clone());
         let mut final_state = initial_state.clone();
+        initial_state.insert_all(removed.clone());
         final_state.insert_all(inserted.clone());
         SetBenchInputs {
             initial_state,
