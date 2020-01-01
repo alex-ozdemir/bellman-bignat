@@ -190,7 +190,7 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
             group: group.clone(),
             limb_width: 32,
             n_bits_elem: RSA_SIZE,
-            n_bits_challenge: 128,
+            n_bits_challenge: 256,
             n_bits_base: RSA_SIZE,
             item_size: ELEMENT_SIZE,
             n_inserts: t,

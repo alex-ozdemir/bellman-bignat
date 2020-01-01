@@ -400,6 +400,14 @@ mod test {
         assert_eq!(p.entropy(), 128);
     }
 
+    #[test]
+    fn pocklington_plan_256() {
+        let p = helper::PocklingtonPlan::new(256);
+        println!("{:#?}", p);
+        println!("{:#?}", p.max_bits());
+        assert_eq!(p.entropy(), 256);
+    }
+
     //#[test]
     //fn pocklington_extension_0() {
     //    let cert = Base(BigUint::from(241usize));
@@ -554,6 +562,18 @@ mod test {
                 }),
                 params: PockHashParams {
                     entropy: 128,
+                    hash: Poseidon::default(),
+                },
+            },
+            true,
+        ),
+        pocklington_hash_256_1: (
+            PockHash {
+                inputs: Some(PockHashInputs {
+                    inputs: &["1","2","3","4","5","6","7","8","9","10"],
+                }),
+                params: PockHashParams {
+                    entropy: 256,
                     hash: Poseidon::default(),
                 },
             },

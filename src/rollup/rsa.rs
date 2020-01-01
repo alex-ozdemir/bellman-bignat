@@ -301,7 +301,7 @@ where
                 },
                 limb_width: 32,
                 n_bits_base: 2048,
-                n_bits_challenge: 128,
+                n_bits_challenge: 256,
                 n_bits_elem: 2048,
                 hasher: set_hash,
             },
