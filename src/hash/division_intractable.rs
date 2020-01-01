@@ -8,12 +8,12 @@ use sapling_crypto::circuit::num::AllocatedNum;
 
 use std::str::FromStr;
 
+use super::circuit::{CircuitHasher, MaybeHashed};
 use super::HashDomain;
-use bignat::BigNat;
-use bit::{Bit, Bitvector};
-use hash::circuit::{CircuitHasher, MaybeHashed};
-use hash::Hasher;
-use num::Num;
+use super::Hasher;
+use mp::bignat::BigNat;
+use util::bit::{Bit, Bitvector};
+use util::num::Num;
 use wesolowski::Reduced;
 use OptionExt;
 
@@ -22,14 +22,15 @@ const OFFSET_512: &str = "122600903769467117341200318916567960263611610899961298
 const OFFSET_128: &str = "320302797835264872593630364493262722277";
 
 pub mod helper {
-    use f_to_nat;
-    use hash::low_k_bits;
-    use hash::HashDomain;
-    use hash::Hasher;
     use num_bigint::BigUint;
     use num_traits::One;
     use sapling_crypto::bellman::pairing::ff::Field;
     use sapling_crypto::bellman::pairing::ff::PrimeField;
+
+    use super::super::low_k_bits;
+    use super::super::HashDomain;
+    use super::super::Hasher;
+    use util::convert::f_to_nat;
 
     pub fn hash_to_integer<H: Hasher>(inputs: &[H::F], domain: &HashDomain, hasher: &H) -> BigUint {
         let bits_per_hash = <H::F as PrimeField>::CAPACITY as usize;
@@ -245,13 +246,12 @@ mod test {
 
     use std::str::FromStr;
 
+    use super::super::circuit::CircuitHasher;
+    use super::super::hashes::Poseidon;
     use hash::Hasher;
-    use hash::circuit::CircuitHasher;
-    use hash::hashes::Poseidon;
-    use bignat::BigNat;
+    use mp::bignat::BigNat;
+    use util::test_helpers::*;
     use OptionExt;
-
-    use test_helpers::*;
 
     pub struct RsaHashInputs<'a> {
         pub inputs: &'a [&'a str],

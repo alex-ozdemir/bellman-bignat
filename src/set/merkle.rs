@@ -8,11 +8,11 @@ use sapling_crypto::circuit::num::AllocatedNum;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use super::{GenSet, CircuitGenSet};
-use gadget::Gadget;
-use hash::circuit::{MaybeHashed, CircuitHasher};
+use super::{CircuitGenSet, GenSet};
+use hash::circuit::{CircuitHasher, MaybeHashed};
 use hash::Hasher;
-use usize_to_f;
+use util::convert::usize_to_f;
+use util::gadget::Gadget;
 use OptionExt;
 
 /// Represents a merkle tree in which some prefix of the capacity is occupied.
@@ -188,7 +188,12 @@ where
         params: &Self::Params,
     ) -> Result<Self, SynthesisError> {
         let mut value = value.cloned();
-        let digest = AllocatedNum::alloc(cs.namespace(|| "digest"), || Ok(value.as_mut().ok_or(SynthesisError::AssignmentMissing)?.digest()))?;
+        let digest = AllocatedNum::alloc(cs.namespace(|| "digest"), || {
+            Ok(value
+                .as_mut()
+                .ok_or(SynthesisError::AssignmentMissing)?
+                .digest())
+        })?;
         Ok(Self {
             value: value,
             hasher: access,
@@ -217,7 +222,8 @@ impl<E, H, CH> CircuitGenSet for MerkleCircuitSet<E, H, CH>
 where
     E: Engine,
     H: Hasher<F = E::Fr>,
-    CH: CircuitHasher<E = E> {
+    CH: CircuitHasher<E = E>,
+{
     type E = E;
 
     fn swap_all<'b, CS: ConstraintSystem<Self::E>>(
@@ -235,7 +241,8 @@ where
 
             // First, we allocate the path
             let witness = self.value.as_ref().and_then(|v| {
-                old.values.iter()
+                old.values
+                    .iter()
                     .map(|n| n.get_value())
                     .collect::<Option<Vec<E::Fr>>>()
                     .map(|x| v.witness(&x))
@@ -261,7 +268,9 @@ where
             // Now, check the old item
             {
                 let mut cs = cs.namespace(|| "check old");
-                let mut acc = self.hasher.allocate_hash(cs.namespace(|| "leaf hash"), &old.values)?;
+                let mut acc = self
+                    .hasher
+                    .allocate_hash(cs.namespace(|| "leaf hash"), &old.values)?;
                 for (i, (bit, hash)) in path.iter().enumerate().rev() {
                     let mut cs = cs.namespace(|| format!("level {}", i));
                     let (a, b) = AllocatedNum::conditionally_reverse(
@@ -270,7 +279,9 @@ where
                         &acc,
                         &bit,
                     )?;
-                    acc = self.hasher.allocate_hash(cs.namespace(|| "hash"), &[a, b])?;
+                    acc = self
+                        .hasher
+                        .allocate_hash(cs.namespace(|| "hash"), &[a, b])?;
                 }
                 let eq = AllocatedNum::equals(cs.namespace(|| "root check"), &acc, &self.digest)?;
                 Boolean::enforce_equal(
@@ -283,7 +294,9 @@ where
             // Now, add the new item
             {
                 let mut cs = cs.namespace(|| "add new");
-                let mut acc = self.hasher.allocate_hash(cs.namespace(|| "leaf hash"), &new.values)?;
+                let mut acc = self
+                    .hasher
+                    .allocate_hash(cs.namespace(|| "leaf hash"), &new.values)?;
                 for (i, (bit, hash)) in path.into_iter().enumerate().rev() {
                     let mut cs = cs.namespace(|| format!("level {}", i));
                     let (a, b) = AllocatedNum::conditionally_reverse(
@@ -292,7 +305,9 @@ where
                         &acc,
                         &bit,
                     )?;
-                    acc = self.hasher.allocate_hash(cs.namespace(|| "hash"), &[a, b])?;
+                    acc = self
+                        .hasher
+                        .allocate_hash(cs.namespace(|| "hash"), &[a, b])?;
                 }
                 self.digest = acc;
                 if let Some(v) = self.value.as_mut() {
@@ -315,7 +330,6 @@ where
         Ok(self)
     }
 }
-
 
 pub struct MerkleSetBenchInputs<H>
 where
@@ -453,7 +467,10 @@ where
         let new_set = set.swap_all(
             cs.namespace(|| "swap"),
             removals.into_iter().map(MaybeHashed::from_values).collect(),
-            insertions.into_iter().map(MaybeHashed::from_values).collect(),
+            insertions
+                .into_iter()
+                .map(MaybeHashed::from_values)
+                .collect(),
         )?;
 
         if self.params.verbose {
@@ -466,9 +483,9 @@ where
 
 #[cfg(test)]
 mod test {
-    use super::{MerkleSetBenchParams, MerkleSetBenchInputs, MerkleSetBench};
+    use super::{MerkleSetBench, MerkleSetBenchInputs, MerkleSetBenchParams};
     use hash::hashes::Poseidon;
-    use test_helpers::*;
+    use util::test_helpers::*;
     circuit_tests! {
         merkle_1_swap_3_depth: (MerkleSetBench {
             inputs: Some(MerkleSetBenchInputs::from_counts(

@@ -1,16 +1,19 @@
+mod entropy;
+
 pub mod helper {
 
-    use entropy::helper::EntropySource;
-    use entropy::NatTemplate;
-    use f_to_nat;
-    use hash::low_k_bits;
-    use hash::miller_rabin_prime::helper::miller_rabin_32b;
-    use hash::hashes::mimc;
-    use hash::Hasher;
     use num_bigint::BigUint;
     use num_integer::Integer;
     use num_traits::One;
     use sapling_crypto::bellman::pairing::ff::{Field, PrimeField};
+
+    use super::entropy::helper::EntropySource;
+    use super::entropy::NatTemplate;
+    use hash::hashes::mimc;
+    use hash::low_k_bits;
+    use hash::miller_rabin_prime::helper::miller_rabin_32b;
+    use hash::Hasher;
+    use util::convert::f_to_nat;
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct PocklingtonPlan {
@@ -173,7 +176,9 @@ pub mod helper {
         for i in 0..(1 << plan.nonce_bits) {
             let nonce = i;
             let mimcd_nonce = low_k_bits(
-                &f_to_nat(&mimc::helper::permutation(F::from_str(&format!("{}", i)).unwrap())),
+                &f_to_nat(&mimc::helper::permutation(
+                    F::from_str(&format!("{}", i)).unwrap(),
+                )),
                 plan.nonce_bits,
             );
             let nonced_extension = &random + &mimcd_nonce;
@@ -272,19 +277,19 @@ pub mod helper {
 use num_bigint::BigUint;
 use num_traits::One;
 use sapling_crypto::bellman::pairing::ff::Field;
+use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
 use sapling_crypto::circuit::boolean::Boolean;
 use sapling_crypto::circuit::num::AllocatedNum;
-use sapling_crypto::bellman::pairing::Engine;
 
-use bignat::BigNat;
-use entropy::{EntropySource, NatTemplate};
-use gadget::Gadget;
+use self::entropy::{EntropySource, NatTemplate};
+use hash::circuit::CircuitHasher;
 use hash::hashes::mimc;
 use hash::Hasher;
-use hash::circuit::CircuitHasher;
-use num::Num;
-use usize_to_f;
+use mp::bignat::{BigNat, BigNatParams};
+use util::convert::usize_to_f;
+use util::gadget::Gadget;
+use util::num::Num;
 use OptionExt;
 
 pub fn hash_to_pocklington_prime<
@@ -337,7 +342,7 @@ pub fn hash_to_pocklington_prime<
         let mimcd_nonce = BigNat::from_num(
             mimcd_nonce_all_bits
                 .low_k_bits(cs.namespace(|| "mimc low bits"), extension.nonce_bits)?,
-            crate::bignat::BigNatParams {
+            BigNatParams {
                 n_limbs: 1,
                 limb_width: prime.params.limb_width,
                 max_word: BigUint::one() << extension.nonce_bits,
@@ -379,18 +384,18 @@ pub fn hash_to_pocklington_prime<
 #[cfg(test)]
 mod test {
     use super::{hash_to_pocklington_prime, helper};
-    use sapling_crypto::bellman::pairing::ff::{ScalarEngine, PrimeField};
+    use sapling_crypto::bellman::pairing::ff::{PrimeField, ScalarEngine};
     use sapling_crypto::bellman::pairing::Engine;
     use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
     use sapling_crypto::circuit::num::AllocatedNum;
 
-    use bignat::BigNat;
-    use hash::hashes::Poseidon;
-    use hash::Hasher;
     use hash::circuit::CircuitHasher;
+    use hash::hashes::Poseidon;
+    use hash::{miller_rabin_prime, Hasher};
+    use mp::bignat::BigNat;
     use OptionExt;
 
-    use test_helpers::*;
+    use util::test_helpers::*;
 
     #[test]
     fn pocklington_plan_128() {
@@ -435,7 +440,7 @@ mod test {
                         .collect();
                     let hash = Poseidon::<Bn256>::default();
                     let cert = helper::hash_to_pocklington_prime(&input_values, entropy, &hash).expect("pocklington generation failed");
-                    assert!(crate::hash::miller_rabin_prime::helper::miller_rabin(cert.number(), 20));
+                    assert!(miller_rabin_prime::helper::miller_rabin(cert.number(), 20));
                 }
             )*
         }
@@ -500,7 +505,11 @@ mod test {
                 self.params.entropy,
                 &self.params.hash,
             )?;
-            println!("Pocklington bits in: [{}, {}]", hash.params.min_bits, hash.params.limb_width * hash.params.n_limbs);
+            println!(
+                "Pocklington bits in: [{}, {}]",
+                hash.params.min_bits,
+                hash.params.limb_width * hash.params.n_limbs
+            );
             hash.equal(cs.namespace(|| "eq"), &allocated_expected_output)?;
             Ok(())
         }

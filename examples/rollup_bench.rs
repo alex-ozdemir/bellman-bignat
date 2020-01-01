@@ -5,7 +5,7 @@ extern crate rand;
 extern crate sapling_crypto;
 extern crate serde;
 
-use bellman_bignat::bench::{ConstraintCounter, ConstraintProfiler};
+use bellman_bignat::util::bench::{ConstraintCounter, ConstraintProfiler};
 use bellman_bignat::rollup::{rsa, merkle};
 use bellman_bignat::hash::hashes::Poseidon;
 use docopt::Docopt;

@@ -2,7 +2,7 @@ use sapling_crypto::bellman::pairing::ff::ScalarEngine;
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
 
-use bit::Bit;
+use super::bit::Bit;
 use OptionExt;
 
 pub trait Gadget: Sized + Clone {

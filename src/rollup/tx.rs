@@ -6,7 +6,7 @@ use sapling_crypto::jubjub::{FixedGenerators, JubjubEngine};
 
 use hash::Hasher;
 
-use usize_to_f;
+use util::convert::usize_to_f;
 
 use std::fmt::{Debug, Error, Formatter};
 
@@ -95,11 +95,6 @@ pub struct SignedTx<E: JubjubEngine> {
 }
 
 pub mod circuit {
-    use super::{Action, SignedTx};
-    use gadget::Gadget;
-    use hash::circuit::CircuitHasher;
-    use num::Num;
-    use rollup::sig::allocate_sig;
     use sapling_crypto::bellman::pairing::ff::PrimeField;
     use sapling_crypto::bellman::pairing::ff::ScalarEngine;
     use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
@@ -109,8 +104,13 @@ pub mod circuit {
     use sapling_crypto::jubjub::JubjubEngine;
     use std::clone::Clone;
     use std::rc::Rc;
-    use usize_to_f;
-    use f_to_usize;
+
+    use super::{Action, SignedTx};
+    use hash::circuit::CircuitHasher;
+    use rollup::sig::allocate_sig;
+    use util::convert::{f_to_usize, usize_to_f};
+    use util::gadget::Gadget;
+    use util::num::Num;
     use CResult;
     use OptionExt;
 

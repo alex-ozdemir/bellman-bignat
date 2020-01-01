@@ -3,7 +3,7 @@ extern crate num_bigint;
 extern crate rand;
 extern crate sapling_crypto;
 
-use bellman_bignat::bignat::nat_to_limbs;
+use bellman_bignat::mp::bignat::nat_to_limbs;
 use bellman_bignat::group::RsaQuotientGroup;
 use bellman_bignat::hash::hashes::Poseidon;
 use bellman_bignat::set::int_set::NaiveExpSet;

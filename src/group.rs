@@ -6,10 +6,10 @@ use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisErro
 use std::cmp::{min, Eq, PartialEq};
 use std::fmt::{self, Debug, Display, Formatter};
 
-use bignat::{BigNat, BigNatParams};
-use bit::{Bit, Bitvector};
-use exp::optimal_k;
-use gadget::Gadget;
+use mp::bignat::{BigNat, BigNatParams};
+use mp::exp::optimal_k;
+use util::bit::{Bit, Bitvector};
+use util::gadget::Gadget;
 
 pub trait SemiGroup: Clone + Eq + Debug + Display {
     type Elem: Clone + Debug + Ord + Display;
@@ -469,7 +469,7 @@ impl<E: Engine> CircuitSemiGroup for CircuitRsaQuotientGroup<E> {
 mod test {
     use super::*;
     use std::str::FromStr;
-    use test_helpers::*;
+    use util::test_helpers::*;
     use OptionExt;
 
     #[derive(Debug)]

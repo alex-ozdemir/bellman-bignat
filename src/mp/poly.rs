@@ -5,7 +5,7 @@ use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisErro
 use std::cmp::max;
 use std::fmt::{self, Debug, Formatter};
 
-use usize_to_f;
+use util::convert::usize_to_f;
 use OptionExt;
 
 pub struct Polynomial<E: Engine> {

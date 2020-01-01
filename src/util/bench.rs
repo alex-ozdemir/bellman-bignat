@@ -69,6 +69,11 @@ mod interner {
     #[derive(Debug, Clone, Copy)]
     pub struct InternedName(usize);
 
+    /// A structure for interning strings.
+    /// Constructs a bijection between strings and integers to support fast equality checks &
+    /// efficient storage.
+    ///
+    /// Useful when you think there will be many duplicates.
     pub struct Interner {
         strings: FnvHashMap<usize, String>,
         names: HashMap<String, usize>,

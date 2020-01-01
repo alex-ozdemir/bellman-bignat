@@ -9,20 +9,19 @@ use sapling_crypto::eddsa::{PrivateKey, PublicKey};
 use sapling_crypto::jubjub::edwards::Point;
 use sapling_crypto::jubjub::{FixedGenerators, JubjubEngine, JubjubParams, PrimeOrder};
 
-use bignat::BigNat;
-use gadget::Gadget;
 use group::{CircuitRsaGroupParams, CircuitRsaQuotientGroup, RsaQuotientGroup};
-use hash;
 use hash::circuit::CircuitHasher;
 use hash::hashes::Pedersen;
-use hash::Hasher;
+use hash::{self, division_intractable as di, Hasher};
+use mp::bignat::BigNat;
 use rollup::sig::allocate_point;
-use rollup::tx::circuit::{CircuitSignedTx, CircuitAccount};
-use rollup::tx::{Action, SignedTx, Tx, Account, TxAccountChanges};
+use rollup::tx::circuit::{CircuitAccount, CircuitSignedTx};
+use rollup::tx::{Account, Action, SignedTx, Tx, TxAccountChanges};
 use set::int_set::NaiveExpSet;
 use set::rsa::{CircuitSet, CircuitSetParams, Set};
 use set::{CircuitGenSet, GenSet};
-use usize_to_f;
+use util::convert::usize_to_f;
+use util::gadget::Gadget;
 use CResult;
 use OptionExt;
 
@@ -54,7 +53,7 @@ where
             map: HashMap::new(),
             set: Set::new_with(
                 s.group.clone(),
-                hash::rsa::offset(s.n_bits_elem),
+                di::offset(s.n_bits_elem),
                 s.hasher.clone(),
                 s.n_bits_elem,
                 s.limb_width,
@@ -398,7 +397,14 @@ where
         let n_bits_base = self.params.set_params.n_bits_base;
         let expected_initial_digest = BigNat::alloc_from_nat(
             cs.namespace(|| "expected_initial_digest"),
-            || Ok(self.input.as_mut().ok_or(SynthesisError::AssignmentMissing)?.accounts.digest()),
+            || {
+                Ok(self
+                    .input
+                    .as_mut()
+                    .ok_or(SynthesisError::AssignmentMissing)?
+                    .accounts
+                    .digest())
+            },
             limb_width,
             n_bits_base / limb_width,
         )?;

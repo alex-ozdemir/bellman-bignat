@@ -3,18 +3,19 @@ use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisErro
 use sapling_crypto::circuit::boolean::Boolean;
 use sapling_crypto::circuit::num::AllocatedNum;
 
-use bignat::BigNat;
-use hash::circuit::CircuitHasher;
-use hash::rsa::hash_to_integer;
-use hash::{HashDomain, Hasher};
-use num::Num;
+use super::circuit::CircuitHasher;
+use super::division_intractable::hash_to_integer;
+use super::{HashDomain, Hasher};
+use mp::bignat::BigNat;
+use util::num::Num;
 use OptionExt;
 
 pub mod helper {
-    use hash::rsa::helper::hash_to_integer;
-    use hash::{HashDomain, Hasher};
     use num_bigint::BigUint;
     use sapling_crypto::bellman::pairing::ff::Field;
+
+    use super::super::division_intractable::helper::hash_to_integer;
+    use super::super::{HashDomain, Hasher};
 
     /// Returns whether `n` passes Miller-Rabin checks with the first `rounds` primes as bases
     pub fn miller_rabin(n: &BigUint, rounds: usize) -> bool {
@@ -142,12 +143,8 @@ mod test {
     use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
     use sapling_crypto::circuit::num::AllocatedNum;
 
-    use bignat::BigNat;
     use hash::hashes::Poseidon;
-    use hash::HashDomain;
-    use OptionExt;
-
-    use test_helpers::*;
+    use util::test_helpers::*;
 
     #[test]
     fn mr_11() {

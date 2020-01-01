@@ -7,12 +7,12 @@ use sapling_crypto::circuit::num::AllocatedNum;
 
 use std::convert::From;
 
-use f_to_nat;
-use nat_to_f;
-use usize_to_f;
-use OptionExt;
+use super::convert::f_to_nat;
+use super::convert::nat_to_f;
+use super::convert::usize_to_f;
+use super::bit::{Bit, Bitvector};
 
-use bit::{Bit, Bitvector};
+use OptionExt;
 
 pub struct Num<E: Engine> {
     pub num: LinearCombination<E>,
@@ -48,7 +48,7 @@ impl<E: Engine> Num<E> {
 
     /// Compute the natural number represented by an array of limbs.
     /// The limbs are assumed to be based the `limb_width` power of 2.
-    /// Low-indec bits are low-order
+    /// Low-index bits are low-order
     pub fn fits_in_bits<CS: ConstraintSystem<E>>(
         &self,
         mut cs: CS,

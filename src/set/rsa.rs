@@ -6,10 +6,10 @@ use sapling_crypto::circuit::num::AllocatedNum;
 
 use std::fmt::{self, Debug, Formatter};
 
-use bignat::BigNat;
-use gadget::Gadget;
+use mp::bignat::BigNat;
+use util::gadget::Gadget;
 use group::{CircuitRsaQuotientGroup, CircuitRsaGroupParams, CircuitSemiGroup, RsaQuotientGroup, SemiGroup};
-use hash::{pocklington, rsa, HashDomain};
+use hash::{pocklington, division_intractable as di, HashDomain};
 use hash::circuit::{MaybeHashed, CircuitHasher};
 use hash::Hasher;
 use set::{GenSet, CircuitGenSet};
@@ -58,7 +58,7 @@ impl<H: Hasher, Inner: IntSet> Set<H, Inner> {
         let inner = Inner::new_with(
             group,
             items.into_iter().map(|slice| {
-                rsa::helper::hash_to_rsa_element::<H>(
+                di::helper::hash_to_rsa_element::<H>(
                     slice,
                     &offset,
                     &hash_domain,
@@ -83,7 +83,7 @@ impl<H: Hasher, Inner: IntSet> Set<H, Inner> {
 
     /// Add `n` to the set.
     pub fn insert(&mut self, n: Vec<H::F>) {
-        let x = rsa::helper::hash_to_rsa_element::<H>(
+        let x = di::helper::hash_to_rsa_element::<H>(
             &n,
             &self.offset,
             &self.hash_domain,
@@ -94,7 +94,7 @@ impl<H: Hasher, Inner: IntSet> Set<H, Inner> {
     }
     /// Remove `n` from the set, returning whether `n` was present.
     pub fn remove(&mut self, n: &[H::F]) -> bool {
-        let x = rsa::helper::hash_to_rsa_element::<H>(
+        let x = di::helper::hash_to_rsa_element::<H>(
             &n,
             &self.offset,
             &self.hash_domain,
@@ -201,7 +201,7 @@ where
         Ok(Self {
             value: value.cloned(),
             inner,
-            offset: rsa::allocate_offset(
+            offset: di::allocate_offset(
                 cs.namespace(|| "hash offset % l"),
                 &access.1,
                 params.n_bits,
@@ -244,7 +244,7 @@ where
             .into_iter()
             .enumerate()
             .map(|(i, mut input)| -> Result<Reduced<E>, SynthesisError> {
-                rsa::hash_to_modded_rsa_element(
+                di::hash_to_modded_rsa_element(
                     cs.namespace(|| format!("hash {}", i)),
                     &mut input,
                     self.params.limb_width,
@@ -287,7 +287,7 @@ where
             .into_iter()
             .enumerate()
             .map(|(i, mut slice)| -> Result<Reduced<E>, SynthesisError> {
-                rsa::hash_to_modded_rsa_element(
+                di::hash_to_modded_rsa_element(
                     cs.namespace(|| format!("hash {}", i)),
                     &mut slice,
                     self.params.limb_width,
@@ -429,7 +429,7 @@ where
             .iter()
             .map(|i| i.iter().map(|j| H::F::from_str(j).unwrap()).collect())
             .collect();
-        let offset = rsa::offset(n_bits_elem);
+        let offset = di::offset(n_bits_elem);
         let mut initial_state = Set::new_with(
             group,
             offset,
@@ -617,9 +617,12 @@ mod test {
     const RSA_512: &str = "11834783464130424096695514462778870280264989938857328737807205623069291535525952722847913694296392927890261736769191982212777933726583565708193466779811767";
 
     use super::*;
-    use hash::hashes::Poseidon;
+
     use std::str::FromStr;
-    use test_helpers::*;
+
+    use hash::hashes::Poseidon;
+
+    use util::test_helpers::*;
 
     circuit_tests! {
         small_rsa_1_swap: (SetBench {

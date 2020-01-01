@@ -1,7 +1,7 @@
 pub mod hashes;
 pub mod miller_rabin_prime;
 pub mod pocklington;
-pub mod rsa;
+pub mod division_intractable;
 
 use std::clone::Clone;
 
@@ -155,7 +155,7 @@ pub mod circuit {
         use super::Bench;
         use hash::hashes::{Mimc, Pedersen, Poseidon, Sha256};
         use sapling_crypto::bellman::pairing::bn256::Bn256;
-        use test_helpers::*;
+        use util::test_helpers::*;
 
         circuit_tests! {
             bn256_poseidon_2: (Bench::from_hasher(Poseidon::<Bn256>::default(), 2), true),

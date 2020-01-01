@@ -215,7 +215,7 @@ pub fn hash<E: Engine, CS: ConstraintSystem<E>>(
 mod test {
     use super::*;
     use sapling_crypto::circuit::boolean::Boolean;
-    use test_helpers::*;
+    use util::test_helpers::*;
 
     pub struct MimcInputs<'a> {
         pub input: &'a str,

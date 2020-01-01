@@ -7,7 +7,6 @@ use sapling_crypto::eddsa::{PrivateKey, PublicKey};
 use sapling_crypto::jubjub::edwards::Point;
 use sapling_crypto::jubjub::{FixedGenerators, JubjubEngine, JubjubParams, PrimeOrder};
 
-use gadget::Gadget;
 use hash;
 use hash::circuit::CircuitHasher;
 use hash::hashes::Pedersen;
@@ -17,7 +16,8 @@ use rollup::tx::circuit::{CircuitAccount, CircuitSignedTx};
 use rollup::tx::{Account, Action, SignedTx, Tx, TxAccountChanges};
 use set::merkle::{MerkleCircuitSet, MerkleSet};
 use set::{CircuitGenSet, GenSet};
-use usize_to_f;
+use util::convert::usize_to_f;
+use util::gadget::Gadget;
 use CResult;
 use OptionExt;
 

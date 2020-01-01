@@ -5,10 +5,12 @@ use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
 
 use std::fmt::Debug;
 
-use bignat::BigNat;
-use gadget::Gadget;
+use mp::bignat::BigNat;
+use util::gadget::Gadget;
 use group::{CircuitSemiGroup, SemiGroup};
 
+/// A structure for a natural number which may have already been reduced modulo a challenge. Useful
+/// for lazy reduction.
 #[derive(Clone, Debug)]
 pub struct Reduced<E: Engine> {
     pub raw: BigNat<E>,
@@ -130,7 +132,7 @@ mod tests {
     use OptionExt;
 
     use quickcheck::TestResult;
-    use test_helpers::*;
+    use util::test_helpers::*;
 
     use group::{CircuitRsaGroup, CircuitRsaGroupParams, RsaGroup};
 

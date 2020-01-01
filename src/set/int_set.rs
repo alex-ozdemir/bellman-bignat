@@ -5,9 +5,9 @@ use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisErro
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 
-use bignat::BigNat;
-use gadget::Gadget;
 use group::{CircuitSemiGroup, SemiGroup};
+use mp::bignat::BigNat;
+use util::gadget::Gadget;
 use wesolowski::{proof_of_exp, Reduced};
 
 pub trait IntSet: Sized + Clone + Eq + Debug {
@@ -271,7 +271,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use test_helpers::*;
+    use util::test_helpers::*;
 
     use group::{CircuitRsaGroup, CircuitRsaGroupParams, RsaGroup};
     use OptionExt;

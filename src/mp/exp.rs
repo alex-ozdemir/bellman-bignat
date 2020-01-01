@@ -1,3 +1,6 @@
+
+/// Computes the optimal window size, k, for a windowed (Bauer) exponentiation with an n-bit
+/// exponent.
 pub fn optimal_k(n: usize) -> usize {
     for k in 1.. {
         let fk = k as f64;

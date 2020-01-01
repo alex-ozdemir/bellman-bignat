@@ -5,7 +5,7 @@ extern crate rand;
 extern crate sapling_crypto;
 extern crate serde;
 
-use bellman_bignat::bench::{ConstraintCounter, ConstraintProfiler, WitnessTimer};
+use bellman_bignat::util::bench::{ConstraintCounter, ConstraintProfiler, WitnessTimer};
 use bellman_bignat::group::RsaQuotientGroup;
 use bellman_bignat::hash::circuit::CircuitHasher;
 use bellman_bignat::hash::hashes::{Mimc, Pedersen, Poseidon, Sha256};

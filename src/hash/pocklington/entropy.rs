@@ -3,11 +3,10 @@ use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
 use sapling_crypto::circuit::num::AllocatedNum;
 
-use bignat::BigNat;
-use bit::{Bit, Bitvector};
-use hash::hashes::mimc;
-
-use gadget::Gadget;
+use super::super::hashes::mimc;
+use mp::bignat::BigNat;
+use util::bit::{Bit, Bitvector};
+use util::gadget::Gadget;
 
 #[derive(Debug)]
 pub struct NatTemplate {
@@ -97,7 +96,8 @@ impl<E: Engine> EntropySource<E> {
         bits.reverse();
         let mut r = BigNat::recompose(&Bitvector::from_bits(bits), limb_width);
         if template.leading_ones > 0 {
-            r.params.min_bits = template.leading_ones + template.random_bits + template.trailing_ones;
+            r.params.min_bits =
+                template.leading_ones + template.random_bits + template.trailing_ones;
         }
         r
     }
@@ -110,8 +110,8 @@ pub mod helper {
 
     use sapling_crypto::bellman::pairing::ff::PrimeField;
 
-    use f_to_nat;
     use hash::hashes::mimc;
+    use util::convert::f_to_nat;
 
     pub struct EntropySource {
         bits: Vec<bool>,

@@ -12,13 +12,14 @@ use std::convert::From;
 use std::fmt::{self, Debug, Display, Formatter};
 use std::rc::Rc;
 
-use bit::{Bit, Bitvector};
-use exp::optimal_k;
-use gadget::Gadget;
-use num::Num;
-use poly::Polynomial;
+use super::exp::optimal_k;
+use super::poly::Polynomial;
+use util::bit::{Bit, Bitvector};
+use util::convert::{f_to_nat, nat_to_f};
+use util::gadget::Gadget;
+use util::num::Num;
+use util::lazy::LazyCell;
 use OptionExt;
-use {f_to_nat, nat_to_f};
 
 /// Compute the natural number represented by an array of limbs.
 /// The limbs are assumed to be based the `limb_width` power of 2.
@@ -116,7 +117,7 @@ impl<E: Engine> BigNat<E> {
         CS: ConstraintSystem<E>,
         F: FnOnce() -> Result<Vec<E::Fr>, SynthesisError>,
     {
-        let values_cell = crate::lazy::LazyCell::new(f);
+        let values_cell = LazyCell::new(f);
         let mut value = None;
         let mut limb_values = None;
         let limbs = (0..n_limbs)
@@ -200,7 +201,7 @@ impl<E: Engine> BigNat<E> {
         CS: ConstraintSystem<E>,
         F: FnOnce() -> Result<BigUint, SynthesisError>,
     {
-        let all_values_cell = crate::lazy::LazyCell::new(|| {
+        let all_values_cell = LazyCell::new(|| {
             f().and_then(|v| Ok((nat_to_limbs::<E::Fr>(&v, limb_width, n_limbs)?, v)))
                 .map_err(Rc::new)
         });
@@ -1409,11 +1410,12 @@ impl<E: Engine> Gadget for BigNat<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use test_helpers::*;
+
+    use util::test_helpers::*;
 
     use quickcheck::TestResult;
 
-    use crate::usize_to_f;
+    use util::convert::usize_to_f;
     use std::str::FromStr;
 
     pub struct CarrierInputs {

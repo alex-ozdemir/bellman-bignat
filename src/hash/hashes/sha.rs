@@ -2,7 +2,7 @@ use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::ConstraintSystem;
 use sapling_crypto::circuit::num::AllocatedNum;
 
-use bench::WitnessTimer;
+use util::bench::WitnessTimer;
 
 /// Use the sha256 hash algorithm to digest these items
 pub fn sha256<E: Engine>(inputs: &[E::Fr]) -> E::Fr {
@@ -28,8 +28,8 @@ pub mod circuit {
     use sapling_crypto::circuit::num::AllocatedNum;
     use sapling_crypto::circuit::sha256::sha256 as sapling_sha256;
 
-    use nat_to_f;
-    use usize_to_f;
+    use util::convert::nat_to_f;
+    use util::convert::usize_to_f;
     use CResult;
     use OptionExt;
 
