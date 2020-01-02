@@ -58,7 +58,7 @@ impl<H: Hasher, Inner: IntSet> Set<H, Inner> {
         let inner = Inner::new_with(
             group,
             items.into_iter().map(|slice| {
-                di::helper::hash_to_rsa_element::<H>(
+                di::helper::di_hash::<H>(
                     slice,
                     &offset,
                     &hash_domain,
@@ -83,7 +83,7 @@ impl<H: Hasher, Inner: IntSet> Set<H, Inner> {
 
     /// Add `n` to the set.
     pub fn insert(&mut self, n: Vec<H::F>) {
-        let x = di::helper::hash_to_rsa_element::<H>(
+        let x = di::helper::di_hash::<H>(
             &n,
             &self.offset,
             &self.hash_domain,
@@ -94,7 +94,7 @@ impl<H: Hasher, Inner: IntSet> Set<H, Inner> {
     }
     /// Remove `n` from the set, returning whether `n` was present.
     pub fn remove(&mut self, n: &[H::F]) -> bool {
-        let x = di::helper::hash_to_rsa_element::<H>(
+        let x = di::helper::di_hash::<H>(
             &n,
             &self.offset,
             &self.hash_domain,
@@ -244,7 +244,7 @@ where
             .into_iter()
             .enumerate()
             .map(|(i, mut input)| -> Result<Reduced<E>, SynthesisError> {
-                di::hash_to_modded_rsa_element(
+                di::modded_di_hash(
                     cs.namespace(|| format!("hash {}", i)),
                     &mut input,
                     self.params.limb_width,
@@ -287,7 +287,7 @@ where
             .into_iter()
             .enumerate()
             .map(|(i, mut slice)| -> Result<Reduced<E>, SynthesisError> {
-                di::hash_to_modded_rsa_element(
+                di::modded_di_hash(
                     cs.namespace(|| format!("hash {}", i)),
                     &mut slice,
                     self.params.limb_width,

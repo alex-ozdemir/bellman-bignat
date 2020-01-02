@@ -4,7 +4,7 @@ use sapling_crypto::circuit::boolean::Boolean;
 use sapling_crypto::circuit::num::AllocatedNum;
 
 use super::circuit::CircuitHasher;
-use super::division_intractable::hash_to_integer;
+use super::integer::hash_to_integer;
 use super::{HashDomain, Hasher};
 use mp::bignat::BigNat;
 use util::num::Num;
@@ -14,7 +14,7 @@ pub mod helper {
     use num_bigint::BigUint;
     use sapling_crypto::bellman::pairing::ff::Field;
 
-    use super::super::division_intractable::helper::hash_to_integer;
+    use super::super::integer::helper::hash_to_integer;
     use super::super::{HashDomain, Hasher};
 
     /// Returns whether `n` passes Miller-Rabin checks with the first `rounds` primes as bases

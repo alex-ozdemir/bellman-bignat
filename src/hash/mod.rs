@@ -1,7 +1,8 @@
+pub mod division_intractable;
 pub mod hashes;
+pub mod integer;
 pub mod miller_rabin_prime;
 pub mod pocklington;
-pub mod division_intractable;
 
 use std::clone::Clone;
 
@@ -158,33 +159,33 @@ pub mod circuit {
         use util::test_helpers::*;
 
         circuit_tests! {
-            bn256_poseidon_2: (Bench::from_hasher(Poseidon::<Bn256>::default(), 2), true),
-            bn256_poseidon_5: (Bench::from_hasher(Poseidon::<Bn256>::default(), 5), true),
-            bn256_poseidon_10: (Bench::from_hasher(Poseidon::<Bn256>::default(), 10), true),
+                    bn256_poseidon_2: (Bench::from_hasher(Poseidon::<Bn256>::default(), 2), true),
+                    bn256_poseidon_5: (Bench::from_hasher(Poseidon::<Bn256>::default(), 5), true),
+                    bn256_poseidon_10: (Bench::from_hasher(Poseidon::<Bn256>::default(), 10), true),
 
-            bn256_pedersen_2: (Bench::from_hasher(Pedersen::<Bn256>::default(), 2), true),
-            bn256_pedersen_5: (Bench::from_hasher(Pedersen::<Bn256>::default(), 5), true),
-            bn256_pedersen_10: (Bench::from_hasher(Pedersen::<Bn256>::default(), 10), true),
+                    bn256_pedersen_2: (Bench::from_hasher(Pedersen::<Bn256>::default(), 2), true),
+                    bn256_pedersen_5: (Bench::from_hasher(Pedersen::<Bn256>::default(), 5), true),
+                    bn256_pedersen_10: (Bench::from_hasher(Pedersen::<Bn256>::default(), 10), true),
 
-            bn256_sha_2: (Bench::from_hasher(Sha256::default(), 2), true),
-            bn256_sha_5: (Bench::from_hasher(Sha256::default(), 5), true),
+                    bn256_sha_2: (Bench::from_hasher(Sha256::default(), 2), true),
+                    bn256_sha_5: (Bench::from_hasher(Sha256::default(), 5), true),
 
-            bn256_mimc_2: (Bench::from_hasher(Mimc::default(), 2), true),
-            bn256_mimc_5: (Bench::from_hasher(Mimc::default(), 5), true),
+                    bn256_mimc_2: (Bench::from_hasher(Mimc::default(), 2), true),
+                    bn256_mimc_5: (Bench::from_hasher(Mimc::default(), 5), true),
 
-//            bls12_poseidon_2: (Bench::from_hasher(Poseidon::<Bls12>::default(), 2), true),
-//            bls12_poseidon_5: (Bench::from_hasher(Poseidon::<Bls12>::default(), 5), true),
-//            bls12_poseidon_10: (Bench::from_hasher(Poseidon::<Bls12>::default(), 10), true),
-//
-//            bls12_pedersen_2: (Bench::from_hasher(Pedersen::<Bls12>::default(), 2), true),
-//            bls12_pedersen_5: (Bench::from_hasher(Pedersen::<Bls12>::default(), 5), true),
-//            bls12_pedersen_10: (Bench::from_hasher(Pedersen::<Bls12>::default(), 10), true),
-//
-//            bls12_sha_2: (Bench::from_hasher(Sha256::default(), 2), true),
-//            bls12_sha_5: (Bench::from_hasher(Sha256::default(), 5), true),
-//
-//            bls12_mimc_2: (Bench::from_hasher(Mimc::default(), 2), true),
-//            bls12_mimc_5: (Bench::from_hasher(Mimc::default(), 5), true),
-        }
+        //            bls12_poseidon_2: (Bench::from_hasher(Poseidon::<Bls12>::default(), 2), true),
+        //            bls12_poseidon_5: (Bench::from_hasher(Poseidon::<Bls12>::default(), 5), true),
+        //            bls12_poseidon_10: (Bench::from_hasher(Poseidon::<Bls12>::default(), 10), true),
+        //
+        //            bls12_pedersen_2: (Bench::from_hasher(Pedersen::<Bls12>::default(), 2), true),
+        //            bls12_pedersen_5: (Bench::from_hasher(Pedersen::<Bls12>::default(), 5), true),
+        //            bls12_pedersen_10: (Bench::from_hasher(Pedersen::<Bls12>::default(), 10), true),
+        //
+        //            bls12_sha_2: (Bench::from_hasher(Sha256::default(), 2), true),
+        //            bls12_sha_5: (Bench::from_hasher(Sha256::default(), 5), true),
+        //
+        //            bls12_mimc_2: (Bench::from_hasher(Mimc::default(), 2), true),
+        //            bls12_mimc_5: (Bench::from_hasher(Mimc::default(), 5), true),
+                }
     }
 }
