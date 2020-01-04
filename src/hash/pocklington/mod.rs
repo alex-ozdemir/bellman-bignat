@@ -9,11 +9,8 @@ pub mod helper {
 
     use super::entropy::helper::EntropySource;
     use super::entropy::NatTemplate;
-    use hash::hashes::mimc;
-    use hash::low_k_bits;
     use hash::miller_rabin_prime::helper::miller_rabin_32b;
     use hash::Hasher;
-    use util::convert::f_to_nat;
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct PocklingtonPlan {
@@ -175,13 +172,7 @@ pub mod helper {
     ) -> Result<PocklingtonCertificate, PocklingtonCertificate> {
         for i in 0..(1 << plan.nonce_bits) {
             let nonce = i;
-            let mimcd_nonce = low_k_bits(
-                &f_to_nat(&mimc::helper::permutation(
-                    F::from_str(&format!("{}", i)).unwrap(),
-                )),
-                plan.nonce_bits,
-            );
-            let nonced_extension = &random + &mimcd_nonce;
+            let nonced_extension = &random + &nonce;
             let number = p.number() * &nonced_extension + 1usize;
             let mut base = BigUint::from(2usize);
             while base < number {
@@ -284,7 +275,6 @@ use sapling_crypto::circuit::num::AllocatedNum;
 
 use self::entropy::{EntropySource, NatTemplate};
 use hash::circuit::CircuitHasher;
-use hash::hashes::mimc;
 use hash::Hasher;
 use mp::bignat::{BigNat, BigNatParams};
 use util::convert::usize_to_f;
@@ -335,13 +325,10 @@ pub fn hash_to_pocklington_prime<
     )?;
     for (i, extension) in plan.extensions.into_iter().enumerate() {
         let mut cs = cs.namespace(|| format!("extension {}", i));
-        let nonce = AllocatedNum::alloc(cs.namespace(|| "nonce"), || {
-            Ok(usize_to_f(cert.as_ref().grab()?.extensions[i].nonce))
-        })?;
-        let mimcd_nonce_all_bits = Num::from(mimc::permutation(cs.namespace(|| "mimc"), nonce)?);
-        let mimcd_nonce = BigNat::from_num(
-            mimcd_nonce_all_bits
-                .low_k_bits(cs.namespace(|| "mimc low bits"), extension.nonce_bits)?,
+        let nonce = BigNat::from_num(
+            Num::from(AllocatedNum::alloc(cs.namespace(|| "nonce"), || {
+                Ok(usize_to_f(cert.as_ref().grab()?.extensions[i].nonce))
+            })?),
             BigNatParams {
                 n_limbs: 1,
                 limb_width: prime.params.limb_width,
@@ -357,7 +344,7 @@ pub fn hash_to_pocklington_prime<
             },
             limb_width,
         );
-        let nonced_extension = extension.add::<CS>(&mimcd_nonce)?;
+        let nonced_extension = extension.add::<CS>(&nonce)?;
         let base = BigNat::alloc_from_nat(
             cs.namespace(|| "base"),
             || {
