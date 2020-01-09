@@ -19,6 +19,16 @@ pub mod helper {
         pub extensions: Vec<PlannedExtension>,
     }
 
+    /// A pocklington extension multiplies a base prime by a term
+    ///     ( 1 || r || n )
+    ///
+    /// , producing
+    ///
+    ///     p' = p * (1 || r || n) + 1
+    ///
+    /// such that `p'` is prime.
+    ///
+    /// This structure stores the plan: the size of `r` and `n`.
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct PlannedExtension {
         pub nonce_bits: usize,
