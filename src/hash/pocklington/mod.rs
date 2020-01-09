@@ -353,7 +353,7 @@ pub fn hash_to_pocklington_prime<
                 ))
             },
             limb_width,
-            1, // TODO allow larger bases
+            1, // TODO consider allow larger bases
         )?;
         let n_less_one = nonced_extension.mult(cs.namespace(|| "n - 1"), &prime)?;
         let n = n_less_one.shift::<CS>(E::Fr::one());
