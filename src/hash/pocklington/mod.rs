@@ -400,21 +400,6 @@ mod test {
         assert_eq!(p.entropy(), 256);
     }
 
-    //#[test]
-    //fn pocklington_extension_0() {
-    //    let cert = Base(BigUint::from(241usize));
-    //    let extension = BigUint::from(6usize);
-    //    let ex = Ok(Recursive {
-    //        rec: Box::new(cert.clone()),
-    //        number: BigUint::from(1447usize),
-    //        base: BigUint::from(2usize),
-    //        extension: extension.clone(),
-    //        nonce: 0,
-    //    });
-    //    let act = helper::attempt_pocklington_extension::<<Bn256 as ScalarEngine>::Fr>(cert, extension);
-    //    assert_eq!(ex, act);
-    //}
-
     macro_rules! pocklington_hash_tests {
         ($($name:ident: $value:expr,)*) => {
             $(
