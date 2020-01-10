@@ -4,18 +4,23 @@ pub mod helper {
 
     use num_bigint::BigUint;
     use num_integer::Integer;
+    use num_iter::range_step;
     use num_traits::One;
-    use sapling_crypto::bellman::pairing::ff::{Field, PrimeField};
+    use sapling_crypto::bellman::pairing::ff::PrimeField;
 
     use super::entropy::helper::EntropySource;
     use super::entropy::NatTemplate;
     use hash::miller_rabin_prime::helper::miller_rabin_32b;
     use hash::Hasher;
 
+    use std::cmp::min;
+
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct PocklingtonPlan {
-        pub nonce_bits: usize,
-        pub initial_entropy: usize,
+        /// Number of nonce bits in the base prime
+        pub base_nonce_bits: usize,
+        /// Number of random bits in the base prime
+        pub base_random_bits: usize,
         pub extensions: Vec<PlannedExtension>,
     }
 
@@ -35,10 +40,22 @@ pub mod helper {
         pub random_bits: usize,
     }
 
+    impl PlannedExtension {
+        pub fn max_value(&self) -> BigUint {
+            (BigUint::one() << (self.nonce_bits + self.random_bits + 1)) - 1usize
+        }
+        pub fn min_value(&self) -> BigUint {
+            BigUint::one() << (self.nonce_bits + self.random_bits)
+        }
+        pub fn evaluate(&self, random_value: &BigUint, nonce_value: u64) -> BigUint {
+            assert!(self.nonce_bits <= 64);
+            self.min_value() + (random_value << self.nonce_bits) + nonce_value
+        }
+    }
+
     /// Returns the probability that a number with `bits` bits is prime
     fn prime_density(bits: usize) -> f64 {
-        use std::f64::consts::E;
-        let log2e = E.log2();
+        let log2e = std::f64::consts::E.log2();
         let b = bits as f64;
         log2e / b - log2e * log2e / b / b
     }
@@ -61,91 +78,58 @@ pub mod helper {
         /// Given a target entropy, constructs a plan for how to make a prime number of that
         /// bitwidth that can be certified using a recursive Pocklington test.
         pub fn new(entropy: usize) -> Self {
-            // (entropy, bits, extension)
-            assert!(entropy >= 29);
-            #[derive(Debug)]
-            struct Entry {
-                marginal_entropy: usize,
-                entropy: usize,
-                bits: usize,
-                random_bits: usize,
-                nonce_bits: usize,
+            // Less than 31
+            let nonce_bits_needed_in_base = nonce_bits_needed(32);
+            let mut plan = Self {
+                base_nonce_bits: nonce_bits_needed_in_base,
+                // High bit is fixed to 1, so 31 bits for the nonce/random bits.
+                base_random_bits: min(entropy, 31 - nonce_bits_needed_in_base),
+                extensions: Vec::new(),
+            };
+
+            while plan.entropy() < entropy {
+                // If the extension has this many bits it is guaranteed to be less than the current
+                // base.
+                let max_extension_bits = plan.min_value().bits() - 1;
+                // Now, how many of those need to be nonce.
+                // TODO We could get a tighter bound by using max values, and not bits.
+                let max_nonce_bits_needed = nonce_bits_needed(max_extension_bits + plan.max_bits());
+                assert!(max_nonce_bits_needed < max_extension_bits);
+                let max_random_bits = max_extension_bits - max_nonce_bits_needed;
+                let random_bits = min(entropy - plan.entropy(), max_random_bits);
+                // TODO we might be able to omit a nonce bit if we were to re-compute the nonce
+                // width using `random_bits`.
+                plan.extensions.push(PlannedExtension {
+                    nonce_bits: max_nonce_bits_needed,
+                    random_bits: random_bits,
+                })
+                // TODO these TODOs are worth looking at because we currently require 321 bits for
+                // a 256b nonce, which is just bigger than a multiple of 32.
             }
-            let bits = 32;
-            let nonce_bits = nonce_bits_needed(bits) - 1;
-            let mut table: Vec<Entry> = vec![Entry {
-                entropy: bits - 3 - nonce_bits,
-                marginal_entropy: bits - 3 - nonce_bits,
-                bits,
-                random_bits: 0,
-                nonce_bits: nonce_bits,
-            }];
-            while table.last().unwrap().entropy < entropy {
-                let mut next = Entry {
-                    entropy: table.last().unwrap().entropy + 1,
-                    marginal_entropy: 0,
-                    bits: std::usize::MAX,
-                    random_bits: 0,
-                    nonce_bits: 0,
-                };
-                for base in table.as_slice().iter().rev() {
-                    let random_bits = next.entropy - base.entropy;
-                    let mut error = false;
-                    let mut nonce_bits = 0;
-                    let mut next_bits = 0;
-                    loop {
-                        if random_bits + nonce_bits + 1 >= base.bits {
-                            error = true;
-                            break;
-                        }
-                        next_bits = nonce_bits + random_bits + base.bits + 1;
-                        if nonce_bits >= nonce_bits_needed(next_bits) {
-                            break;
-                        }
-                        nonce_bits += 1;
-                    }
-                    if !error && next_bits < next.bits {
-                        next.bits = next_bits;
-                        next.marginal_entropy = random_bits;
-                        next.random_bits = random_bits + nonce_bits;
-                        next.nonce_bits = nonce_bits;
-                    }
-                }
-                assert_ne!(next.bits, std::usize::MAX);
-                table.push(next);
-            }
-            assert_eq!(table.last().unwrap().entropy, entropy);
-            let mut i = table.len() - 1;
-            let mut extensions = Vec::new();
-            while i > 0 {
-                extensions.push(PlannedExtension {
-                    nonce_bits: table[i].nonce_bits,
-                    random_bits: table[i].random_bits,
-                });
-                i -= table[i].marginal_entropy;
-            }
-            extensions.reverse();
-            Self {
-                initial_entropy: 29 - nonce_bits,
-                nonce_bits,
-                extensions,
-            }
+
+            plan
         }
 
         pub fn entropy(&self) -> usize {
-            self.extensions
-                .iter()
-                .map(|i| i.random_bits - i.nonce_bits)
-                .sum::<usize>()
-                + self.initial_entropy
+            self.extensions.iter().map(|i| i.random_bits).sum::<usize>() + self.base_random_bits
+        }
+
+        pub fn max_value(&self) -> BigUint {
+            self.extensions.iter().fold(
+                (BigUint::one() << (self.base_random_bits + self.base_nonce_bits + 1)) - 1usize,
+                |acc, ext| acc * ext.max_value() + 1usize,
+            )
+        }
+
+        pub fn min_value(&self) -> BigUint {
+            self.extensions.iter().fold(
+                BigUint::one() << (self.base_random_bits + self.base_nonce_bits),
+                |acc, ext| acc * ext.min_value() + 1usize,
+            )
         }
 
         pub fn max_bits(&self) -> usize {
-            self.extensions
-                .iter()
-                .map(|i| i.random_bits + 1)
-                .sum::<usize>()
-                + 32
+            self.max_value().bits()
         }
     }
 
@@ -153,7 +137,7 @@ pub mod helper {
     pub struct PocklingtonExtension {
         pub plan: PlannedExtension,
         pub random: BigUint,
-        pub nonce: usize,
+        pub nonce: u64,
         pub checking_base: BigUint,
         pub result: BigUint,
     }
@@ -175,18 +159,38 @@ pub mod helper {
         }
     }
 
+    pub fn attempt_pocklington_base(
+        plan: &PocklingtonPlan,
+        entropy_source: &mut EntropySource,
+    ) -> Option<PocklingtonCertificate> {
+        let random = entropy_source.get_bits_as_nat(
+            NatTemplate::with_random_bits(plan.base_random_bits).with_leading_ones(1),
+        );
+        for nonce in 0..(1u64 << plan.base_nonce_bits) {
+            let base = (&random << plan.base_nonce_bits) + nonce;
+            if miller_rabin_32b(&base) {
+                return Some(PocklingtonCertificate {
+                    base_prime: base,
+                    base_nonce: nonce as usize,
+                    extensions: Vec::new(),
+                });
+            }
+        }
+        None
+    }
+
     pub fn attempt_pocklington_extension<F: PrimeField>(
         mut p: PocklingtonCertificate,
         plan: &PlannedExtension,
-        random: BigUint,
-    ) -> Result<PocklingtonCertificate, PocklingtonCertificate> {
-        for i in 0..(1 << plan.nonce_bits) {
-            let nonce = i;
-            let nonced_extension = &random + &nonce;
-            let number = p.number() * &nonced_extension + 1usize;
-            let mut base = BigUint::from(2usize);
-            while base < number {
-                let part = base.modpow(&nonced_extension, &number);
+        entropy_source: &mut EntropySource,
+    ) -> Option<PocklingtonCertificate> {
+        let random =
+            entropy_source.get_bits_as_nat(NatTemplate::with_random_bits(plan.random_bits));
+        for nonce in 0..(1u64 << plan.nonce_bits) {
+            let extension = plan.evaluate(&random, nonce);
+            let number = p.number() * &extension + 1usize;
+            for base in range_step(BigUint::from(2usize), number.clone(), BigUint::one()) {
+                let part = base.modpow(&extension, &number);
                 if part.modpow(p.number(), &number) != BigUint::from(1usize) {
                     break;
                 }
@@ -198,43 +202,11 @@ pub mod helper {
                         result: number,
                         nonce,
                     });
-                    return Ok(p);
+                    return Some(p);
                 }
-                base += 1usize;
             }
         }
-        Err(p)
-    }
-
-    pub fn execute_pocklington_plan<F: PrimeField>(
-        hash: F,
-        plan: &PocklingtonPlan,
-        nonce: usize,
-    ) -> Option<PocklingtonCertificate> {
-        let mut bits = EntropySource::new(hash, plan.entropy());
-        let base_nat = bits.get_bits_as_nat(NatTemplate {
-            trailing_ones: 2,
-            leading_ones: 1,
-            random_bits: 29,
-        });
-        if !miller_rabin_32b(&base_nat) {
-            return None;
-        }
-        let mut certificate = PocklingtonCertificate {
-            base_prime: base_nat,
-            base_nonce: nonce,
-            extensions: Vec::new(),
-        };
-        for extension in &plan.extensions {
-            let random = bits.get_bits_as_nat(NatTemplate {
-                random_bits: extension.random_bits,
-                trailing_ones: 0,
-                leading_ones: 1,
-            });
-            certificate =
-                attempt_pocklington_extension::<F>(certificate, extension, random).ok()?;
-        }
-        Some(certificate)
+        None
     }
 
     pub fn hash_to_pocklington_prime<H: Hasher>(
@@ -243,16 +215,14 @@ pub mod helper {
         base_hash: &H,
     ) -> Option<PocklingtonCertificate> {
         let plan = PocklingtonPlan::new(entropy);
-        let mut inputs: Vec<H::F> = inputs.iter().copied().collect();
-        inputs.push(H::F::zero());
-        for nonce in 0..(1 << plan.nonce_bits) {
-            let hash = base_hash.hash(&inputs);
-            if let Some(cert) = execute_pocklington_plan(hash, &plan, nonce) {
-                return Some(cert);
-            }
-            inputs.last_mut().unwrap().add_assign(&H::F::one());
+        let inputs: Vec<H::F> = inputs.iter().copied().collect();
+        let hash = base_hash.hash(&inputs);
+        let mut entropy_source = EntropySource::new(hash, plan.entropy());
+        let mut cert = attempt_pocklington_base(&plan, &mut entropy_source)?;
+        for extension in &plan.extensions {
+            cert = attempt_pocklington_extension::<H::F>(cert, extension, &mut entropy_source)?;
         }
-        None
+        Some(cert)
     }
 
     #[cfg(test)]
@@ -304,57 +274,79 @@ pub fn hash_to_pocklington_prime<
     base_hash: &H,
 ) -> Result<BigNat<E>, SynthesisError> {
     use self::helper::{PocklingtonCertificate, PocklingtonPlan};
+
+    // Hash the inputs into an entropy pool.
+    let hash = base_hash.allocate_hash(cs.namespace(|| "base hash"), &input)?;
+    let mut entropy_source =
+        EntropySource::alloc(cs.namespace(|| "entropy source"), Some(&()), hash, &entropy)?;
+
+    // Construct a pocklington plan, and a certificate if we actually have values.
     let plan = PocklingtonPlan::new(entropy);
     let cert: Option<PocklingtonCertificate> = input
         .iter()
         .map(|n| n.get_value().clone())
         .collect::<Option<Vec<E::Fr>>>()
         .and_then(|is| helper::hash_to_pocklington_prime(&is, entropy, base_hash));
-    let base_nonce = AllocatedNum::alloc(cs.namespace(|| "nonce"), || {
-        Ok(usize_to_f::<E::Fr>(cert.as_ref().grab()?.base_nonce))
-    })?;
-    let mut inputs = input.to_vec();
-    inputs.push(base_nonce);
-    let hash = base_hash.allocate_hash(cs.namespace(|| "base hash"), &inputs)?;
-    let mut entropy_source =
-        EntropySource::alloc(cs.namespace(|| "entropy source"), Some(&()), hash, &entropy)?;
 
-    let mut prime = entropy_source.get_bits_as_nat::<CS>(
-        NatTemplate {
-            trailing_ones: 2,
-            leading_ones: 1,
-            random_bits: 29,
+    // Allocate the base nonce.
+    let base_nonce = BigNat::from_num(
+        Num::from(AllocatedNum::alloc(cs.namespace(|| "base nonce"), || {
+            Ok(usize_to_f(cert.as_ref().grab()?.base_nonce as usize))
+        })?),
+        BigNatParams {
+            n_limbs: 1, // TODO consider allowing larger nonces
+            limb_width: limb_width,
+            max_word: BigUint::one() << plan.base_nonce_bits,
+            min_bits: 0,
         },
-        limb_width,
     );
+
+    // Construct the base prime.
+    let mut prime = entropy_source
+        .get_bits_as_nat::<CS>(
+            NatTemplate::with_random_bits(plan.base_random_bits)
+                .with_leading_ones(1)
+                .with_trailing(false, plan.base_nonce_bits),
+            limb_width,
+        )
+        .add::<CS>(&base_nonce)?;
+
+    // Check it
     let mr_res = &prime.miller_rabin_32b(cs.namespace(|| "base check"))?;
     Boolean::enforce_equal(
         cs.namespace(|| "MR passes"),
         &mr_res,
         &Boolean::constant(true),
     )?;
+
+    // For each extension...
     for (i, extension) in plan.extensions.into_iter().enumerate() {
         let mut cs = cs.namespace(|| format!("extension {}", i));
+
+        // Allocate the nonce
         let nonce = BigNat::from_num(
             Num::from(AllocatedNum::alloc(cs.namespace(|| "nonce"), || {
-                Ok(usize_to_f(cert.as_ref().grab()?.extensions[i].nonce))
+                Ok(usize_to_f(
+                    cert.as_ref().grab()?.extensions[i].nonce as usize,
+                ))
             })?),
             BigNatParams {
-                n_limbs: 1,
+                n_limbs: 1, // TODO consider allowing larger nonces
                 limb_width: prime.params.limb_width,
                 max_word: BigUint::one() << extension.nonce_bits,
                 min_bits: 0,
             },
         );
-        let extension = entropy_source.get_bits_as_nat::<CS>(
-            NatTemplate {
-                random_bits: extension.random_bits,
-                trailing_ones: 0,
-                leading_ones: 1,
-            },
-            limb_width,
-        );
-        let nonced_extension = extension.add::<CS>(&nonce)?;
+
+        // Allocate the nonce
+        let extension = entropy_source
+            .get_bits_as_nat::<CS>(
+                NatTemplate::with_random_bits(extension.random_bits)
+                    .with_leading_ones(1)
+                    .with_trailing(false, extension.nonce_bits),
+                limb_width,
+            )
+            .add::<CS>(&nonce)?;
         let base = BigNat::alloc_from_nat(
             cs.namespace(|| "base"),
             || {
@@ -365,14 +357,23 @@ pub fn hash_to_pocklington_prime<
             limb_width,
             1, // TODO consider allow larger bases
         )?;
-        let n_less_one = nonced_extension.mult(cs.namespace(|| "n - 1"), &prime)?;
+
+        // Compute helper values for pocklington's criterion
+        let n_less_one = extension.mult(cs.namespace(|| "n - 1"), &prime)?;
         let n = n_less_one.shift::<CS>(E::Fr::one());
-        let part = base.pow_mod(cs.namespace(|| "a^r"), &nonced_extension, &n)?;
+        let part = base.pow_mod(cs.namespace(|| "a^r"), &extension, &n)?;
         let one = BigNat::one(cs.namespace(|| "one"), prime.params().limb_width)?;
         let part_less_one = part.sub(cs.namespace(|| "a^r - 1"), &one)?;
+
+        // Check coprimality
         part_less_one.enforce_coprime(cs.namespace(|| "coprime"), &n)?;
         let power = part.pow_mod(cs.namespace(|| "a^r^p"), &prime, &n)?;
+
+        // Check fermat's little theorem
         power.equal_when_carried(cs.namespace(|| "a^r^p == 1"), &one)?;
+
+        // NB: The "less than" condition is enforced by the bitwidths and the min-value analysis.
+
         prime = n;
     }
     Ok(prime)

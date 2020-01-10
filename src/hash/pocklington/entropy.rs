@@ -8,11 +8,48 @@ use mp::bignat::BigNat;
 use util::bit::{Bit, Bitvector};
 use util::gadget::Gadget;
 
+use std::default::Default;
+
 #[derive(Debug)]
 pub struct NatTemplate {
     pub random_bits: usize,
     pub leading_ones: usize,
-    pub trailing_ones: usize,
+    pub trailing: Padding,
+}
+
+impl NatTemplate {
+    pub fn with_random_bits(count: usize) -> Self {
+        Self {
+            random_bits: count,
+            leading_ones: 0,
+            trailing: Padding::default(),
+        }
+    }
+
+    pub fn with_leading_ones(mut self, count: usize) -> Self {
+        self.leading_ones = count;
+        self
+    }
+
+    pub fn with_trailing(mut self, bit: bool, count: usize) -> Self {
+        self.trailing = Padding { bit, count };
+        self
+    }
+}
+
+#[derive(Debug)]
+pub struct Padding {
+    pub bit: bool,
+    pub count: usize,
+}
+
+impl Default for Padding {
+    fn default() -> Self {
+        Self {
+            bit: false,
+            count: 0,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -86,19 +123,23 @@ impl<E: Engine> EntropySource<E> {
         template: NatTemplate,
         limb_width: usize,
     ) -> BigNat<E> {
-        let mut bits = vec![Bit::new_true::<CS>(); template.leading_ones];
+        let mut bits = vec![Bit::new_value::<CS>(true); template.leading_ones];
         for _ in 0..template.random_bits {
             bits.push(self.get_bit());
         }
-        for _ in 0..template.trailing_ones {
-            bits.push(Bit::new_true::<CS>());
-        }
+        bits.extend(
+            std::iter::repeat(Bit::new_value::<CS>(template.trailing.bit))
+                .take(template.trailing.count),
+        );
         bits.reverse();
         let mut r = BigNat::recompose(&Bitvector::from_bits(bits), limb_width);
-        if template.leading_ones > 0 {
-            r.params.min_bits =
-                template.leading_ones + template.random_bits + template.trailing_ones;
-        }
+        r.params.min_bits = if template.leading_ones > 0 {
+            template.leading_ones + template.random_bits + template.trailing.count
+        } else if template.trailing.bit {
+            template.trailing.count
+        } else {
+            0
+        };
         r
     }
 }
@@ -154,8 +195,8 @@ pub mod helper {
                         BigUint::zero()
                     }
             }
-            for _ in 0..template.trailing_ones {
-                acc = (acc << 1) + 1usize;
+            for _ in 0..template.trailing.count {
+                acc = (acc << 1) + template.trailing.bit as u8;
             }
             acc
         }

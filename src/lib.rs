@@ -1,6 +1,7 @@
 #![feature(hash_raw_entry)]
 
 extern crate fnv;
+extern crate num_iter;
 extern crate num_bigint;
 extern crate num_integer;
 extern crate num_traits;
