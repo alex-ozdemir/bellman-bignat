@@ -543,6 +543,16 @@ where
                 })
                 .collect::<Result<Vec<_>, _>>()?,
         );
+        to_hash_to_challenge.extend(
+            expected_final_digest
+                .as_limbs::<CS>()
+                .into_iter()
+                .enumerate()
+                .map(|(i, n)| {
+                    n.as_sapling_allocated_num(cs.namespace(|| format!("digest hash {}", i)))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        );
         to_hash_to_challenge.extend(insertions.iter().map(|i| i.hash.clone().unwrap()));
         to_hash_to_challenge.extend(removals.iter().map(|i| i.hash.clone().unwrap()));
         let challenge = pocklington::hash_to_pocklington_prime(
