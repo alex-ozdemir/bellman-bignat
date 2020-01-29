@@ -95,7 +95,7 @@ pub mod helper {
                 // TODO We could get a tighter bound by using max values, and not bits.
                 let max_nonce_bits_needed = nonce_bits_needed(max_extension_bits + plan.max_bits());
                 assert!(max_nonce_bits_needed < max_extension_bits);
-                let max_random_bits = max_extension_bits - max_nonce_bits_needed;
+                let max_random_bits = max_extension_bits - max_nonce_bits_needed - 1;
                 let random_bits = min(entropy - plan.entropy(), max_random_bits);
                 // TODO we might be able to omit a nonce bit if we were to re-compute the nonce
                 // width using `random_bits`.
