@@ -279,6 +279,8 @@ mod tests {
     use test::Bencher;
     use super::*;
     use sapling_crypto::bellman::pairing::ff::Field;
+    use util::test_helpers::*;
+    use hash::circuit::Bench;
 
     fn bench_hasher_hash_n<H: Hasher>(h: H, n: usize, b: &mut Bencher) {
         let v = vec![H::F::one(); n];
@@ -321,6 +323,16 @@ mod tests {
     fn poseidon_5_bench_bls12(b: &mut Bencher) {
         let h = Poseidon::<Bls12>::default();
         bench_hasher_hash_n(h, 5, b);
+    }
+
+    circuit_benches! {
+        bench_bn256_poseidon_2: (Bench::from_hasher(Poseidon::<Bls12>::default(), 2), true),
+
+        bench_bn256_pedersen_2: (Bench::from_hasher(Pedersen::<Bls12>::default(), 2), true),
+
+        bench_bn256_sha_2: (Bench::from_hasher(Sha256::<Bls12>::default(), 2), true),
+
+        bench_bn256_mimc_2: (Bench::from_hasher(Mimc::<Bls12>::default(), 2), true),
     }
 
 }

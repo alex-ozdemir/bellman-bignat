@@ -108,6 +108,7 @@ pub mod circuit {
         }
     }
 
+    #[derive(Clone)]
     pub struct Bench<H: Hasher + CircuitHasher> {
         inputs: Vec<String>,
         hasher: H,
