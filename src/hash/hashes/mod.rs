@@ -273,3 +273,54 @@ where
         sha::circuit::sha256(cs, inputs)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use test::Bencher;
+    use super::*;
+    use sapling_crypto::bellman::pairing::ff::Field;
+
+    fn bench_hasher_hash_n<H: Hasher>(h: H, n: usize, b: &mut Bencher) {
+        let v = vec![H::F::one(); n];
+        let zero = H::F::zero();
+        b.iter(|| assert_ne!(zero, h.hash(&v)));
+    }
+
+    fn bench_hasher_hash2<H: Hasher>(h: H, b: &mut Bencher) {
+        let i0 = H::F::one();
+        let i1 = H::F::one();
+        let zero = H::F::zero();
+        b.iter(|| assert_ne!(zero, h.hash2(i0, i1)));
+    }
+
+    #[bench]
+    fn poseidon_2_bench_bls12(b: &mut Bencher) {
+        let h = Poseidon::<Bls12>::default();
+        bench_hasher_hash2(h, b);
+    }
+
+    #[bench]
+    fn pedersen_2_bench_bls12(b: &mut Bencher) {
+        let h = Pedersen::<Bls12>::default();
+        bench_hasher_hash2(h, b);
+    }
+
+    #[bench]
+    fn mimc_2_bench_bls12(b: &mut Bencher) {
+        let h = Mimc::<Bls12>::default();
+        bench_hasher_hash2(h, b);
+    }
+
+    #[bench]
+    fn sha_2_bench_bls12(b: &mut Bencher) {
+        let h = Sha256::<Bls12>::default();
+        bench_hasher_hash2(h, b);
+    }
+
+    #[bench]
+    fn poseidon_5_bench_bls12(b: &mut Bencher) {
+        let h = Poseidon::<Bls12>::default();
+        bench_hasher_hash_n(h, 5, b);
+    }
+
+}

@@ -1,5 +1,7 @@
 #![feature(hash_raw_entry)]
+#![feature(test)]
 
+extern crate test;
 extern crate fnv;
 extern crate num_iter;
 extern crate num_bigint;
