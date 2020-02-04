@@ -1,4 +1,4 @@
-use fnv::FnvHashMap;
+use fnv::{FnvHashMap,FnvHashSet};
 use sapling_crypto::bellman::pairing::ff::{PrimeField, ScalarEngine};
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{Circuit, ConstraintSystem, LinearCombination, SynthesisError};
@@ -76,9 +76,7 @@ where
             depth,
             leaf_indices,
         };
-        for i in 0..n {
-            this.update_hashes_from_leaf_index(i);
-        }
+        this.update_hashes_from_leaf_indices(0..n);
         this
     }
 }
@@ -92,13 +90,27 @@ where
             .unwrap_or_else(|| &self.defaults[level])
     }
 
+    fn update_hash(&mut self, level: usize, index: usize) {
+        let child_1 = self.get_node(level + 1, 2 * index);
+        let child_2 = self.get_node(level + 1, 2 * index + 1);
+        let hash = self.hasher.hash2(child_1.clone(), child_2.clone());
+        self.nodes.insert((level, index), hash);
+    }
+
+    fn update_hashes_from_leaf_indices(&mut self, indices: impl Iterator<Item = usize>) {
+        let mut indices: FnvHashSet<usize> = indices.map(|i| i / 2).collect();
+        for level in (0..self.depth).rev() {
+            for i in &indices {
+                self.update_hash(level, *i)
+            }
+            indices = indices.into_iter().map(|i| i / 2).collect();
+        }
+    }
+
     fn update_hashes_from_leaf_index(&mut self, mut index: usize) {
         index /= 2;
         for level in (0..self.depth).rev() {
-            let child_1 = self.get_node(level + 1, 2 * index);
-            let child_2 = self.get_node(level + 1, 2 * index + 1);
-            let hash = self.hasher.hash2(child_1.clone(), child_2.clone());
-            self.nodes.insert((level, index), hash);
+            self.update_hash(level, index);
             index /= 2;
         }
     }
