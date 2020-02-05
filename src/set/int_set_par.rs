@@ -5,7 +5,6 @@ use rug::{Assign, Integer, ops::Pow};
 use serde::{Deserialize,Serialize};
 
 use std::collections::BTreeMap;
-use std::convert::AsRef;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::ops::{Index, MulAssign, RemAssign};
@@ -17,11 +16,11 @@ use super::int_set::IntSet;
 /// A comb of precomputed powers of a base, plus optional precomputed tables of combinations
 pub struct PrecompBases {
     /// The values
-    bases: Vec<Integer>,
+    bs: Vec<Integer>,
     m: Integer,
     lms: usize,
     bpe: usize,
-    tables: Vec<Vec<Integer>>,
+    ts: Vec<Vec<Integer>>,
     npt: usize,
 }
 
@@ -30,14 +29,7 @@ impl Index<usize> for PrecompBases {
     type Output = Vec<Integer>;
 
     fn index(&self, idx: usize) -> &Self::Output {
-        &self.tables[idx]
-    }
-}
-
-/// turning PrecompBases into a ref returns a slice of the bases (not precomputed tables!)
-impl AsRef<[Integer]> for PrecompBases {
-    fn as_ref(&self) -> &[Integer] {
-        self.bases.as_ref()
+        &self.ts[idx]
     }
 }
 
@@ -64,14 +56,14 @@ impl PrecompBases {
             Integer::from_str_radix(&mbuf, 16).unwrap()
         };
         let ret = Self {
-            bases: ifile
+            bs: ifile
                 .lines()
                 .map(|x| Integer::from_str_radix(x.unwrap().as_ref(), 16).unwrap())
                 .collect(),
             m: modulus,
             lms: log_max_size,
             bpe: log_bits_per_elm,
-            tables: Vec::new(),
+            ts: Vec::new(),
             npt: 0,
         };
         ret._check();
@@ -84,16 +76,19 @@ impl PrecompBases {
         use rayon::prelude::*;
 
         // reset tables and n_per_table
-        self.tables.clear();
+        self.ts.clear();
         self.npt = n_per_table;
         if n_per_table == 0 {
             return;
         }
 
         // for each n bases, compute powerset of values
-        self.tables.reserve(self.bases.len() / n_per_table + 1);
-        self.tables.par_extend(self.bases.par_chunks(n_per_table).map({
-            let modulus = &self.m; // borrow checker can't see into closures; borrow here instead
+        self.ts.reserve(self.bs.len() / n_per_table + 1);
+        self.ts.par_extend(self.bs.par_chunks(n_per_table).map({
+            // closure would capture borrow of self, which breaks because self is borrowed already.
+            // instead, borrow the piece of self we need outside, then move the borrow inside
+            // http://smallcultfollowing.com/babysteps/blog/2018/04/24/rust-pattern-precise-closure-capture-clauses/
+            let modulus = &self.m;
             move |x| _make_table(x, modulus)
         }));
     }
@@ -115,8 +110,8 @@ impl PrecompBases {
 
     // ** accessors and misc ** //
     /// return number of tables
-    pub fn n_tables(&self) -> usize {
-        self.tables.len()
+    pub fn len(&self) -> usize {
+        self.ts.len()
     }
 
     /// return number of bases per precomputed table (i.e., log2(table.len()))
@@ -131,8 +126,8 @@ impl PrecompBases {
 
     /// log of the number of bases in this struct
     pub fn log_num_bases(&self) -> usize {
-        // this works because we enforce self.bases.len() is power of two
-        self.bases.len().trailing_zeros() as usize
+        // this works because we enforce self.bs.len() is power of two
+        self.bs.len().trailing_zeros() as usize
     }
 
     /// log of the number of bits per elm in the accumulator these tables accommodate
@@ -147,10 +142,15 @@ impl PrecompBases {
 
     /// return iterator over tables
     pub fn iter(&self) -> std::slice::Iter<Vec<Integer>> {
-        self.tables.iter()
+        self.ts.iter()
     }
 
-    /// return the modulus
+    /// ref to bases
+    pub fn bases(&self) -> &[Integer] {
+        &self.bs[..]
+    }
+
+    /// ref to modulus
     pub fn modulus(&self) -> &Integer {
         &self.m
     }
@@ -158,7 +158,7 @@ impl PrecompBases {
     // ** internal ** //
     // internal consistency checks --- fn should be called on any newly created object
     fn _check(&self) {
-        assert!(self.bases.len().is_power_of_two());
+        assert!(self.bs.len().is_power_of_two());
     }
 }
 
@@ -290,24 +290,40 @@ fn _parallel_product(v: &mut Vec<Integer>) {
 
 #[cfg(test)]
 mod tests {
+    use rug::rand::RandState;
     use super::*;
 
     #[test]
     fn precomp_table() {
-        let n_elms = 8;
-        let mut pc = PrecompBases::default();
-        pc.make_tables(n_elms);
-        assert!(pc.n_tables() > 0);
+        const NELMS: usize = 8;
 
-        let num_tables = pc.as_ref().len() / n_elms +
-            if pc.as_ref().len() % n_elms == 1 {
+        let mut pc = PrecompBases::default();
+        pc.make_tables(NELMS);
+        assert!(pc.len() > 0);
+
+        let num_tables = pc.bases().len() / NELMS +
+            if pc.bases().len() % NELMS == 1 {
                 1
             } else {
                 0
             };
 
-        assert!(pc.n_tables() == num_tables);
-        assert!(pc[0].len() == (1 << n_elms));
+        assert!(pc.len() == num_tables);
+        assert!(pc[0].len() == (1 << NELMS));
+
+        // check the first precomputed table for correctness
+        let bases = pc.bases();
+        let modulus = pc.modulus();
+        for idx in 0..(1 << NELMS) {
+            let mut accum = Integer::from(1);
+            for jdx in 0..NELMS {
+                if idx & (1 << jdx) != 0 {
+                    accum.mul_assign(&bases[jdx]);
+                    accum.rem_assign(modulus);
+                }
+            }
+            assert_eq!(&accum, &pc[0][idx]);
+        }
     }
 
     #[test]
@@ -323,9 +339,9 @@ mod tests {
     }
 
     #[test]
-    fn pmul_test() {
+    fn pprod_test() {
         const NELMS: usize = 2222;
-        use rug::rand::RandState;
+
         let mut rnd = RandState::new();
         let mut v = Vec::with_capacity(NELMS);
         (0..NELMS).for_each(|_| v.push(Integer::from(Integer::random_bits(2048, &mut rnd))));
