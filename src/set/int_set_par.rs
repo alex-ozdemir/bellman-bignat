@@ -45,6 +45,7 @@ impl Default for PrecompBases {
     }
 }
 
+#[allow(clippy::len_without_is_empty)]
 impl PrecompBases {
     // ** initialization and precomputation ** //
     /// read in a file with bases
@@ -171,12 +172,12 @@ fn _make_table(bases: &[Integer], modulus: &Integer) -> Vec<Integer> {
 
     // compute powerset of bases
     // for each element in bases
-    for bnum in 1..bases.len() {
+    for (bnum, base) in bases.iter().enumerate().skip(1) {
         let base_idx = 1 << bnum;
         // multiply bases[bnum] by the first base_idx elms of ret
         let (src, dst) = ret.split_at_mut(base_idx);
         for idx in 0..base_idx {
-            dst[idx].assign(&src[idx] * &bases[bnum]);
+            dst[idx].assign(&src[idx] * base);
             dst[idx].rem_assign(modulus);
         }
     }
