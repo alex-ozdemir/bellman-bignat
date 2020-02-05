@@ -15,7 +15,7 @@ phase_labels <- c(param = "KeyGen", prover = "Proving", ver = "Verification")
 
 ggplot(data = subbed, mapping = aes(y=time, x=swaps, fill = work_type)) +
   facet_grid(phase~set, scales="free_y", labeller = labeller(set = set_labels, phase = phase_labels)) +
-  geom_col(position = "stack") +
+  geom_col(position = "stack", color = "black") +
   guides(fill = guide_legend(reverse=TRUE)) +
   theme_light() +
   scale_fill_discrete(
