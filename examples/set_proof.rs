@@ -16,14 +16,17 @@ use bellman_bignat::set::GenSet;
 use docopt::Docopt;
 use num_bigint::BigUint;
 use sapling_crypto::bellman::groth16::{
-    create_random_proof, generate_random_parameters, prepare_verifying_key, verify_proof,
+    generate_random_parameters, prepare_prover, prepare_verifying_key, verify_proof,
+    ParameterSource, Proof,
 };
 use sapling_crypto::bellman::pairing::bls12_381::Bls12;
 use sapling_crypto::bellman::pairing::Engine;
+use sapling_crypto::bellman::{Circuit, SynthesisError};
 use serde::Deserialize;
 
+use rand::{thread_rng, Rng};
 use std::str::FromStr;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 const USAGE: &str = "
 Set Proof Benchmarker
@@ -65,67 +68,121 @@ struct Args {
     cmd_merkle: bool,
 }
 
+#[derive(Debug)]
+struct TimeReport {
+    init: Duration,
+    param_gen: Duration,
+    prover_synth: Duration,
+    prover_crypto: Duration,
+    verifier: Duration,
+}
+
 fn main() {
     color_backtrace::install();
     let args: Args = Docopt::new(USAGE)
         .and_then(|d| d.deserialize())
         .unwrap_or_else(|e| e.exit());
 
-    if args.cmd_merkle {
-        match args.flag_hash {
-            Hashes::Poseidon => merkle_bench::<Bls12, _>(
-                args.arg_transactions,
-                args.arg_capacity,
-                args.flag_full,
-                Poseidon::default(),
-            ),
-            Hashes::Mimc => merkle_bench::<Bls12, _>(
-                args.arg_transactions,
-                args.arg_capacity,
-                args.flag_full,
-                Mimc::default(),
-            ),
-            Hashes::Pedersen => merkle_bench::<Bls12, _>(
-                args.arg_transactions,
-                args.arg_capacity,
-                args.flag_full,
-                Pedersen::default(),
-            ),
-            Hashes::Sha => merkle_bench::<Bls12, _>(
-                args.arg_transactions,
-                args.arg_capacity,
-                args.flag_full,
-                Sha256::default(),
-            ),
-        }
+    let (set, report) = if args.cmd_merkle {
+        (
+            "markle",
+            match args.flag_hash {
+                Hashes::Poseidon => merkle_bench::<Bls12, _>(
+                    args.arg_transactions,
+                    args.arg_capacity,
+                    args.flag_full,
+                    Poseidon::default(),
+                ),
+                Hashes::Mimc => merkle_bench::<Bls12, _>(
+                    args.arg_transactions,
+                    args.arg_capacity,
+                    args.flag_full,
+                    Mimc::default(),
+                ),
+                Hashes::Pedersen => merkle_bench::<Bls12, _>(
+                    args.arg_transactions,
+                    args.arg_capacity,
+                    args.flag_full,
+                    Pedersen::default(),
+                ),
+                Hashes::Sha => merkle_bench::<Bls12, _>(
+                    args.arg_transactions,
+                    args.arg_capacity,
+                    args.flag_full,
+                    Sha256::default(),
+                ),
+            },
+        )
     } else if args.cmd_rsa {
-        match args.flag_hash {
-            Hashes::Poseidon => rsa_bench::<Bls12, _>(
-                args.arg_transactions,
-                args.arg_capacity,
-                args.flag_full,
-                Poseidon::default(),
-            ),
-            Hashes::Mimc => rsa_bench::<Bls12, _>(
-                args.arg_transactions,
-                args.arg_capacity,
-                args.flag_full,
-                Mimc::default(),
-            ),
-            Hashes::Pedersen => rsa_bench::<Bls12, _>(
-                args.arg_transactions,
-                args.arg_capacity,
-                args.flag_full,
-                Pedersen::default(),
-            ),
-            Hashes::Sha => rsa_bench::<Bls12, _>(
-                args.arg_transactions,
-                args.arg_capacity,
-                args.flag_full,
-                Sha256::default(),
-            ),
-        }
-    }
+        (
+            "rsa",
+            match args.flag_hash {
+                Hashes::Poseidon => rsa_bench::<Bls12, _>(
+                    args.arg_transactions,
+                    args.arg_capacity,
+                    args.flag_full,
+                    Poseidon::default(),
+                ),
+                Hashes::Mimc => rsa_bench::<Bls12, _>(
+                    args.arg_transactions,
+                    args.arg_capacity,
+                    args.flag_full,
+                    Mimc::default(),
+                ),
+                Hashes::Pedersen => rsa_bench::<Bls12, _>(
+                    args.arg_transactions,
+                    args.arg_capacity,
+                    args.flag_full,
+                    Pedersen::default(),
+                ),
+                Hashes::Sha => rsa_bench::<Bls12, _>(
+                    args.arg_transactions,
+                    args.arg_capacity,
+                    args.flag_full,
+                    Sha256::default(),
+                ),
+            },
+        )
+    } else {
+        unreachable!()
+    };
+    println!("{},{},{},{},{},{},{},{}",
+            set,
+            args.arg_transactions,
+            args.arg_capacity,
+            report.init.as_secs_f64(),
+            report.param_gen.as_secs_f64(),
+            report.prover_synth.as_secs_f64(),
+            report.prover_crypto.as_secs_f64(),
+            report.verifier.as_secs_f64(),
+    );
+}
+
+/// A copy of the `create_random_proof` procedure of bellman.
+/// Returns the proof, the time spent synthesizing the circuit and its inputs, and the time spent
+/// doing cryptography.
+fn create_random_proof<E, C, R, P: ParameterSource<E>>(
+    circuit: C,
+    params: P,
+    rng: &mut R,
+) -> Result<(Proof<E>, Duration, Duration), SynthesisError>
+where
+    E: Engine,
+    C: Circuit<E>,
+    R: Rng,
+{
+    let synth_start = Instant::now();
+    let r = rng.gen();
+    let s = rng.gen();
+    let prover = prepare_prover(circuit)?;
+    let synth_end = Instant::now();
+
+    println!("Starting prover crypto");
+    let crypto_start = Instant::now();
+    let proof = prover.create_proof(params, r, s)?;
+    let crypto_end = Instant::now();
+
+    Ok((proof, synth_end - synth_start, crypto_end - crypto_start))
 }
 
 fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
@@ -133,11 +190,11 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
     c: usize,
     full: bool,
     hash: H,
-) {
-    use rand::thread_rng;
-
+) -> TimeReport {
     let rng = &mut thread_rng();
 
+    println!("Initializing accumulators, circuits");
+    let init_start = Instant::now();
     let group = RsaQuotientGroup {
         g: BigUint::from(2usize),
         m: BigUint::from_str(RSA_2048).unwrap(),
@@ -182,22 +239,6 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
         )),
         params: params.clone(),
     };
-
-    let params = {
-        let generate_params_start = Instant::now();
-        let p = generate_random_parameters(empty_circuit, rng);
-        let generate_params_end = Instant::now();
-        println!("Params are okay: {:#?}", p.is_ok());
-        println!(
-            "Done with parameters, duration {:?}",
-            generate_params_end - generate_params_start
-        );
-        p.unwrap()
-    };
-
-    let pvk = prepare_verifying_key(&params.vk);
-    println!("Done with key");
-
     let ins = circuit.inputs.as_ref().unwrap();
     let mut initial_set = ins.initial_state.clone();
     let mut final_set = {
@@ -210,23 +251,38 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
     inputs.extend(nat_to_limbs::<E::Fr>(&initial_set.digest(), 32, 64).unwrap());
     inputs.extend(nat_to_limbs::<E::Fr>(&final_set.digest(), 32, 64).unwrap());
 
-    let prover_start = Instant::now();
+    let init_end = Instant::now();
 
-    let proof = create_random_proof(circuit, &params, rng).unwrap();
+    println!("Generating prover and verifier keys");
+    let param_start = Instant::now();
+    let params = {
+        let p = generate_random_parameters(empty_circuit, rng);
+        println!("Params gen is okay: {:#?}", p.is_ok());
+        assert!(p.is_ok());
+        p.unwrap()
+    };
+    let pvk = prepare_verifying_key(&params.vk);
+    let param_end = Instant::now();
 
-    let prover_end = Instant::now();
-    println!("Done with proof, duration: {:?}", prover_end - prover_start);
+    println!("Generating proof");
+
+    let (proof, prover_synth_time, prover_crypto_time) =
+        create_random_proof(circuit, &params, rng).unwrap();
+    println!("Proof generation successful? true");
 
     let verifier_start = Instant::now();
-
     let result = verify_proof(&pvk, &proof, &inputs);
-
     let verifier_end = Instant::now();
-    println!(
-        "Done with verifcation: {:?}, duration: {:?}",
-        result,
-        verifier_end - verifier_start
-    );
+    println!("Verified? {:?}", result.is_ok(),);
+    assert!(result.is_ok());
+
+    TimeReport {
+        init: init_end - init_start,
+        param_gen: param_end - param_start,
+        prover_synth: prover_synth_time,
+        prover_crypto: prover_crypto_time,
+        verifier: verifier_end - verifier_start,
+    }
 }
 
 fn merkle_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
@@ -234,11 +290,11 @@ fn merkle_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
     c: usize,
     full: bool,
     hash: H,
-) {
-    use rand::thread_rng;
-
+) -> TimeReport {
     let rng = &mut thread_rng();
 
+    println!("Initializing accumulators, circuits");
+    let init_start = Instant::now();
     let merkle_params = MerkleSetBenchParams {
         item_size: ELEMENT_SIZE,
         n_swaps: t,
@@ -265,21 +321,6 @@ fn merkle_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
         params: merkle_params,
     };
 
-    let params = {
-        let generate_params_start = Instant::now();
-        let p = generate_random_parameters(empty_circuit, rng);
-        let generate_params_end = Instant::now();
-        println!("Params are okay: {:#?}", p.is_ok());
-        println!(
-            "Done with parameters, duration {:?}",
-            generate_params_end - generate_params_start
-        );
-        p.unwrap()
-    };
-
-    let pvk = prepare_verifying_key(&params.vk);
-    println!("Done with key");
-
     let ins = circuit.inputs.as_ref().unwrap();
     let mut initial_set = ins.initial_state.clone();
     let mut final_set = {
@@ -289,24 +330,36 @@ fn merkle_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
     };
     let inputs: Vec<E::Fr> = vec![initial_set.digest(), final_set.digest()];
 
+    let init_end = Instant::now();
+
+    println!("Generating prover and verifier keys");
+    let param_start = Instant::now();
+    let params = {
+        let p = generate_random_parameters(empty_circuit, rng);
+        println!("Params gen is okay: {:#?}", p.is_ok());
+        assert!(p.is_ok());
+        p.unwrap()
+    };
+    let pvk = prepare_verifying_key(&params.vk);
+    let param_end = Instant::now();
+
+    println!("Generating proof");
+
+    let (proof, prover_synth_time, prover_crypto_time) =
+        create_random_proof(circuit, &params, rng).unwrap();
+    println!("Proof generation successful? true");
+
     let verifier_start = Instant::now();
-
-    let proof = create_random_proof(circuit, &params, rng).unwrap();
-
-    let verifier_end = Instant::now();
-    println!(
-        "Done with proof, duration: {:?}",
-        verifier_end - verifier_start
-    );
-
-    let verifier_start = Instant::now();
-
     let result = verify_proof(&pvk, &proof, &inputs);
-
     let verifier_end = Instant::now();
-    println!(
-        "Done with verifcation: {:?}, duration: {:?}",
-        result,
-        verifier_end - verifier_start
-    );
+    println!("Verified? {:?}", result.is_ok(),);
+    assert!(result.is_ok());
+
+    TimeReport {
+        init: init_end - init_start,
+        param_gen: param_end - param_start,
+        prover_synth: prover_synth_time,
+        prover_crypto: prover_crypto_time,
+        verifier: verifier_end - verifier_start,
+    }
 }
