@@ -2,6 +2,7 @@
 #![feature(test)]
 
 extern crate test;
+extern crate bincode;
 extern crate fnv;
 extern crate num_iter;
 extern crate num_bigint;
@@ -12,6 +13,8 @@ extern crate rayon;
 extern crate sapling_crypto;
 #[macro_use]
 extern crate derivative;
+extern crate rug;
+extern crate serde;
 extern crate sha2;
 
 #[cfg(test)]

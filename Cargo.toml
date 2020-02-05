@@ -3,6 +3,7 @@ name = "bellman-bignat"
 version = "0.1.0"
 
 [dependencies]
+bincode = "1.2.1"
 derivative = "1.0.0"
 docopt = "1"
 fnv = "1.0.6"
@@ -22,3 +23,12 @@ sha2 = "0.8.0"
 quickcheck = "0.8"
 quickcheck_macros = "0.8"
 color-backtrace = { version = "0.2" }
+
+[dependencies.gmp-mpfr-sys]
+version = "1.2"
+default-features = false
+
+[dependencies.rug]
+version = "1.7"
+default-features = false
+features = ["integer", "serde"]
