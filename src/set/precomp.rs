@@ -11,8 +11,10 @@ pub struct PrecompBases {
     /// The values
     bases: Vec<Integer>,
     tables: Vec<Vec<Integer>>,
+    npt: usize,
 }
 
+/// pcb[idx] is the idx'th precomputed table
 impl Index<usize> for PrecompBases {
     type Output = Vec<Integer>;
 
@@ -21,6 +23,7 @@ impl Index<usize> for PrecompBases {
     }
 }
 
+/// turning PrecompBases into a ref returns a slice of the bases (not precomputed tables!)
 impl AsRef<[Integer]> for PrecompBases {
     fn as_ref(&self) -> &[Integer] {
         self.bases.as_ref()
@@ -28,32 +31,42 @@ impl AsRef<[Integer]> for PrecompBases {
 }
 
 impl PrecompBases {
+    /// read in a file with bases
     pub fn from_file(filename: &str) -> Self {
         Self {
             bases: BufReader::new(File::open(filename).unwrap())
                 .lines()
                 .map(|x| Integer::from_str_radix(x.unwrap().as_ref(), 16).unwrap())
                 .collect(),
-
             tables: Vec::new(),
+            npt: 0,
         }
     }
 
+    /// build tables from bases
     pub fn make_tables(&mut self, n_per_table: usize) {
-        // parallel table building
+        // parallel table building with Rayon
         use rayon::prelude::*;
 
         // for each n bases, compute powerset of values
         self.tables.clear();
         self.tables.reserve(self.bases.len() / n_per_table + 1);
         self.tables.par_extend(self.bases.par_chunks(n_per_table).map(|x| _make_table(x)));
+        self.npt = n_per_table;
     }
 
+    /// return number of tables
     pub fn n_tables(&self) -> usize {
         self.tables.len()
     }
+
+    /// return number of bases per precomputed table (i.e., log2(table.len()))
+    pub fn n_per_table(&self) -> usize {
+        self.npt
+    }
 }
 
+// make a table from a set of bases
 fn _make_table(bases: &[Integer]) -> Vec<Integer> {
     let mut ret = vec!(Integer::new(); 1 << bases.len());
     // base case: 0 and 1
