@@ -103,7 +103,7 @@ pub mod circuit {
     use sapling_crypto::circuit::num::AllocatedNum;
     use sapling_crypto::jubjub::JubjubEngine;
     use std::clone::Clone;
-    use std::rc::Rc;
+    use std::sync::Arc;
 
     use super::{Action, SignedTx};
     use hash::circuit::CircuitHasher;
@@ -120,7 +120,7 @@ pub mod circuit {
         pub dst: EdwardsPoint<E>,
         pub amt: AllocatedNum<E>,
         pub tx_no: AllocatedNum<E>,
-        pub params: Rc<E::Params>,
+        pub params: Arc<E::Params>,
         pub value: Option<Action<E>>,
     }
 
@@ -128,7 +128,7 @@ pub mod circuit {
         type E = E;
         type Value = Action<E>;
         type Access = ();
-        type Params = Rc<E::Params>;
+        type Params = Arc<E::Params>;
         fn alloc<CS: ConstraintSystem<Self::E>>(
             mut cs: CS,
             value: Option<&Self::Value>,
@@ -221,14 +221,14 @@ pub mod circuit {
         pub src: EdwardsPoint<E>,
         pub sig: EddsaSignature<E>,
         pub value: Option<SignedTx<E>>,
-        pub params: Rc<E::Params>,
+        pub params: Arc<E::Params>,
     }
 
     impl<E: JubjubEngine> Gadget for CircuitSignedTx<E> {
         type E = E;
         type Value = SignedTx<E>;
         type Access = ();
-        type Params = Rc<E::Params>;
+        type Params = Arc<E::Params>;
         fn alloc<CS: ConstraintSystem<Self::E>>(
             mut cs: CS,
             value: Option<&Self::Value>,

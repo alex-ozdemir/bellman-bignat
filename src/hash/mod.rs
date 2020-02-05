@@ -31,8 +31,8 @@ pub fn low_k_bits(n: &BigUint, k: usize) -> BigUint {
     n & ((BigUint::one() << k) - 1usize)
 }
 
-pub trait Hasher: Clone {
-    type F: PrimeField;
+pub trait Hasher: Clone + Send + Sync {
+    type F: PrimeField + Send + Sync;
     fn hash2(&self, a: Self::F, b: Self::F) -> Self::F;
     fn hash(&self, inputs: &[Self::F]) -> Self::F {
         let mut acc = Self::F::zero();

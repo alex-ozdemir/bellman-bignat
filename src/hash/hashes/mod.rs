@@ -13,7 +13,7 @@ use sapling_crypto::poseidon::{
 
 use std::default::Default;
 use std::marker::PhantomData;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use super::circuit::CircuitHasher;
 use super::Hasher;
@@ -27,14 +27,14 @@ mod sha;
 #[derivative(Clone(bound = ""))]
 pub struct Poseidon<E>
 where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: PoseidonEngine<SBox = QuinticSBox<E>>
 {
-    pub params: Rc<E::Params>,
+    pub params: Arc<E::Params>,
 }
 
 impl<E: PoseidonEngine<SBox = QuinticSBox<E>>> Poseidon<E> {
     fn from_params(p: E::Params) -> Self {
-        Self { params: Rc::new(p) }
+        Self { params: Arc::new(p) }
     }
 }
 
@@ -52,7 +52,7 @@ impl Default for Poseidon<Bls12> {
 
 impl<E> Hasher for Poseidon<E>
 where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>,
+    E: PoseidonEngine<SBox = QuinticSBox<E>> + Send + Sync,
 {
     type F = E::Fr;
 
@@ -74,7 +74,7 @@ pub struct Pedersen<E>
 where
     E: JubjubEngine,
 {
-    pub params: Rc<E::Params>,
+    pub params: Arc<E::Params>,
 }
 
 impl<E: JubjubEngine> Hasher for Pedersen<E> {
@@ -101,7 +101,7 @@ impl<E: JubjubEngine> Hasher for Pedersen<E> {
 impl<E: JubjubEngine>  Pedersen<E> {
     fn from_params(p: E::Params) -> Self {
         Self {
-            params: Rc::new(p),
+            params: Arc::new(p),
         }
     }
 }
@@ -122,23 +122,23 @@ impl Default for Pedersen<Bls12> {
 #[derivative(Clone(bound = ""))]
 pub struct Mimc<E>
 where
-    E: Engine,
+    E: Engine + Send + Sync,
 {
-    _params: PhantomData<E>,
+    _params: PhantomData<Arc<E>>,
 }
 
 impl<E> Default for Mimc<E>
 where
-    E: Engine,
+    E: Engine + Send + Sync,
 {
     fn default() -> Self {
         Self {
-            _params: PhantomData::<E>::default(),
+            _params: PhantomData::<Arc<E>>::default(),
         }
     }
 }
 
-impl<E: Engine> Hasher for Mimc<E> {
+impl<E: Engine + Send + Sync> Hasher for Mimc<E> {
     type F = E::Fr;
     fn hash2(&self, a: Self::F, b: Self::F) -> Self::F {
         mimc::helper::compression(a, b)
@@ -149,14 +149,14 @@ impl<E: Engine> Hasher for Mimc<E> {
 #[derivative(Clone(bound = ""))]
 pub struct Sha256<E>
 where
-    E: Engine,
+    E: Engine + Send + Sync,
 {
     _params: PhantomData<E>,
 }
 
 impl<E> Default for Sha256<E>
 where
-    E: Engine,
+    E: Engine + Send + Sync,
 {
     fn default() -> Self {
         Self {
@@ -165,7 +165,7 @@ where
     }
 }
 
-impl<E: Engine> Hasher for Sha256<E> {
+impl<E: Engine + Send + Sync> Hasher for Sha256<E> {
     type F = E::Fr;
     fn hash2(&self, a: Self::F, b: Self::F) -> Self::F {
         sha::sha256::<E>(&[a, b])
@@ -238,7 +238,7 @@ where
 
 impl<E> CircuitHasher for Mimc<E>
 where
-    E: Engine,
+    E: Engine + Send + Sync,
 {
     type E = E;
     fn allocate_hash2<CS: ConstraintSystem<E>>(
@@ -254,7 +254,7 @@ where
 
 impl<E> CircuitHasher for Sha256<E>
 where
-    E: Engine,
+    E: Engine + Send + Sync,
 {
     type E = E;
     fn allocate_hash2<CS: ConstraintSystem<E>>(

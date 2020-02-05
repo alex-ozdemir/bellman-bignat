@@ -22,7 +22,7 @@ use CResult;
 use OptionExt;
 
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::Arc;
 
 #[derive(Derivative)]
 #[derivative(Clone(bound = ""))]
@@ -213,7 +213,7 @@ pub struct RollupBenchParams<E, H>
 where
     E: JubjubEngine,
 {
-    pub jj_params: Rc<<E as JubjubEngine>::Params>,
+    pub jj_params: Arc<<E as JubjubEngine>::Params>,
     pub sig_hasher: Pedersen<E>,
     pub gen: FixedGenerators,
     pub n_tx: usize,
@@ -240,7 +240,7 @@ where
         jj_params: <E as JubjubEngine>::Params,
         tree_hash: H,
     ) -> Self {
-        let jj_params = Rc::new(jj_params);
+        let jj_params = Arc::new(jj_params);
         let params = RollupBenchParams {
             jj_params: jj_params.clone(),
             sig_hasher: Pedersen {

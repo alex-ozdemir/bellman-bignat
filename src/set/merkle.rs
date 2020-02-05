@@ -48,7 +48,9 @@ where
         depth: usize,
         items: impl IntoIterator<Item = &'b [H::F]>,
     ) -> Self {
-        let leaves: Vec<H::F> = items.into_iter().map(|s| hasher.hash(s)).collect();
+        use rayon::prelude::*;
+        let items: Vec<&'b [H::F]> = items.into_iter().collect();
+        let leaves: Vec<H::F> = items.into_par_iter().map(|s| hasher.hash(s)).collect();
         let n = leaves.len();
         let leaf_indices: BTreeMap<<H::F as PrimeField>::Repr, usize> = leaves
             .iter()
@@ -90,18 +92,23 @@ where
             .unwrap_or_else(|| &self.defaults[level])
     }
 
-    fn update_hash(&mut self, level: usize, index: usize) {
+    fn compute_hash(&self, level: usize, index: usize) -> H::F {
         let child_1 = self.get_node(level + 1, 2 * index);
         let child_2 = self.get_node(level + 1, 2 * index + 1);
-        let hash = self.hasher.hash2(child_1.clone(), child_2.clone());
-        self.nodes.insert((level, index), hash);
+        self.hasher.hash2(child_1.clone(), child_2.clone())
+    }
+
+    fn update_hash(&mut self, level: usize, index: usize) {
+        self.nodes.insert((level, index), self.compute_hash(level, index));
     }
 
     fn update_hashes_from_leaf_indices(&mut self, indices: impl Iterator<Item = usize>) {
         let mut indices: FnvHashSet<usize> = indices.map(|i| i / 2).collect();
+        use rayon::prelude::*;
         for level in (0..self.depth).rev() {
-            for i in &indices {
-                self.update_hash(level, *i)
+            let hashes_and_ixds: Vec<_> = indices.par_iter().map(|i| (self.compute_hash(level, *i), *i)).collect();
+            for (h, i) in hashes_and_ixds {
+                self.nodes.insert((level, i), h);
             }
             indices = indices.into_iter().map(|i| i / 2).collect();
         }
