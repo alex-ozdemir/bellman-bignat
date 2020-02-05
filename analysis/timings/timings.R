@@ -17,8 +17,8 @@ ggplot(data = subbed, mapping = aes(y=time, x=swaps, fill = work_type)) +
   facet_grid(phase~set, scales="free_y", labeller = labeller(set = set_labels, phase = phase_labels)) +
   geom_col(position = "stack", color = "black") +
   guides(fill = guide_legend(reverse=TRUE)) +
-  theme_light() +
-  scale_fill_discrete(
+  theme_bw() +
+  scale_fill_grey(
     breaks = c("all", "synth", "crypto"),
     labels = c("All", "Synthesis", "Crypto.")
   ) +
@@ -26,6 +26,6 @@ ggplot(data = subbed, mapping = aes(y=time, x=swaps, fill = work_type)) +
     fill = "Computation Type",
     y = "Time (s)",
     x = "Swaps",
-    title = "Time Costs"
+    title = "Multiswap Time Costs"
   ) +
   ggsave("timings.pdf", width = 6, height = 6, units = "in")

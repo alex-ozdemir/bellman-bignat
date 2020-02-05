@@ -580,7 +580,7 @@ where
                 n_limbs: self.params.n_bits_base / self.params.limb_width,
             },
         )?;
-        group.inputize(cs.namespace(|| "group input"))?;
+        group.inputize_hash(cs.namespace(|| "group input"), &self.params.hasher)?;
 
         if self.params.verbose {
             println!("Constructing Set");
@@ -595,7 +595,7 @@ where
                 limb_width: self.params.limb_width,
             },
         )?;
-        set.inputize(cs.namespace(|| "initial_state input"))?;
+        set.inputize_hash(cs.namespace(|| "initial_state input"), &self.params.hasher)?;
         set.inner.digest.equal(cs.namespace(|| "initial digest matches"), &expected_initial_digest)?;
 
         if self.params.verbose {
@@ -614,7 +614,7 @@ where
             .inner
             .digest
             .equal(cs.namespace(|| "check"), &expected_final_digest)?;
-        new_set.inputize(cs.namespace(|| "final_state input"))?;
+        new_set.inputize_hash(cs.namespace(|| "final_state input"), &self.params.hasher)?;
         Ok(())
     }
 }

@@ -215,7 +215,7 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
             args.arg_transactions,
             args.arg_transactions,
             ELEMENT_SIZE,
-            hash,
+            hash.clone(),
             RSA_SIZE,
             32,
             RsaQuotientGroup {
@@ -232,10 +232,11 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
         t.swap_all(ins.to_remove.clone(), ins.to_insert.clone());
         t
     };
-    let mut inputs: Vec<E::Fr> = nat_to_limbs(&group.g, 32, 64).unwrap();
-    inputs.extend(nat_to_limbs::<E::Fr>(&group.m, 32, 64).unwrap());
-    inputs.extend(nat_to_limbs::<E::Fr>(&initial_set.digest(), 32, 64).unwrap());
-    inputs.extend(nat_to_limbs::<E::Fr>(&final_set.digest(), 32, 64).unwrap());
+    let inputs = vec![
+        hash.hash(&nat_to_limbs(&group.g, 32, 64).unwrap().into_iter().chain(nat_to_limbs(&group.m, 32, 64).unwrap().into_iter()).collect::<Vec<E::Fr>>()),
+        hash.hash(&nat_to_limbs(&initial_set.digest(), 32, 64).unwrap()),
+        hash.hash(&nat_to_limbs(&final_set.digest(), 32, 64).unwrap()),
+    ];
 
     let init_end = Instant::now();
 
