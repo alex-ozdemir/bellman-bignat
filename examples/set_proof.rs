@@ -40,6 +40,7 @@ Usage:
 Options:
   -h --help      Show this screen.
   -f --full      Run the test with an initially full accumulator
+  -v --verbose   Emit debug statements.
   --hash HASH    The hash function to use [default: poseidon]
                  Valid values: poseidon, mimc, pedersen, babypedersen, sha
   --version      Show version.
@@ -64,6 +65,7 @@ struct Args {
     arg_capacity: usize,
     flag_hash: Hashes,
     flag_full: bool,
+    flag_verbose: bool,
     cmd_rsa: bool,
     cmd_merkle: bool,
 }
@@ -88,27 +90,19 @@ fn main() {
             "markle",
             match args.flag_hash {
                 Hashes::Poseidon => merkle_bench::<Bls12, _>(
-                    args.arg_transactions,
-                    args.arg_capacity,
-                    args.flag_full,
+                    &args,
                     Poseidon::default(),
                 ),
                 Hashes::Mimc => merkle_bench::<Bls12, _>(
-                    args.arg_transactions,
-                    args.arg_capacity,
-                    args.flag_full,
+                    &args,
                     Mimc::default(),
                 ),
                 Hashes::Pedersen => merkle_bench::<Bls12, _>(
-                    args.arg_transactions,
-                    args.arg_capacity,
-                    args.flag_full,
+                    &args,
                     Pedersen::default(),
                 ),
                 Hashes::Sha => merkle_bench::<Bls12, _>(
-                    args.arg_transactions,
-                    args.arg_capacity,
-                    args.flag_full,
+                    &args,
                     Sha256::default(),
                 ),
             },
@@ -118,27 +112,19 @@ fn main() {
             "rsa",
             match args.flag_hash {
                 Hashes::Poseidon => rsa_bench::<Bls12, _>(
-                    args.arg_transactions,
-                    args.arg_capacity,
-                    args.flag_full,
+                    &args,
                     Poseidon::default(),
                 ),
                 Hashes::Mimc => rsa_bench::<Bls12, _>(
-                    args.arg_transactions,
-                    args.arg_capacity,
-                    args.flag_full,
+                    &args,
                     Mimc::default(),
                 ),
                 Hashes::Pedersen => rsa_bench::<Bls12, _>(
-                    args.arg_transactions,
-                    args.arg_capacity,
-                    args.flag_full,
+                    &args,
                     Pedersen::default(),
                 ),
                 Hashes::Sha => rsa_bench::<Bls12, _>(
-                    args.arg_transactions,
-                    args.arg_capacity,
-                    args.flag_full,
+                    &args,
                     Sha256::default(),
                 ),
             },
@@ -146,15 +132,16 @@ fn main() {
     } else {
         unreachable!()
     };
-    println!("{},{},{},{},{},{},{},{}",
-            set,
-            args.arg_transactions,
-            args.arg_capacity,
-            report.init.as_secs_f64(),
-            report.param_gen.as_secs_f64(),
-            report.prover_synth.as_secs_f64(),
-            report.prover_crypto.as_secs_f64(),
-            report.verifier.as_secs_f64(),
+    println!(
+        "{},{},{},{},{},{},{},{}",
+        set,
+        args.arg_transactions,
+        args.arg_capacity,
+        report.init.as_secs_f64(),
+        report.param_gen.as_secs_f64(),
+        report.prover_synth.as_secs_f64(),
+        report.prover_crypto.as_secs_f64(),
+        report.verifier.as_secs_f64(),
     );
 }
 
@@ -177,7 +164,6 @@ where
     let prover = prepare_prover(circuit)?;
     let synth_end = Instant::now();
 
-    println!("Starting prover crypto");
     let crypto_start = Instant::now();
     let proof = prover.create_proof(params, r, s)?;
     let crypto_end = Instant::now();
@@ -186,22 +172,22 @@ where
 }
 
 fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
-    t: usize,
-    c: usize,
-    full: bool,
+    args: &Args,
     hash: H,
 ) -> TimeReport {
     let rng = &mut thread_rng();
 
-    println!("Initializing accumulators, circuits");
+    if args.flag_verbose {
+        println!("Initializing accumulators, circuits");
+    }
     let init_start = Instant::now();
     let group = RsaQuotientGroup {
         g: BigUint::from(2usize),
         m: BigUint::from_str(RSA_2048).unwrap(),
     };
 
-    let n_untouched = if full {
-        (1usize << c).saturating_sub(t)
+    let n_untouched = if args.flag_full {
+        (1usize << args.arg_capacity).saturating_sub(args.arg_transactions)
     } else {
         0
     };
@@ -212,10 +198,10 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
         n_bits_challenge: 256,
         n_bits_base: RSA_SIZE,
         item_size: ELEMENT_SIZE,
-        n_inserts: t,
-        n_removes: t,
+        n_inserts: args.arg_transactions,
+        n_removes: args.arg_transactions,
         hasher: hash.clone(),
-        verbose: true,
+        verbose: args.flag_verbose,
     };
 
     let empty_circuit = SetBench {
@@ -226,8 +212,8 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
     let circuit = SetBench {
         inputs: Some(SetBenchInputs::from_counts(
             n_untouched,
-            t,
-            t,
+            args.arg_transactions,
+            args.arg_transactions,
             ELEMENT_SIZE,
             hash,
             RSA_SIZE,
@@ -253,27 +239,37 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
 
     let init_end = Instant::now();
 
-    println!("Generating prover and verifier keys");
+    if args.flag_verbose {
+        println!("Generating prover and verifier keys");
+    }
     let param_start = Instant::now();
     let params = {
         let p = generate_random_parameters(empty_circuit, rng);
-        println!("Params gen is okay: {:#?}", p.is_ok());
+        if args.flag_verbose {
+            println!("Params gen is okay: {:#?}", p.is_ok());
+        }
         assert!(p.is_ok());
         p.unwrap()
     };
     let pvk = prepare_verifying_key(&params.vk);
     let param_end = Instant::now();
 
-    println!("Generating proof");
+    if args.flag_verbose {
+        println!("Generating proof");
+    }
 
     let (proof, prover_synth_time, prover_crypto_time) =
         create_random_proof(circuit, &params, rng).unwrap();
-    println!("Proof generation successful? true");
+    if args.flag_verbose {
+        println!("Proof generation successful? true");
+    }
 
     let verifier_start = Instant::now();
     let result = verify_proof(&pvk, &proof, &inputs);
     let verifier_end = Instant::now();
-    println!("Verified? {:?}", result.is_ok(),);
+    if args.flag_verbose {
+        println!("Verified? {:?}", result.is_ok(),);
+    }
     assert!(result.is_ok());
 
     TimeReport {
@@ -286,21 +282,21 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
 }
 
 fn merkle_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
-    t: usize,
-    c: usize,
-    full: bool,
+    args: &Args,
     hash: H,
 ) -> TimeReport {
     let rng = &mut thread_rng();
 
-    println!("Initializing accumulators, circuits");
+    if args.flag_verbose {
+        println!("Initializing accumulators, circuits");
+    }
     let init_start = Instant::now();
     let merkle_params = MerkleSetBenchParams {
         item_size: ELEMENT_SIZE,
-        n_swaps: t,
+        n_swaps: args.arg_transactions,
         hash: hash.clone(),
-        depth: c,
-        verbose: true,
+        depth: args.arg_capacity,
+        verbose: args.flag_verbose,
     };
     let empty_circuit = MerkleSetBench {
         inputs: None,
@@ -309,11 +305,15 @@ fn merkle_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
 
     // Create a groth16 proof with our parameters.
     let merkle_inputs = MerkleSetBenchInputs::from_counts(
-        if full { (1 << c) - t } else { 0 },
-        t,
+        if args.flag_full {
+            (1 << args.arg_capacity) - args.arg_transactions
+        } else {
+            0
+        },
+        args.arg_transactions,
         ELEMENT_SIZE,
         hash,
-        c,
+        args.arg_capacity,
     );
 
     let circuit = MerkleSetBench {
@@ -332,27 +332,37 @@ fn merkle_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
 
     let init_end = Instant::now();
 
-    println!("Generating prover and verifier keys");
+    if args.flag_verbose {
+        println!("Generating prover and verifier keys");
+    }
     let param_start = Instant::now();
     let params = {
         let p = generate_random_parameters(empty_circuit, rng);
-        println!("Params gen is okay: {:#?}", p.is_ok());
+        if args.flag_verbose {
+            println!("Params gen is okay: {:#?}", p.is_ok());
+        }
         assert!(p.is_ok());
         p.unwrap()
     };
     let pvk = prepare_verifying_key(&params.vk);
     let param_end = Instant::now();
 
-    println!("Generating proof");
+    if args.flag_verbose {
+        println!("Generating proof");
+    }
 
     let (proof, prover_synth_time, prover_crypto_time) =
         create_random_proof(circuit, &params, rng).unwrap();
-    println!("Proof generation successful? true");
+    if args.flag_verbose {
+        println!("Proof generation successful? true");
+    }
 
     let verifier_start = Instant::now();
     let result = verify_proof(&pvk, &proof, &inputs);
     let verifier_end = Instant::now();
-    println!("Verified? {:?}", result.is_ok(),);
+    if args.flag_verbose {
+        println!("Verified? {:?}", result.is_ok(),);
+    }
     assert!(result.is_ok());
 
     TimeReport {

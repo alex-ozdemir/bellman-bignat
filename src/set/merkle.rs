@@ -493,7 +493,7 @@ where
         )?;
 
         if self.params.verbose {
-            println!("NOT Verifying resulting digest");
+            println!("Verifying resulting digest");
         }
         new_set.inputize(cs.namespace(|| "final_state input"))?;
         Ok(())
