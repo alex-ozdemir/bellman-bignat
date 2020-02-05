@@ -9,10 +9,11 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::ops::{Index, MulAssign, RemAssign};
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use super::int_set::IntSet;
 
-#[derive(Debug,Deserialize,Serialize,PartialEq,Eq)]
+#[derive(Clone,Debug,Deserialize,Serialize,PartialEq,Eq)]
 /// A comb of precomputed powers of a base, plus optional precomputed tables of combinations
 pub struct PrecompBases {
     /// The values
@@ -75,6 +76,9 @@ impl PrecompBases {
     pub fn make_tables(&mut self, n_per_table: usize) {
         // parallel table building with Rayon
         use rayon::prelude::*;
+
+        // n_per_table must be a power of 2 or things get messy
+        assert!(n_per_table.is_power_of_two());
 
         // reset tables and n_per_table
         self.ts.clear();
@@ -185,12 +189,21 @@ fn _make_table(bases: &[Integer], modulus: &Integer) -> Vec<Integer> {
     ret
 }
 
-/// ParallelExpSet uses precomputed tables to do deletions
+/// ParallelExpSet uses precomputed tables to speed up rebuilding the set
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ParallelExpSet<G: SemiGroup> {
     group: G,
     elements: BTreeMap<Integer, usize>,
     digest: Option<G::Elem>,
+    bases: Rc<PrecompBases>,    // NOTE: does this need to be Arc?
+}
+
+impl<G: SemiGroup> ParallelExpSet<G> {
+    const N_PER_TABLE: usize = 8;
+
+    pub fn clear_digest(&mut self) {
+        self.digest = None;
+    }
 }
 
 impl<G: SemiGroup> IntSet for ParallelExpSet<G>
@@ -200,12 +213,19 @@ where
     type G = G;
 
     fn new(group: G) -> Self {
+        let mut pc = PrecompBases::default();
+        pc.make_tables(Self::N_PER_TABLE);
         Self {
-            digest: Some(group.generator()),
+            digest: None,   // start with None so that new_with builds in parallel by default
             elements: BTreeMap::new(),
             group,
+            bases: Rc::new(pc)
         }
     }
+
+    // FIXME? insert_all will insert one by one. This is slow if you're inserting
+    //        lots of elements at once, say, more than 1/4 of the current size.
+    //        In this case, you can call clear_digest() to clear the digest first.
 
     fn new_with<I: IntoIterator<Item = BigUint>>(group: G, items: I) -> Self {
         let mut this = Self::new(group);
