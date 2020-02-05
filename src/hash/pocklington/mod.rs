@@ -25,11 +25,12 @@ pub mod helper {
     }
 
     /// A pocklington extension multiplies a base prime by a term
-    ///     ( 1 || r || n )
+    ///
+    ///( 1 || r || n )
     ///
     /// , producing
     ///
-    ///     p' = p * (1 || r || n) + 1
+    /// p' = p * (1 || r || n) + 1
     ///
     /// such that `p'` is prime.
     ///
