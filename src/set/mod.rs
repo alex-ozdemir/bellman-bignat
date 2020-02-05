@@ -6,8 +6,8 @@ use CResult;
 use hash::circuit::MaybeHashed;
 
 pub mod int_set;
+pub mod int_set_par;
 pub mod merkle;
-pub mod precomp;
 pub mod rsa;
 
 pub trait GenSet<F>

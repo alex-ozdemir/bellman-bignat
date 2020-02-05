@@ -1,9 +1,15 @@
-use rug::{Assign, Integer};
+use group::SemiGroup;
+use num_bigint::BigUint;
+use rug::{Assign, Integer, ops::Pow};
 use serde::{Deserialize,Serialize};
+
+use std::collections::BTreeMap;
 use std::convert::AsRef;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::ops::Index;
+use std::ops::{Index, MulAssign};
+
+use super::int_set::IntSet;
 
 #[derive(Debug,Deserialize,Serialize)]
 /// A comb of precomputed powers of a base, plus optional precomputed tables of combinations
@@ -87,6 +93,110 @@ fn _make_table(bases: &[Integer]) -> Vec<Integer> {
     ret
 }
 
+/// ParallelExpSet uses precomputed tables to do deletions
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ParallelExpSet<G: SemiGroup> {
+    group: G,
+    elements: BTreeMap<Integer, usize>,
+    digest: Option<G::Elem>,
+}
+
+impl<G: SemiGroup> IntSet for ParallelExpSet<G>
+where
+    G::Elem: Ord,
+{
+    type G = G;
+
+    fn new(group: G) -> Self {
+        Self {
+            digest: Some(group.generator()),
+            elements: BTreeMap::new(),
+            group,
+        }
+    }
+
+    fn new_with<I: IntoIterator<Item = BigUint>>(group: G, items: I) -> Self {
+        let mut this = Self::new(group);
+        this.insert_all(items);
+        this
+    }
+
+    fn insert(&mut self, n: BigUint) {
+        if let Some(ref mut d) = self.digest {
+            *d = self.group.power(d, &n);
+        }
+        *self.elements.entry(_from_biguint(&n)).or_insert(0) += 1;
+    }
+
+    fn remove(&mut self, n: &BigUint) -> bool {
+        let int_n = _from_biguint(n);
+        if let Some(count) = self.elements.get_mut(&int_n) {
+            *count -= 1;
+            if *count == 0 {
+                self.elements.remove(&int_n);
+            }
+            self.digest = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn digest(&mut self) -> G::Elem {
+        use rayon::prelude::*;
+
+        if self.digest.is_none() {
+            // step 1: compute the exponent
+            let _expt = {
+                let mut tmp = Vec::with_capacity(self.elements.len() + 1);
+                tmp.par_extend(self.elements.par_iter().map(|(elem, ct)| Integer::from(elem.pow(*ct as u32))));
+                _parallel_multiply(&mut tmp);
+                tmp.pop().unwrap()
+            };
+
+            // step 2: split exponent into pieces
+            // for this, we need to know comb spacing
+        }
+        self.digest.clone().unwrap()
+    }
+
+    fn group(&self) -> &G {
+        &self.group
+    }
+}
+
+fn _from_biguint(n: &BigUint) -> Integer {
+    Integer::from_str_radix(n.to_str_radix(32).as_ref(), 32).unwrap()
+}
+
+fn _parallel_multiply(v: &mut Vec<Integer>) {
+    use rayon::prelude::*;
+
+    if v.len() % 2 == 1 {
+        v.push(Integer::from(1));
+    }
+
+    while v.len() > 1 {
+        // invariant: length of list is always even
+        assert!(v.len() % 2 == 0);
+
+        // split the list in half; multiply first half by second half in parallel
+        let split_point = v.len() / 2;
+        let (fst, snd) = v.split_at_mut(split_point);
+        fst.par_iter_mut().zip(snd).for_each(|(f, s)| f.mul_assign(s as &Integer));
+
+        // cut length of list in half, possibly padding with an extra '1'
+        if split_point != 1 && split_point % 2 == 1 {
+            v.truncate(split_point + 1);
+            v[split_point].assign(1);
+        } else {
+            v.truncate(split_point);
+        }
+    }
+
+    assert!(v.len() == 1);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,5 +249,23 @@ mod tests {
         }
         let pc : PrecompBases = bincode::deserialize(&buffer[..]).unwrap();
         assert!(pc[0].len() == (1 << 12));
+    }
+
+    #[test]
+    fn pmul_test() {
+        const NELMS: usize = 2222;
+        use rug::rand::RandState;
+        let mut rnd = RandState::new();
+        let mut v = Vec::with_capacity(NELMS);
+        (0..NELMS).for_each(|_| v.push(Integer::from(Integer::random_bits(2048, &mut rnd))));
+
+        // sequential
+        let mut prod = Integer::from(1);
+        v.iter().for_each(|p| prod.mul_assign(p));
+
+        // parallel
+        _parallel_multiply(&mut v);
+
+        assert!(prod == v[0]);
     }
 }
