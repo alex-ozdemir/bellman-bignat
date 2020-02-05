@@ -31,4 +31,4 @@ default-features = false
 [dependencies.rug]
 version = "1.7"
 default-features = false
-features = ["integer", "serde"]
+features = ["integer", "serde", "rand"]
