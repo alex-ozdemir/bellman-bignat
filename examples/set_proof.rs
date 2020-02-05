@@ -87,7 +87,7 @@ fn main() {
 
     let (set, report) = if args.cmd_merkle {
         (
-            "markle",
+            "merkle",
             match args.flag_hash {
                 Hashes::Poseidon => merkle_bench::<Bls12, _>(
                     &args,
