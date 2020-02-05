@@ -450,6 +450,7 @@ where
     }
 }
 
+#[derive(Clone)]
 pub struct SetBenchParams<H> {
     pub group: RsaQuotientGroup,
     pub limb_width: usize,

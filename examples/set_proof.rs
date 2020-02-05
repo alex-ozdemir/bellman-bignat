@@ -10,20 +10,16 @@ use bellman_bignat::hash::circuit::CircuitHasher;
 use bellman_bignat::hash::hashes::{Mimc, Pedersen, Poseidon, Sha256};
 use bellman_bignat::hash::Hasher;
 use bellman_bignat::mp::bignat::nat_to_limbs;
-use bellman_bignat::set::int_set::NaiveExpSet;
 use bellman_bignat::set::merkle::{MerkleSetBench, MerkleSetBenchInputs, MerkleSetBenchParams};
 use bellman_bignat::set::rsa::{SetBench, SetBenchInputs, SetBenchParams};
 use bellman_bignat::set::GenSet;
-use bellman_bignat::util::bench::{ConstraintCounter, ConstraintProfiler, WitnessTimer};
 use docopt::Docopt;
 use num_bigint::BigUint;
 use sapling_crypto::bellman::groth16::{
     create_random_proof, generate_random_parameters, prepare_verifying_key, verify_proof,
 };
 use sapling_crypto::bellman::pairing::bls12_381::Bls12;
-use sapling_crypto::bellman::pairing::ff::ScalarEngine;
 use sapling_crypto::bellman::pairing::Engine;
-use sapling_crypto::bellman::Circuit;
 use serde::Deserialize;
 
 use std::str::FromStr;
@@ -75,33 +71,61 @@ fn main() {
         .and_then(|d| d.deserialize())
         .unwrap_or_else(|e| e.exit());
 
-    match args.flag_hash {
-        Hashes::Poseidon => merkle_bench::<Bls12, _>(
-            args.arg_transactions,
-            args.arg_capacity,
-            args.flag_full,
-            Poseidon::default(),
-        ),
-        Hashes::Mimc => merkle_bench::<Bls12, _>(
-            args.arg_transactions,
-            args.arg_capacity,
-            args.flag_full,
-            Mimc::default(),
-        ),
-        Hashes::Pedersen => merkle_bench::<Bls12, _>(
-            args.arg_transactions,
-            args.arg_capacity,
-            args.flag_full,
-            Pedersen::default(),
-        ),
-        Hashes::Sha => merkle_bench::<Bls12, _>(
-            args.arg_transactions,
-            args.arg_capacity,
-            args.flag_full,
-            Sha256::default(),
-        ),
+    if args.cmd_merkle {
+        match args.flag_hash {
+            Hashes::Poseidon => merkle_bench::<Bls12, _>(
+                args.arg_transactions,
+                args.arg_capacity,
+                args.flag_full,
+                Poseidon::default(),
+            ),
+            Hashes::Mimc => merkle_bench::<Bls12, _>(
+                args.arg_transactions,
+                args.arg_capacity,
+                args.flag_full,
+                Mimc::default(),
+            ),
+            Hashes::Pedersen => merkle_bench::<Bls12, _>(
+                args.arg_transactions,
+                args.arg_capacity,
+                args.flag_full,
+                Pedersen::default(),
+            ),
+            Hashes::Sha => merkle_bench::<Bls12, _>(
+                args.arg_transactions,
+                args.arg_capacity,
+                args.flag_full,
+                Sha256::default(),
+            ),
+        }
+    } else if args.cmd_rsa {
+        match args.flag_hash {
+            Hashes::Poseidon => rsa_bench::<Bls12, _>(
+                args.arg_transactions,
+                args.arg_capacity,
+                args.flag_full,
+                Poseidon::default(),
+            ),
+            Hashes::Mimc => rsa_bench::<Bls12, _>(
+                args.arg_transactions,
+                args.arg_capacity,
+                args.flag_full,
+                Mimc::default(),
+            ),
+            Hashes::Pedersen => rsa_bench::<Bls12, _>(
+                args.arg_transactions,
+                args.arg_capacity,
+                args.flag_full,
+                Pedersen::default(),
+            ),
+            Hashes::Sha => rsa_bench::<Bls12, _>(
+                args.arg_transactions,
+                args.arg_capacity,
+                args.flag_full,
+                Sha256::default(),
+            ),
+        }
     }
-
 }
 
 fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
@@ -109,7 +133,11 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
     c: usize,
     full: bool,
     hash: H,
-) -> usize {
+) {
+    use rand::thread_rng;
+
+    let rng = &mut thread_rng();
+
     let group = RsaQuotientGroup {
         g: BigUint::from(2usize),
         m: BigUint::from_str(RSA_2048).unwrap(),
@@ -120,9 +148,85 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
     } else {
         0
     };
-    unimplemented!()
+    let params = SetBenchParams {
+        group: group.clone(),
+        limb_width: 32,
+        n_bits_elem: RSA_SIZE,
+        n_bits_challenge: 256,
+        n_bits_base: RSA_SIZE,
+        item_size: ELEMENT_SIZE,
+        n_inserts: t,
+        n_removes: t,
+        hasher: hash.clone(),
+        verbose: true,
+    };
 
-    // TODO
+    let empty_circuit = SetBench {
+        inputs: None,
+        params: params.clone(),
+    };
+
+    let circuit = SetBench {
+        inputs: Some(SetBenchInputs::from_counts(
+            n_untouched,
+            t,
+            t,
+            ELEMENT_SIZE,
+            hash,
+            RSA_SIZE,
+            32,
+            RsaQuotientGroup {
+                g: BigUint::from(2usize),
+                m: BigUint::from_str(RSA_2048).unwrap(),
+            },
+        )),
+        params: params.clone(),
+    };
+
+    let params = {
+        let generate_params_start = Instant::now();
+        let p = generate_random_parameters(empty_circuit, rng);
+        let generate_params_end = Instant::now();
+        println!("Params are okay: {:#?}", p.is_ok());
+        println!(
+            "Done with parameters, duration {:?}",
+            generate_params_end - generate_params_start
+        );
+        p.unwrap()
+    };
+
+    let pvk = prepare_verifying_key(&params.vk);
+    println!("Done with key");
+
+    let ins = circuit.inputs.as_ref().unwrap();
+    let mut initial_set = ins.initial_state.clone();
+    let mut final_set = {
+        let mut t = initial_set.clone();
+        t.swap_all(ins.to_remove.clone(), ins.to_insert.clone());
+        t
+    };
+    let mut inputs: Vec<E::Fr> = nat_to_limbs(&group.g, 32, 64).unwrap();
+    inputs.extend(nat_to_limbs::<E::Fr>(&group.m, 32, 64).unwrap());
+    inputs.extend(nat_to_limbs::<E::Fr>(&initial_set.digest(), 32, 64).unwrap());
+    inputs.extend(nat_to_limbs::<E::Fr>(&final_set.digest(), 32, 64).unwrap());
+
+    let prover_start = Instant::now();
+
+    let proof = create_random_proof(circuit, &params, rng).unwrap();
+
+    let prover_end = Instant::now();
+    println!("Done with proof, duration: {:?}", prover_end - prover_start);
+
+    let verifier_start = Instant::now();
+
+    let result = verify_proof(&pvk, &proof, &inputs);
+
+    let verifier_end = Instant::now();
+    println!(
+        "Done with verifcation: {:?}, duration: {:?}",
+        result,
+        verifier_end - verifier_start
+    );
 }
 
 fn merkle_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
@@ -173,7 +277,6 @@ fn merkle_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
         p.unwrap()
     };
 
-
     let pvk = prepare_verifying_key(&params.vk);
     println!("Done with key");
 
@@ -184,22 +287,26 @@ fn merkle_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
         t.swap_all(ins.to_remove.clone(), ins.to_insert.clone());
         t
     };
-    let inputs: Vec<E::Fr> = vec![
-        initial_set.digest(),
-        final_set.digest(),
-    ];
+    let inputs: Vec<E::Fr> = vec![initial_set.digest(), final_set.digest()];
 
     let verifier_start = Instant::now();
 
     let proof = create_random_proof(circuit, &params, rng).unwrap();
 
     let verifier_end = Instant::now();
-    println!("Done with proof, duration: {:?}", verifier_end - verifier_start);
+    println!(
+        "Done with proof, duration: {:?}",
+        verifier_end - verifier_start
+    );
 
     let verifier_start = Instant::now();
 
     let result = verify_proof(&pvk, &proof, &inputs);
 
     let verifier_end = Instant::now();
-    println!("Done with verifcation: {:?}, duration: {:?}",  result, verifier_end - verifier_start);
+    println!(
+        "Done with verifcation: {:?}, duration: {:?}",
+        result,
+        verifier_end - verifier_start
+    );
 }

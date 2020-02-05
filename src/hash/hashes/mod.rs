@@ -222,7 +222,7 @@ where
         use sapling_crypto::circuit::pedersen_hash::pedersen_hash;
         use sapling_crypto::pedersen_hash::Personalization;
         let mut bits: Vec<Boolean> = Vec::new();
-        for (i, in_) in [a, b].into_iter().enumerate() {
+        for (i, in_) in [a, b].iter().enumerate() {
             bits.extend(in_.into_bits_le(cs.namespace(|| format!("bit split {}", i)))?);
         }
         Ok(pedersen_hash::<E, _>(
