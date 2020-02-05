@@ -1,7 +1,7 @@
 extern crate bellman_bignat;
 extern crate bincode;
 
-use bellman_bignat::set::int_set_par::PrecompBases;
+use bellman_bignat::set::int_set_par::ParExpComb;
 
 use std::env::args;
 
@@ -39,10 +39,10 @@ fn main() {
         DFLT_LOG_BITS_PER_ELM
     };
 
-    let pcb = PrecompBases::from_file(&ifile, max_expt, bits_per_elm);
+    let pcb = ParExpComb::from_file(&ifile, max_expt, bits_per_elm);
     pcb.serialize(&ofile);
 
     // read it back in just to double check
-    let test = PrecompBases::deserialize(&ofile);
+    let test = ParExpComb::deserialize(&ofile);
     assert_eq!(pcb, test);
 }

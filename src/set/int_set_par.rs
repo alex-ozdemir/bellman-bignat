@@ -15,7 +15,7 @@ use super::int_set::IntSet;
 
 #[derive(Clone,Debug,Deserialize,Serialize,PartialEq,Eq)]
 /// A comb of precomputed powers of a base, plus optional precomputed tables of combinations
-pub struct PrecompBases {
+pub struct ParExpComb {
     /// The values
     bs: Vec<Integer>,
     m: Integer,
@@ -26,7 +26,7 @@ pub struct PrecompBases {
 }
 
 /// pcb[idx] is the idx'th precomputed table
-impl Index<usize> for PrecompBases {
+impl Index<usize> for ParExpComb {
     type Output = Vec<Integer>;
 
     fn index(&self, idx: usize) -> &Self::Output {
@@ -34,7 +34,7 @@ impl Index<usize> for PrecompBases {
     }
 }
 
-impl Default for PrecompBases {
+impl Default for ParExpComb {
     /// get default precomps
     fn default() -> Self {
         // XXX(HACK): we read from $CARGO_MANIFEST_DIR/lib/pcb_dflt
@@ -47,7 +47,7 @@ impl Default for PrecompBases {
 }
 
 #[allow(clippy::len_without_is_empty)]
-impl PrecompBases {
+impl ParExpComb {
     // ** initialization and precomputation ** //
     /// read in a file with bases
     pub fn from_file(filename: &str, log_max_size: usize, log_bits_per_elm: usize) -> Self {
@@ -195,7 +195,7 @@ pub struct ParallelExpSet<G: SemiGroup> {
     group: G,
     elements: BTreeMap<Integer, usize>,
     digest: Option<G::Elem>,
-    bases: Rc<PrecompBases>,    // NOTE: does this need to be Arc?
+    bases: Rc<ParExpComb>,    // NOTE: does this need to be Arc?
 }
 
 impl<G: SemiGroup> ParallelExpSet<G> {
@@ -213,7 +213,7 @@ where
     type G = G;
 
     fn new(group: G) -> Self {
-        let mut pc = PrecompBases::default();
+        let mut pc = ParExpComb::default();
         pc.make_tables(Self::N_PER_TABLE);
         Self {
             digest: None,   // start with None so that new_with builds in parallel by default
@@ -318,7 +318,7 @@ mod tests {
     fn precomp_table() {
         const NELMS: usize = 8;
 
-        let mut pc = PrecompBases::default();
+        let mut pc = ParExpComb::default();
         pc.make_tables(NELMS);
         assert!(pc.len() > 0);
 
@@ -350,12 +350,12 @@ mod tests {
     #[test]
     fn precomp_serdes() {
         let pc = {
-            let mut tmp = PrecompBases::default();
+            let mut tmp = ParExpComb::default();
             tmp.make_tables(4);
             tmp
         };
         pc.serialize("/tmp/serialized.gz");
-        let pc2 = PrecompBases::deserialize("/tmp/serialized.gz");
+        let pc2 = ParExpComb::deserialize("/tmp/serialized.gz");
         assert_eq!(pc, pc2);
     }
 
