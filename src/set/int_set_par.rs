@@ -241,7 +241,7 @@ where
             let _expt = {
                 let mut tmp = Vec::with_capacity(self.elements.len() + 1);
                 tmp.par_extend(self.elements.par_iter().map(|(elem, ct)| Integer::from(elem.pow(*ct as u32))));
-                _parallel_multiply(&mut tmp);
+                _parallel_product(&mut tmp);
                 tmp.pop().unwrap()
             };
 
@@ -260,7 +260,7 @@ fn _from_biguint(n: &BigUint) -> Integer {
     Integer::from_str_radix(n.to_str_radix(32).as_ref(), 32).unwrap()
 }
 
-fn _parallel_multiply(v: &mut Vec<Integer>) {
+fn _parallel_product(v: &mut Vec<Integer>) {
     use rayon::prelude::*;
 
     if v.len() % 2 == 1 {
@@ -335,7 +335,7 @@ mod tests {
         v.iter().for_each(|p| prod.mul_assign(p));
 
         // parallel
-        _parallel_multiply(&mut v);
+        _parallel_product(&mut v);
 
         assert!(prod == v[0]);
     }
