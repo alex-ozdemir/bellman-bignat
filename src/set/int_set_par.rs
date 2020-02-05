@@ -1,3 +1,4 @@
+use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use group::SemiGroup;
 use num_bigint::BigUint;
 use rug::{Assign, Integer, ops::Pow};
@@ -8,14 +9,17 @@ use std::convert::AsRef;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::ops::{Index, MulAssign};
+use std::path::PathBuf;
 
 use super::int_set::IntSet;
 
-#[derive(Debug,Deserialize,Serialize)]
+#[derive(Debug,Deserialize,Serialize,PartialEq,Eq)]
 /// A comb of precomputed powers of a base, plus optional precomputed tables of combinations
 pub struct PrecompBases {
     /// The values
     bases: Vec<Integer>,
+    lms: usize,
+    bpe: usize,
     tables: Vec<Vec<Integer>>,
     npt: usize,
 }
@@ -36,17 +40,33 @@ impl AsRef<[Integer]> for PrecompBases {
     }
 }
 
+impl Default for PrecompBases {
+    /// get default precomps
+    fn default() -> Self {
+        // XXX(HACK): we read from $CARGO_MANIFEST_DIR/lib/pcb_dflt
+        let dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+        let mut pbuf = PathBuf::from(dir);
+        pbuf.push("lib");
+        pbuf.push("pcb_dflt");
+        Self::deserialize(pbuf.to_str().unwrap())
+    }
+}
+
 impl PrecompBases {
     /// read in a file with bases
-    pub fn from_file(filename: &str) -> Self {
-        Self {
+    pub fn from_file(filename: &str, log_max_size: usize, log_bits_per_elm: usize) -> Self {
+        let ret = Self {
             bases: BufReader::new(File::open(filename).unwrap())
                 .lines()
                 .map(|x| Integer::from_str_radix(x.unwrap().as_ref(), 16).unwrap())
                 .collect(),
+            lms: log_max_size,
+            bpe: log_bits_per_elm,
             tables: Vec::new(),
             npt: 0,
-        }
+        };
+        ret.check();
+        ret
     }
 
     /// build tables from bases
@@ -54,11 +74,16 @@ impl PrecompBases {
         // parallel table building with Rayon
         use rayon::prelude::*;
 
-        // for each n bases, compute powerset of values
+        // reset tables and n_per_table
         self.tables.clear();
+        self.npt = n_per_table;
+        if n_per_table == 0 {
+            return;
+        }
+
+        // for each n bases, compute powerset of values
         self.tables.reserve(self.bases.len() / n_per_table + 1);
         self.tables.par_extend(self.bases.par_chunks(n_per_table).map(|x| _make_table(x)));
-        self.npt = n_per_table;
     }
 
     /// return number of tables
@@ -69,6 +94,48 @@ impl PrecompBases {
     /// return number of bases per precomputed table (i.e., log2(table.len()))
     pub fn n_per_table(&self) -> usize {
         self.npt
+    }
+
+    pub fn log_max_size(&self) -> usize {
+        self.lms
+    }
+
+    pub fn log_num_bases(&self) -> usize {
+        // this works because we enforce self.bases.len() is power of two
+        self.bases.len().trailing_zeros() as usize
+    }
+
+    pub fn log_bits_per_elm(&self) -> usize {
+        self.bpe
+    }
+
+    /// spacing between successive exponents
+    pub fn log_spacing(&self) -> usize {
+        self.log_max_size() - self.log_num_bases() + self.log_bits_per_elm()
+    }
+
+    /// write struct to a file
+    pub fn serialize(&self, filename: &str) {
+        let output = GzEncoder::new(File::create(filename).unwrap(), Compression::default());
+        bincode::serialize_into(output, self).unwrap();
+    }
+
+    /// read struct from file
+    pub fn deserialize(filename: &str) -> Self {
+        let input = GzDecoder::new(File::open(filename).unwrap());
+        let ret: Self = bincode::deserialize_from(input).unwrap();
+        ret.check();
+        ret
+    }
+
+    /// return iterator over tables
+    pub fn iter(&self) -> std::slice::Iter<Vec<Integer>> {
+        self.tables.iter()
+    }
+
+    // internal consistency checks --- fn should be called on any newly created object
+    fn check(&self) {
+        assert!(self.bases.len().is_power_of_two());
     }
 }
 
@@ -200,18 +267,11 @@ fn _parallel_multiply(v: &mut Vec<Integer>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{Read, Write};
 
     #[test]
-    fn precomp_from_file() {
-        let pc = PrecompBases::from_file("/tmp/bases.txt");
-        assert!(pc.as_ref()[0] == 2);
-    }
-
-    #[test]
-    fn precomp_and_table() {
+    fn precomp_table() {
         let n_elms = 8;
-        let mut pc = PrecompBases::from_file("/tmp/bases.txt");
+        let mut pc = PrecompBases::default();
         pc.make_tables(n_elms);
         assert!(pc.n_tables() > 0);
 
@@ -227,28 +287,15 @@ mod tests {
     }
 
     #[test]
-    fn precomp_serialize() {
+    fn precomp_serdes() {
         let pc = {
-            let mut tmp = PrecompBases::from_file("/tmp/bases.txt");
-            tmp.make_tables(12);
+            let mut tmp = PrecompBases::default();
+            tmp.make_tables(4);
             tmp
         };
-        let buf = bincode::serialize(&pc).unwrap();
-        {
-            let mut ofile = File::create("/tmp/serialized.txt").unwrap();
-            ofile.write_all(&buf[..]).unwrap();
-        }
-    }
-
-    #[test]
-    fn precomp_deserialize() {
-        let mut buffer = Vec::new();
-        {
-            let mut ifile = File::open("/tmp/deser_in.txt").unwrap();
-            ifile.read_to_end(&mut buffer).unwrap();
-        }
-        let pc : PrecompBases = bincode::deserialize(&buffer[..]).unwrap();
-        assert!(pc[0].len() == (1 << 12));
+        pc.serialize("/tmp/serialized.gz");
+        let pc2 = PrecompBases::deserialize("/tmp/serialized.gz");
+        assert_eq!(pc, pc2);
     }
 
     #[test]

@@ -3,6 +3,7 @@
 
 extern crate test;
 extern crate bincode;
+extern crate flate2;
 extern crate fnv;
 extern crate num_iter;
 extern crate num_bigint;
