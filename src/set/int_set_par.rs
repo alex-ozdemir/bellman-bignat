@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::convert::AsRef;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::ops::{Index, MulAssign};
+use std::ops::{Index, MulAssign, RemAssign};
 use std::path::PathBuf;
 
 use super::int_set::IntSet;
@@ -18,6 +18,7 @@ use super::int_set::IntSet;
 pub struct PrecompBases {
     /// The values
     bases: Vec<Integer>,
+    m: Integer,
     lms: usize,
     bpe: usize,
     tables: Vec<Vec<Integer>>,
@@ -53,19 +54,27 @@ impl Default for PrecompBases {
 }
 
 impl PrecompBases {
+    // ** initialization and precomputation ** //
     /// read in a file with bases
     pub fn from_file(filename: &str, log_max_size: usize, log_bits_per_elm: usize) -> Self {
+        let mut ifile = BufReader::new(File::open(filename).unwrap());
+        let modulus = {
+            let mut mbuf = String::new();
+            ifile.read_line(&mut mbuf).unwrap();
+            Integer::from_str_radix(&mbuf, 16).unwrap()
+        };
         let ret = Self {
-            bases: BufReader::new(File::open(filename).unwrap())
+            bases: ifile
                 .lines()
                 .map(|x| Integer::from_str_radix(x.unwrap().as_ref(), 16).unwrap())
                 .collect(),
+            m: modulus,
             lms: log_max_size,
             bpe: log_bits_per_elm,
             tables: Vec::new(),
             npt: 0,
         };
-        ret.check();
+        ret._check();
         ret
     }
 
@@ -83,37 +92,13 @@ impl PrecompBases {
 
         // for each n bases, compute powerset of values
         self.tables.reserve(self.bases.len() / n_per_table + 1);
-        self.tables.par_extend(self.bases.par_chunks(n_per_table).map(|x| _make_table(x)));
+        self.tables.par_extend(self.bases.par_chunks(n_per_table).map({
+            let modulus = &self.m; // borrow checker can't see into closures; borrow here instead
+            move |x| _make_table(x, modulus)
+        }));
     }
 
-    /// return number of tables
-    pub fn n_tables(&self) -> usize {
-        self.tables.len()
-    }
-
-    /// return number of bases per precomputed table (i.e., log2(table.len()))
-    pub fn n_per_table(&self) -> usize {
-        self.npt
-    }
-
-    pub fn log_max_size(&self) -> usize {
-        self.lms
-    }
-
-    pub fn log_num_bases(&self) -> usize {
-        // this works because we enforce self.bases.len() is power of two
-        self.bases.len().trailing_zeros() as usize
-    }
-
-    pub fn log_bits_per_elm(&self) -> usize {
-        self.bpe
-    }
-
-    /// spacing between successive exponents
-    pub fn log_spacing(&self) -> usize {
-        self.log_max_size() - self.log_num_bases() + self.log_bits_per_elm()
-    }
-
+    // ** serialization ** //
     /// write struct to a file
     pub fn serialize(&self, filename: &str) {
         let output = GzEncoder::new(File::create(filename).unwrap(), Compression::default());
@@ -124,8 +109,40 @@ impl PrecompBases {
     pub fn deserialize(filename: &str) -> Self {
         let input = GzDecoder::new(File::open(filename).unwrap());
         let ret: Self = bincode::deserialize_from(input).unwrap();
-        ret.check();
+        ret._check();
         ret
+    }
+
+    // ** accessors and misc ** //
+    /// return number of tables
+    pub fn n_tables(&self) -> usize {
+        self.tables.len()
+    }
+
+    /// return number of bases per precomputed table (i.e., log2(table.len()))
+    pub fn n_per_table(&self) -> usize {
+        self.npt
+    }
+
+    /// log of the max size of the accumulator these tables accommodate
+    pub fn log_max_size(&self) -> usize {
+        self.lms
+    }
+
+    /// log of the number of bases in this struct
+    pub fn log_num_bases(&self) -> usize {
+        // this works because we enforce self.bases.len() is power of two
+        self.bases.len().trailing_zeros() as usize
+    }
+
+    /// log of the number of bits per elm in the accumulator these tables accommodate
+    pub fn log_bits_per_elm(&self) -> usize {
+        self.bpe
+    }
+
+    /// spacing between successive exponents
+    pub fn log_spacing(&self) -> usize {
+        self.log_max_size() - self.log_num_bases() + self.log_bits_per_elm()
     }
 
     /// return iterator over tables
@@ -133,14 +150,20 @@ impl PrecompBases {
         self.tables.iter()
     }
 
+    /// return the modulus
+    pub fn modulus(&self) -> &Integer {
+        &self.m
+    }
+
+    // ** internal ** //
     // internal consistency checks --- fn should be called on any newly created object
-    fn check(&self) {
+    fn _check(&self) {
         assert!(self.bases.len().is_power_of_two());
     }
 }
 
 // make a table from a set of bases
-fn _make_table(bases: &[Integer]) -> Vec<Integer> {
+fn _make_table(bases: &[Integer], modulus: &Integer) -> Vec<Integer> {
     let mut ret = vec!(Integer::new(); 1 << bases.len());
     // base case: 0 and 1
     ret[0].assign(1);
@@ -154,6 +177,7 @@ fn _make_table(bases: &[Integer]) -> Vec<Integer> {
         let (src, dst) = ret.split_at_mut(base_idx);
         for idx in 0..base_idx {
             dst[idx].assign(&src[idx] * &bases[bnum]);
+            dst[idx].rem_assign(modulus);
         }
     }
 
