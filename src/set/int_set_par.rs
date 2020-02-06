@@ -1,6 +1,7 @@
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
-use group::SemiGroup;
+use group::{SemiGroup, RsaGroup, RsaQuotientGroup};
 use num_bigint::BigUint;
+use num_traits::Num;
 use rug::{Assign, Integer, ops::Pow};
 use serde::{Deserialize,Serialize};
 
@@ -16,7 +17,6 @@ use super::int_set::IntSet;
 #[derive(Clone,Debug,Deserialize,Serialize,PartialEq,Eq)]
 /// A comb of precomputed powers of a base, plus optional precomputed tables of combinations
 pub struct ParExpComb {
-    /// The values
     bs: Vec<Integer>,
     m: Integer,
     lms: usize,
@@ -96,6 +96,12 @@ impl ParExpComb {
             let modulus = &self.m;
             move |x| _make_table(x, modulus)
         }));
+    }
+
+    // ** exponentiation ** //
+    /// Parallel exponentiation using windows and combs
+    pub fn exp(&self, expt: Integer) -> Integer {
+        expt
     }
 
     // ** serialization ** //
@@ -189,13 +195,50 @@ fn _make_table(bases: &[Integer], modulus: &Integer) -> Vec<Integer> {
     ret
 }
 
+// ** utility traits ** //
+
+pub trait IntegerConversion {
+    fn to_integer(&Self) -> Integer;
+    fn from_integer(&Integer) -> Self;
+}
+
+impl IntegerConversion for BigUint {
+    fn to_integer(n: &BigUint) -> Integer {
+        Integer::from_str_radix(n.to_str_radix(32).as_ref(), 32).unwrap()
+    }
+
+    fn from_integer(n: &Integer) -> BigUint {
+        BigUint::from_str_radix(n.to_string_radix(32).as_ref(), 32).unwrap()
+    }
+}
+
+pub trait IntoElem: SemiGroup {
+    fn into_elem(&self, <Self as SemiGroup>::Elem) -> <Self as SemiGroup>::Elem;
+}
+
+impl IntoElem for RsaGroup {
+    fn into_elem(&self, n: BigUint) -> BigUint {
+        &n % &self.m
+    }
+}
+
+impl IntoElem for RsaQuotientGroup {
+    fn into_elem(&self, mut n: BigUint) -> BigUint {
+        n = &n % &self.m;
+        let y = &self.m - &n;
+        std::cmp::min(n, y)
+    }
+}
+
+// ** ParallelExpSet ** //
+
 /// ParallelExpSet uses precomputed tables to speed up rebuilding the set
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ParallelExpSet<G: SemiGroup> {
     group: G,
     elements: BTreeMap<Integer, usize>,
-    digest: Option<G::Elem>,
-    bases: Rc<ParExpComb>,    // NOTE: does this need to be Arc?
+    digest: Option<Integer>,
+    comb: Rc<ParExpComb>,    // NOTE: does this need to be Arc?
 }
 
 impl<G: SemiGroup> ParallelExpSet<G> {
@@ -208,7 +251,8 @@ impl<G: SemiGroup> ParallelExpSet<G> {
 
 impl<G: SemiGroup> IntSet for ParallelExpSet<G>
 where
-    G::Elem: Ord,
+    G::Elem: Ord + IntegerConversion,
+    G: IntoElem,
 {
     type G = G;
 
@@ -219,7 +263,7 @@ where
             digest: None,   // start with None so that new_with builds in parallel by default
             elements: BTreeMap::new(),
             group,
-            bases: Rc::new(pc)
+            comb: Rc::new(pc)
         }
     }
 
@@ -234,14 +278,16 @@ where
     }
 
     fn insert(&mut self, n: BigUint) {
+        let int_n = <BigUint as IntegerConversion>::to_integer(&n);
         if let Some(ref mut d) = self.digest {
-            *d = self.group.power(d, &n);
+            d.mul_assign(&int_n);
+            d.rem_assign(&self.comb.m);
         }
-        *self.elements.entry(_from_biguint(&n)).or_insert(0) += 1;
+        *self.elements.entry(int_n).or_insert(0) += 1;
     }
 
     fn remove(&mut self, n: &BigUint) -> bool {
-        let int_n = _from_biguint(n);
+        let int_n = <BigUint as IntegerConversion>::to_integer(&n);
         if let Some(count) = self.elements.get_mut(&int_n) {
             *count -= 1;
             if *count == 0 {
@@ -259,26 +305,24 @@ where
 
         if self.digest.is_none() {
             // step 1: compute the exponent
-            let _expt = {
+            let expt = {
                 let mut tmp = Vec::with_capacity(self.elements.len() + 1);
                 tmp.par_extend(self.elements.par_iter().map(|(elem, ct)| Integer::from(elem.pow(*ct as u32))));
                 _parallel_product(&mut tmp);
                 tmp.pop().unwrap()
             };
 
-            // step 2: split exponent into pieces
-            // for this, we need to know comb spacing
+            // step 2: exponentiate using ParExpComb
+            self.digest = Some(self.comb.exp(expt));
         }
-        self.digest.clone().unwrap()
+
+        // convert internal Integer repr to Elem repr, respecting structure of group via IntoElem
+        self.group.into_elem(<G::Elem as IntegerConversion>::from_integer(&self.digest.as_ref().unwrap()))
     }
 
     fn group(&self) -> &G {
         &self.group
     }
-}
-
-fn _from_biguint(n: &BigUint) -> Integer {
-    Integer::from_str_radix(n.to_str_radix(32).as_ref(), 32).unwrap()
 }
 
 fn _parallel_product(v: &mut Vec<Integer>) {
