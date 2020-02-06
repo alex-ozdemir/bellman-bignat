@@ -127,17 +127,16 @@ impl ParExpComb {
         let modulus = &self.m;
         self.ts[0..n_tables].par_chunks(tables_per_chunk).enumerate().map(|(chunk_idx, ts)| {
             let mut acc = Integer::from(1);
-            let n_ts = ts.len();
             let chunk_offset = chunk_idx * tables_per_chunk * bits_per_table;
             for bdx in (0..bits_per_expt).rev() {
-                for tdx in 0..n_ts {
+                for (tdx, tsent) in ts.iter().enumerate() {
                     let mut val = 0u32;
                     for edx in 0..expts_per_table {
                         let bitnum = chunk_offset + tdx * bits_per_table + edx * bits_per_expt + bdx;
                         let bit = expt.get_bit(bitnum as u32) as u32;
                         val |= bit << edx;
                     }
-                    acc.mul_assign(&ts[tdx][val as usize]);
+                    acc.mul_assign(&tsent[val as usize]);
                     acc.rem_assign(modulus);
                 }
                 if bdx != 0 {
