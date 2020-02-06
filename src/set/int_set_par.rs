@@ -101,7 +101,56 @@ impl ParExpComb {
     // ** exponentiation ** //
     /// Parallel exponentiation using windows and combs
     pub fn exp(&self, expt: Integer) -> Integer {
-        expt
+        use rayon::prelude::*;
+
+        // expt must be positive
+        let expt_sign = expt.cmp0();
+        assert_ne!(expt_sign, std::cmp::Ordering::Less);
+        if expt_sign == std::cmp::Ordering::Equal {
+            return Integer::from(1);
+        }
+
+        // figure out how many of the tables we'll need to use
+        let bits_per_expt = 1 << self.log_spacing();
+        let expts_per_table = self.n_per_table();
+        let bits_per_table = bits_per_expt * expts_per_table;
+        let n_sig_bits = expt.significant_bits() as usize;
+        let n_tables = (n_sig_bits + bits_per_table - 1) / bits_per_table;
+
+        // make sure this precomp is big enough!
+        assert!(n_sig_bits < (1 << (self.log_max_size() + self.log_bits_per_elm())));
+        assert!(n_tables <= self.len());
+
+        // figure out chunk size
+        let n_threads = rayon::current_num_threads();
+        let tables_per_chunk = (n_tables + n_threads - 1) / n_threads;
+
+        // parallel multiexponentiation
+        let modulus = &self.m;
+        self.ts[0..n_tables].par_chunks(tables_per_chunk).enumerate().map(|(chunk_idx, ts)| {
+            let mut acc = Integer::from(1);
+            let n_ts = ts.len();
+            let chunk_offset = chunk_idx * tables_per_chunk * bits_per_table;
+            for bdx in 0..bits_per_expt {
+                for tdx in 0..n_ts {
+                    let mut val = 0u32;
+                    for edx in 0..expts_per_table {
+                        let bitnum = chunk_offset + tdx * bits_per_table + edx * bits_per_expt + bdx;
+                        let bit = expt.get_bit(bitnum as u32) as u32;
+                        val |= bit << edx;
+                    }
+                    acc.mul_assign(&ts[tdx][val as usize]);
+                    acc.rem_assign(modulus);
+                }
+                acc.square_mut();
+                acc.rem_assign(modulus);
+            }
+            acc
+        }).reduce(|| Integer::from(1), |mut acc, next| {
+            acc.mul_assign(&next);
+            acc.rem_assign(modulus);
+            acc
+        })
     }
 
     // ** serialization ** //
@@ -366,13 +415,7 @@ mod tests {
         pc.make_tables(NELMS);
         assert!(pc.len() > 0);
 
-        let num_tables = pc.bases().len() / NELMS +
-            if pc.bases().len() % NELMS == 1 {
-                1
-            } else {
-                0
-            };
-
+        let num_tables = (pc.bases().len() + NELMS - 1) / NELMS;
         assert!(pc.len() == num_tables);
         assert!(pc[0].len() == (1 << NELMS));
 
