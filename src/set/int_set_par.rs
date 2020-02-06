@@ -440,6 +440,8 @@ mod tests {
         const NELMS: usize = 2222;
 
         let mut rnd = RandState::new();
+        _seed_rng(&mut rnd);
+
         let mut v = Vec::with_capacity(NELMS);
         (0..NELMS).for_each(|_| v.push(Integer::from(Integer::random_bits(2048, &mut rnd))));
 
@@ -464,11 +466,17 @@ mod tests {
         };
 
         let mut rnd = RandState::new();
-        let expt = Integer::from(Integer::random_bits(1 << LOG_EXPSIZE, &mut rnd));
+        _seed_rng(&mut rnd);
 
+        let expt = Integer::from(Integer::random_bits(1 << LOG_EXPSIZE, &mut rnd));
         let expect = Integer::from(pc.bases()[0].pow_mod_ref(&expt, pc.modulus()).unwrap());
         let result = pc.exp(&expt);
 
         assert_eq!(expect, result);
+    }
+
+    fn _seed_rng(rnd: &mut RandState) {
+        use rug::integer::Order;
+        rnd.seed(&Integer::from_digits(&rand::random::<[u64; 4]>()[..], Order::Lsf));
     }
 }
