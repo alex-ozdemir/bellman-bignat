@@ -19,8 +19,7 @@ use super::int_set::IntSet;
 pub struct ParExpComb {
     bs: Vec<Integer>,
     m: Integer,
-    lms: usize,
-    bpe: usize,
+    lgsp: usize,
     ts: Vec<Vec<Integer>>,
     npt: usize,
 }
@@ -50,7 +49,7 @@ impl Default for ParExpComb {
 impl ParExpComb {
     // ** initialization and precomputation ** //
     /// read in a file with bases
-    pub fn from_file(filename: &str, log_max_size: usize, log_bits_per_elm: usize) -> Self {
+    pub fn from_file(filename: &str, log_spacing: usize) -> Self {
         let mut ifile = BufReader::new(File::open(filename).unwrap());
         let modulus = {
             let mut mbuf = String::new();
@@ -63,8 +62,7 @@ impl ParExpComb {
                 .map(|x| Integer::from_str_radix(x.unwrap().as_ref(), 16).unwrap())
                 .collect(),
             m: modulus,
-            lms: log_max_size,
-            bpe: log_bits_per_elm,
+            lgsp: log_spacing,
             ts: Vec::new(),
             npt: 0,
         };
@@ -100,7 +98,7 @@ impl ParExpComb {
 
     // ** exponentiation ** //
     /// Parallel exponentiation using windows and combs
-    pub fn exp(&self, expt: Integer) -> Integer {
+    pub fn exp(&self, expt: &Integer) -> Integer {
         use rayon::prelude::*;
 
         // expt must be positive
@@ -118,7 +116,7 @@ impl ParExpComb {
         let n_tables = (n_sig_bits + bits_per_table - 1) / bits_per_table;
 
         // make sure this precomp is big enough!
-        assert!(n_sig_bits < (1 << (self.log_max_size() + self.log_bits_per_elm())));
+        assert!(n_sig_bits < (1 << (self.log_spacing() + self.log_num_bases())));
         assert!(n_tables <= self.len());
 
         // figure out chunk size
@@ -131,7 +129,7 @@ impl ParExpComb {
             let mut acc = Integer::from(1);
             let n_ts = ts.len();
             let chunk_offset = chunk_idx * tables_per_chunk * bits_per_table;
-            for bdx in 0..bits_per_expt {
+            for bdx in (0..bits_per_expt).rev() {
                 for tdx in 0..n_ts {
                     let mut val = 0u32;
                     for edx in 0..expts_per_table {
@@ -142,8 +140,10 @@ impl ParExpComb {
                     acc.mul_assign(&ts[tdx][val as usize]);
                     acc.rem_assign(modulus);
                 }
-                acc.square_mut();
-                acc.rem_assign(modulus);
+                if bdx != 0 {
+                    acc.square_mut();
+                    acc.rem_assign(modulus);
+                }
             }
             acc
         }).reduce(|| Integer::from(1), |mut acc, next| {
@@ -179,25 +179,15 @@ impl ParExpComb {
         self.npt
     }
 
-    /// log of the max size of the accumulator these tables accommodate
-    pub fn log_max_size(&self) -> usize {
-        self.lms
-    }
-
     /// log of the number of bases in this struct
     pub fn log_num_bases(&self) -> usize {
         // this works because we enforce self.bs.len() is power of two
         self.bs.len().trailing_zeros() as usize
     }
 
-    /// log of the number of bits per elm in the accumulator these tables accommodate
-    pub fn log_bits_per_elm(&self) -> usize {
-        self.bpe
-    }
-
     /// spacing between successive exponents
     pub fn log_spacing(&self) -> usize {
-        self.log_max_size() - self.log_num_bases() + self.log_bits_per_elm()
+        self.lgsp
     }
 
     /// return iterator over tables
@@ -362,7 +352,7 @@ where
             };
 
             // step 2: exponentiate using ParExpComb
-            self.digest = Some(self.comb.exp(expt));
+            self.digest = Some(self.comb.exp(&expt));
         }
 
         // convert internal Integer repr to Elem repr, respecting structure of group via IntoElem
@@ -462,5 +452,24 @@ mod tests {
         _parallel_product(&mut v);
 
         assert!(prod == v[0]);
+    }
+
+    #[test]
+    fn precomp_exp_test() {
+        const LOG_EXPSIZE: usize = 22;
+
+        let pc = {
+            let mut tmp = ParExpComb::default();
+            tmp.make_tables(2);
+            tmp
+        };
+
+        let mut rnd = RandState::new();
+        let expt = Integer::from(Integer::random_bits(1 << LOG_EXPSIZE, &mut rnd));
+
+        let expect = Integer::from(pc.bases()[0].pow_mod_ref(&expt, pc.modulus()).unwrap());
+        let result = pc.exp(&expt);
+
+        assert_eq!(expect, result);
     }
 }
