@@ -1,7 +1,7 @@
 use sapling_crypto::bellman::pairing::ff::ScalarEngine;
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
-use sapling_crypto::circuit::num::{AllocatedNum,Num};
+use sapling_crypto::circuit::num::AllocatedNum;
 
 use hash::circuit::CircuitHasher;
 
