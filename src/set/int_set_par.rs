@@ -1,9 +1,9 @@
-use flate2::{Compression, read::GzDecoder, write::GzEncoder};
-use group::{SemiGroup, RsaGroup, RsaQuotientGroup};
+use flate2::{read::GzDecoder, write::GzEncoder, Compression};
+use group::{RsaGroup, RsaQuotientGroup, SemiGroup};
 use num_bigint::BigUint;
 use num_traits::Num;
-use rug::{Assign, Integer, ops::Pow};
-use serde::{Deserialize,Serialize};
+use rug::{ops::Pow, Assign, Integer};
+use serde::{Deserialize, Serialize};
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -14,7 +14,7 @@ use std::rc::Rc;
 
 use super::int_set::IntSet;
 
-#[derive(Clone,Debug,Deserialize,Serialize,PartialEq,Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 /// A comb of precomputed powers of a base, plus optional precomputed tables of combinations
 pub struct ParExpComb {
     bs: Vec<Integer>,
@@ -126,31 +126,39 @@ impl ParExpComb {
 
         // parallel multiexponentiation
         let modulus = &self.m;
-        self.ts[0..n_tables].par_chunks(tables_per_chunk).enumerate().map(|(chunk_idx, ts)| {
-            let mut acc = Integer::from(1);
-            let chunk_offset = chunk_idx * tables_per_chunk * bits_per_table;
-            for bdx in (0..bits_per_expt).rev() {
-                for (tdx, tsent) in ts.iter().enumerate() {
-                    let mut val = 0u32;
-                    for edx in 0..expts_per_table {
-                        let bitnum = chunk_offset + tdx * bits_per_table + edx * bits_per_expt + bdx;
-                        let bit = expt.get_bit(bitnum as u32) as u32;
-                        val |= bit << edx;
+        self.ts[0..n_tables]
+            .par_chunks(tables_per_chunk)
+            .enumerate()
+            .map(|(chunk_idx, ts)| {
+                let mut acc = Integer::from(1);
+                let chunk_offset = chunk_idx * tables_per_chunk * bits_per_table;
+                for bdx in (0..bits_per_expt).rev() {
+                    for (tdx, tsent) in ts.iter().enumerate() {
+                        let mut val = 0u32;
+                        for edx in 0..expts_per_table {
+                            let bitnum =
+                                chunk_offset + tdx * bits_per_table + edx * bits_per_expt + bdx;
+                            let bit = expt.get_bit(bitnum as u32) as u32;
+                            val |= bit << edx;
+                        }
+                        acc.mul_assign(&tsent[val as usize]);
+                        acc.rem_assign(modulus);
                     }
-                    acc.mul_assign(&tsent[val as usize]);
-                    acc.rem_assign(modulus);
+                    if bdx != 0 {
+                        acc.square_mut();
+                        acc.rem_assign(modulus);
+                    }
                 }
-                if bdx != 0 {
-                    acc.square_mut();
+                acc
+            })
+            .reduce(
+                || Integer::from(1),
+                |mut acc, next| {
+                    acc.mul_assign(&next);
                     acc.rem_assign(modulus);
-                }
-            }
-            acc
-        }).reduce(|| Integer::from(1), |mut acc, next| {
-            acc.mul_assign(&next);
-            acc.rem_assign(modulus);
-            acc
-        })
+                    acc
+                },
+            )
     }
 
     // ** serialization ** //
@@ -214,7 +222,7 @@ impl ParExpComb {
 
 // make a table from a set of bases
 fn _make_table(bases: &[Integer], modulus: &Integer) -> Vec<Integer> {
-    let mut ret = vec!(Integer::new(); 1 << bases.len());
+    let mut ret = vec![Integer::new(); 1 << bases.len()];
     // base case: 0 and 1
     ret[0].assign(1);
     ret[1].assign(&bases[0]);
@@ -237,8 +245,8 @@ fn _make_table(bases: &[Integer], modulus: &Integer) -> Vec<Integer> {
 // ** utility traits ** //
 
 pub trait IntegerConversion {
-    fn to_integer(&Self) -> Integer;
-    fn from_integer(&Integer) -> Self;
+    fn to_integer(s: &Self) -> Integer;
+    fn from_integer(i: &Integer) -> Self;
 }
 
 impl IntegerConversion for BigUint {
@@ -252,7 +260,7 @@ impl IntegerConversion for BigUint {
 }
 
 pub trait IntoElem: SemiGroup {
-    fn into_elem(&self, <Self as SemiGroup>::Elem) -> <Self as SemiGroup>::Elem;
+    fn into_elem(&self, e: <Self as SemiGroup>::Elem) -> <Self as SemiGroup>::Elem;
 }
 
 impl IntoElem for RsaGroup {
@@ -277,7 +285,7 @@ pub struct ParallelExpSet<G: SemiGroup> {
     group: G,
     elements: BTreeMap<Integer, usize>,
     digest: Option<Integer>,
-    comb: Rc<ParExpComb>,    // NOTE: does this need to be Arc?
+    comb: Rc<ParExpComb>, // NOTE: does this need to be Arc?
 }
 
 impl<G: SemiGroup> ParallelExpSet<G> {
@@ -299,10 +307,10 @@ where
         let mut pc = ParExpComb::default();
         pc.make_tables(Self::N_PER_TABLE);
         Self {
-            digest: None,   // start with None so that new_with builds in parallel by default
+            digest: None, // start with None so that new_with builds in parallel by default
             elements: BTreeMap::new(),
             group,
-            comb: Rc::new(pc)
+            comb: Rc::new(pc),
         }
     }
 
@@ -346,7 +354,11 @@ where
             // step 1: compute the exponent
             let expt = {
                 let mut tmp = Vec::with_capacity(self.elements.len() + 1);
-                tmp.par_extend(self.elements.par_iter().map(|(elem, ct)| Integer::from(elem.pow(*ct as u32))));
+                tmp.par_extend(
+                    self.elements
+                        .par_iter()
+                        .map(|(elem, ct)| Integer::from(elem.pow(*ct as u32))),
+                );
                 _parallel_product(&mut tmp);
                 tmp.pop().unwrap()
             };
@@ -356,7 +368,10 @@ where
         }
 
         // convert internal Integer repr to Elem repr, respecting structure of group via IntoElem
-        self.group.into_elem(<G::Elem as IntegerConversion>::from_integer(&self.digest.as_ref().unwrap()))
+        self.group
+            .into_elem(<G::Elem as IntegerConversion>::from_integer(
+                &self.digest.as_ref().unwrap(),
+            ))
     }
 
     fn group(&self) -> &G {
@@ -378,7 +393,9 @@ fn _parallel_product(v: &mut Vec<Integer>) {
         // split the list in half; multiply first half by second half in parallel
         let split_point = v.len() / 2;
         let (fst, snd) = v.split_at_mut(split_point);
-        fst.par_iter_mut().zip(snd).for_each(|(f, s)| f.mul_assign(s as &Integer));
+        fst.par_iter_mut()
+            .zip(snd)
+            .for_each(|(f, s)| f.mul_assign(s as &Integer));
 
         // cut length of list in half, possibly padding with an extra '1'
         if split_point != 1 && split_point % 2 == 1 {
@@ -394,8 +411,8 @@ fn _parallel_product(v: &mut Vec<Integer>) {
 
 #[cfg(test)]
 mod tests {
-    use rug::rand::RandState;
     use super::*;
+    use rug::rand::RandState;
 
     #[test]
     fn precomp_table() {
@@ -478,6 +495,9 @@ mod tests {
 
     fn _seed_rng(rnd: &mut RandState) {
         use rug::integer::Order;
-        rnd.seed(&Integer::from_digits(&rand::random::<[u64; 4]>()[..], Order::Lsf));
+        rnd.seed(&Integer::from_digits(
+            &rand::random::<[u64; 4]>()[..],
+            Order::Lsf,
+        ));
     }
 }
