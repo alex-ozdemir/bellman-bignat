@@ -37,7 +37,8 @@ impl Default for ParExpComb {
     /// get default precomps
     fn default() -> Self {
         // XXX(HACK): we read from $CARGO_MANIFEST_DIR/lib/pcb_dflt
-        let dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+        let dir = std::env::var("CARGO_MANIFEST_DIR")
+            .expect("Missing CARGO_MANIFEST_DIR env variable (needed for ParExpComb)\nPlease run using cargo.");
         let mut pbuf = PathBuf::from(dir);
         pbuf.push("lib");
         pbuf.push("pcb_dflt");
