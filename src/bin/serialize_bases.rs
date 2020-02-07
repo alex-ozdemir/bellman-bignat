@@ -1,35 +1,36 @@
 extern crate bellman_bignat;
 extern crate bincode;
+extern crate docopt;
+extern crate serde;
 
 use bellman_bignat::set::int_set_par::ParExpComb;
 
-use std::env::args;
+use serde::Deserialize;
+const USAGE: &str = "
+Serialize Bases
 
-fn _usage(s: &str, argv0: &str) {
-    println!("Usage: {} <file> <log_spacing> <ofile>{}", argv0, s);
-    std::process::exit(1);
+Usage:
+  serialize_bases <input_file>  <log_spacing> <output_file>
+  set_bench (-h | --help)
+
+";
+
+#[derive(Deserialize)]
+struct Args {
+    arg_log_spacing: usize,
+    arg_input_file: String,
+    arg_output_file: String,
 }
 
 fn main() {
-    let mut argv = args();
-    let argv0 = argv.next().unwrap();
-    if argv.len() < 3 {
-        _usage("", &argv0);
-    }
+    let args: Args = docopt::Docopt::new(USAGE)
+        .and_then(|d| d.deserialize())
+        .unwrap_or_else(|e| e.exit());
 
-    // handle arguments
-    let ifile = argv.next().unwrap();
-    let log_spacing = argv.next().unwrap().parse::<usize>();
-    let ofile = argv.next().unwrap();
-    if log_spacing.is_err() {
-        _usage("\nERROR: log_spacing must be an integer", &argv0);
-    }
-    let log_spacing = log_spacing.unwrap();
-
-    let pcb = ParExpComb::from_file(&ifile, log_spacing);
-    pcb.serialize(&ofile);
+    let pcb = ParExpComb::from_file(&args.arg_input_file, args.arg_log_spacing);
+    pcb.serialize(&args.arg_output_file);
 
     // read it back in just to double check
-    let test = ParExpComb::deserialize(&ofile);
+    let test = ParExpComb::deserialize(&args.arg_output_file);
     assert_eq!(pcb, test);
 }
