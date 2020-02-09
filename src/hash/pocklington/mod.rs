@@ -80,7 +80,9 @@ pub mod helper {
         /// bitwidth that can be certified using a recursive Pocklington test.
         pub fn new(entropy: usize) -> Self {
             // Less than 31
-            let nonce_bits_needed_in_base = nonce_bits_needed(32);
+            // Since we fix both low bits of the base prime to 1, we need an extra nonce bit, since
+            // the 2's place bit is artificially fixed.
+            let nonce_bits_needed_in_base = nonce_bits_needed(32) + 1;
             let mut plan = Self {
                 base_nonce_bits: nonce_bits_needed_in_base,
                 // High bit is fixed to 1, so 31 bits for the nonce/random bits.
@@ -168,13 +170,15 @@ pub mod helper {
             NatTemplate::with_random_bits(plan.base_random_bits).with_leading_ones(1),
         );
         for nonce in 0..(1u64 << plan.base_nonce_bits) {
-            let base = (&random << plan.base_nonce_bits) + nonce;
-            if miller_rabin_32b(&base) {
-                return Some(PocklingtonCertificate {
-                    base_prime: base,
-                    base_nonce: nonce as usize,
-                    extensions: Vec::new(),
-                });
+            if (nonce & 0b11) == 0b11 {
+                let base = (&random << plan.base_nonce_bits) + nonce;
+                if miller_rabin_32b(&base) {
+                    return Some(PocklingtonCertificate {
+                        base_prime: base,
+                        base_nonce: nonce as usize,
+                        extensions: Vec::new(),
+                    });
+                }
             }
         }
         None
@@ -218,11 +222,13 @@ pub mod helper {
         let plan = PocklingtonPlan::new(entropy);
         let inputs: Vec<H::F> = inputs.iter().copied().collect();
         let hash = base_hash.hash(&inputs);
+        eprintln!("        Hash: {}", hash);
         let mut entropy_source = EntropySource::new(hash, plan.entropy());
         let mut cert = attempt_pocklington_base(&plan, &mut entropy_source)?;
         for extension in &plan.extensions {
             cert = attempt_pocklington_extension::<H::F>(cert, extension, &mut entropy_source)?;
         }
+        eprintln!("        Final Cert: {:?}", cert);
         Some(cert)
     }
 
@@ -278,6 +284,7 @@ pub fn hash_to_pocklington_prime<
 
     // Hash the inputs into an entropy pool.
     let hash = base_hash.allocate_hash(cs.namespace(|| "base hash"), &input)?;
+    eprintln!("Circuit Hash: {}", hash.get_value().unwrap());
     let mut entropy_source =
         EntropySource::alloc(cs.namespace(|| "entropy source"), Some(&()), hash, &entropy)?;
 
@@ -311,6 +318,7 @@ pub fn hash_to_pocklington_prime<
             limb_width,
         )
         .add::<CS>(&base_nonce)?;
+    eprintln!("Circuit Prime: {}", prime);
 
     // Check it
     let mr_res = &prime.miller_rabin_32b(cs.namespace(|| "base check"))?;
