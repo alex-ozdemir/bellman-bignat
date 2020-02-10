@@ -673,7 +673,8 @@ mod test {
                         verbose: true,
                     },
         }, true),
-        //small_rsa_1_swap_parallel: (SetBench::<_, ParallelExpSet<_>>  {
+
+        //large_rsa_1_swap_parallel: (SetBench::<_, ParallelExpSet<_>>  {
         //    inputs: Some(SetBenchInputs::new(
         //                    [].to_vec(),
         //                    [
@@ -687,18 +688,18 @@ mod test {
         //                    32,
         //                    RsaQuotientGroup {
         //                        g: BigUint::from(2usize),
-        //                        m: BigUint::from_str(RSA_512).unwrap(),
+        //                        m: BigUint::from_str(RSA_2048).unwrap(),
         //                    },
         //            )),
         //            params: SetBenchParams {
         //                group: RsaQuotientGroup {
         //                    g: BigUint::from(2usize),
-        //                    m: BigUint::from_str(RSA_512).unwrap(),
+        //                    m: BigUint::from_str(RSA_2048).unwrap(),
         //                },
         //                limb_width: 32,
         //                n_bits_elem: 128,
         //                n_bits_challenge: 128,
-        //                n_bits_base: 512,
+        //                n_bits_base: 2048,
         //                item_size: 5,
         //                n_inserts: 1,
         //                n_removes: 1,
@@ -706,6 +707,7 @@ mod test {
         //                verbose: true,
         //            },
         //}, true),
+
         //small_rsa_5_swaps: (SetBench {
         //    inputs: Some(SetBenchInputs::new(
         //        [].to_vec(),

@@ -327,8 +327,7 @@ where
     fn insert(&mut self, n: BigUint) {
         let int_n = <BigUint as IntegerConversion>::to_integer(&n);
         if let Some(ref mut d) = self.digest {
-            d.mul_assign(&int_n);
-            d.rem_assign(&self.comb.m);
+            d.pow_mod_mut(&int_n, &self.comb.m).expect("Modular exponentiation failed");
         }
         *self.elements.entry(int_n).or_insert(0) += 1;
     }
