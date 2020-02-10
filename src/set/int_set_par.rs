@@ -381,7 +381,6 @@ where
 
 fn _parallel_product(v: &mut Vec<Integer>) {
     use rayon::prelude::*;
-
     if v.len() % 2 == 1 {
         v.push(Integer::from(1));
     }
@@ -405,6 +404,11 @@ fn _parallel_product(v: &mut Vec<Integer>) {
             v.truncate(split_point);
         }
     }
+
+    if v.len() == 0 {
+        v.push(Integer::from(1));
+    }
+
 
     assert!(v.len() == 1);
 }
@@ -499,5 +503,231 @@ mod tests {
             &rand::random::<[u64; 4]>()[..],
             Order::Lsf,
         ));
+    }
+
+    use group::{CircuitRsaGroup, CircuitRsaGroupParams};
+    use mp::bignat::BigNat;
+    use sapling_crypto::bellman::pairing::Engine;
+    use sapling_crypto::bellman::{Circuit, ConstraintSystem, SynthesisError};
+    use set::int_set::CircuitIntSet;
+    use util::gadget::Gadget;
+    use wesolowski::Reduced;
+    use OptionExt;
+
+    use super::ParallelExpSet;
+
+    use std::str::FromStr;
+
+    use set::int_set::tests::{RsaRemovalInputs, RsaRemovalParams};
+
+    pub struct RsaRemoval<'a> {
+        pub inputs: Option<RsaRemovalInputs<'a>>,
+        pub params: RsaRemovalParams,
+    }
+
+    impl<'a, E: Engine> Circuit<E> for RsaRemoval<'a> {
+        fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
+            let challenge = BigNat::alloc_from_nat(
+                cs.namespace(|| "challenge"),
+                || Ok(BigUint::from_str(self.inputs.grab()?.challenge).unwrap()),
+                self.params.limb_width,
+                self.params.n_limbs_b,
+            )?;
+            let initial_items_vec: Vec<BigUint> = self
+                .inputs
+                .grab()?
+                .initial_items
+                .iter()
+                .map(|i| BigUint::from_str(i).unwrap())
+                .collect();
+            let removed_items_vec: Vec<BigNat<E>> = self
+                .inputs
+                .grab()?
+                .removed_items
+                .iter()
+                .enumerate()
+                .map(|(i, e)| {
+                    BigNat::alloc_from_nat(
+                        cs.namespace(|| format!("removed item {}", i)),
+                        || Ok(BigUint::from_str(e).unwrap()),
+                        self.params.limb_width,
+                        self.params.n_limbs_e,
+                    )
+                })
+                .collect::<Result<Vec<BigNat<E>>, SynthesisError>>()?;
+            let initial_digest = BigNat::alloc_from_nat(
+                cs.namespace(|| "initial_digest"),
+                || Ok(BigUint::from_str(self.inputs.grab()?.initial_digest).unwrap()),
+                self.params.limb_width,
+                self.params.n_limbs_b,
+            )?;
+            let final_digest = BigNat::alloc_from_nat(
+                cs.namespace(|| "final_digest"),
+                || Ok(BigUint::from_str(self.inputs.grab()?.final_digest).unwrap()),
+                self.params.limb_width,
+                self.params.n_limbs_b,
+            )?;
+            let raw_group = RsaGroup {
+                g: BigUint::from_str(self.inputs.grab()?.g).unwrap(),
+                m: BigUint::from_str(self.inputs.grab()?.m).unwrap(),
+            };
+            let group = CircuitRsaGroup::alloc(
+                cs.namespace(|| "group"),
+                Some(&raw_group),
+                (),
+                &CircuitRsaGroupParams {
+                    limb_width: self.params.limb_width,
+                    n_limbs: self.params.n_limbs_b,
+                },
+            )?;
+            let initial_set: CircuitIntSet<E, CircuitRsaGroup<E>, ParallelExpSet<RsaGroup>> =
+                CircuitIntSet::alloc(
+                    cs.namespace(|| "initial_set"),
+                    Some(&ParallelExpSet::new_with(
+                        raw_group,
+                        initial_items_vec.into_iter(),
+                    )),
+                    group.clone(),
+                    &(),
+                )?;
+
+            initial_set
+                .digest
+                .equal(cs.namespace(|| "initial_eq"), &initial_digest)?;
+
+            let r: Vec<Reduced<E>> = removed_items_vec
+                .iter()
+                .map(|n| Reduced::from_raw(n.clone()))
+                .collect();
+
+            let final_set = initial_set.remove(cs.namespace(|| "removal"), &challenge, &r)?;
+
+            final_set
+                .digest
+                .equal(cs.namespace(|| "final_eq"), &final_digest)?;
+            Ok(())
+        }
+    }
+
+    use sapling_crypto::circuit::test::TestConstraintSystem;
+    use sapling_crypto::bellman::pairing::bn256::Bn256;
+
+    circuit_tests! {
+        removal_init_empty: (
+            RsaRemoval {
+                inputs: Some(RsaRemovalInputs {
+                g: "2",
+                m: "143",
+                initial_items: &[],
+                removed_items: &[],
+                challenge: "223",
+                initial_digest: "2",
+                final_digest: "2",
+            }),
+            params: RsaRemovalParams {
+                limb_width: 4,
+                n_limbs_e: 2,
+                n_limbs_b: 2,
+            }
+        } ,
+            true
+        ),
+                            removal_init_3_remove_3: (
+                                RsaRemoval {
+                                    inputs: Some(RsaRemovalInputs {
+                                        g: "2",
+                                        m: "143",
+                                        initial_items: &[
+                                            "3",
+                                        ],
+                                        removed_items: &[
+                                            "3",
+                                        ],
+                                        challenge: "223",
+                                        initial_digest: "8",
+                                        final_digest: "2",
+                                    }),
+                                    params: RsaRemovalParams {
+                                        limb_width: 4,
+                                        n_limbs_e: 2,
+                                        n_limbs_b: 2,
+                                    }
+                                } ,
+                                true
+                                    ),
+                                    removal_init_3_remove_3_wrong: (
+                                        RsaRemoval {
+                                            inputs: Some(RsaRemovalInputs {
+                                                g: "2",
+                                                m: "143",
+                                                initial_items: &[
+                                                    "3",
+                                                ],
+                                                removed_items: &[
+                                                    "3",
+                                                ],
+                                                challenge: "223",
+                                                initial_digest: "8",
+                                                final_digest: "3",
+                                            }),
+                                            params: RsaRemovalParams {
+                                                limb_width: 4,
+                                                n_limbs_e: 2,
+                                                n_limbs_b: 2,
+                                            }
+                                        } ,
+                                        false
+                                            ),
+                                            removal_init_3_5_7_remove_3: (
+                                                RsaRemoval {
+                                                    inputs: Some(RsaRemovalInputs {
+                                                        g: "2",
+                                                        m: "143",
+                                                        initial_items: &[
+                                                            "3",
+                                                            "5",
+                                                            "7",
+                                                        ],
+                                                        removed_items: &[
+                                                            "3",
+                                                        ],
+                                                        challenge: "223",
+                                                        initial_digest: "109",
+                                                        final_digest: "98",
+                                                    }),
+                                                    params: RsaRemovalParams {
+                                                        limb_width: 4,
+                                                        n_limbs_e: 2,
+                                                        n_limbs_b: 2,
+                                                    }
+                                                } ,
+                                                true
+                                                    ),
+                                                    removal_init_3_5_7_remove_3_5: (
+                                                        RsaRemoval {
+                                                            inputs: Some(RsaRemovalInputs {
+                                                                g: "2",
+                                                                m: "143",
+                                                                initial_items: &[
+                                                                    "3",
+                                                                    "5",
+                                                                    "7",
+                                                                ],
+                                                                removed_items: &[
+                                                                    "3",
+                                                                    "5",
+                                                                ],
+                                                                challenge: "223",
+                                                                initial_digest: "109",
+                                                                final_digest: "128",
+                                                            }),
+                                                            params: RsaRemovalParams {
+                                                                limb_width: 4,
+                                                                n_limbs_e: 2,
+                                                                n_limbs_b: 2,
+                                                            }
+                                                        } ,
+                                                        true
+                                                            ),
     }
 }

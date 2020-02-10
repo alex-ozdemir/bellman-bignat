@@ -269,7 +269,7 @@ where
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use util::test_helpers::*;
 
@@ -295,8 +295,8 @@ mod tests {
     }
 
     pub struct RsaRemoval<'a> {
-        inputs: Option<RsaRemovalInputs<'a>>,
-        params: RsaRemovalParams,
+        pub inputs: Option<RsaRemovalInputs<'a>>,
+        pub params: RsaRemovalParams,
     }
 
     impl<'a, E: Engine> Circuit<E> for RsaRemoval<'a> {
