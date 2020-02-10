@@ -635,7 +635,6 @@ mod test {
     use hash::hashes::Poseidon;
 
     use set::int_set::NaiveExpSet;
-    use set::int_set_par::ParallelExpSet;
 
     use util::test_helpers::*;
 
