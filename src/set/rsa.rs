@@ -13,7 +13,7 @@ use hash::{pocklington, division_intractable as di, HashDomain};
 use hash::circuit::{MaybeHashed, CircuitHasher};
 use hash::Hasher;
 use set::{GenSet, CircuitGenSet};
-use set::int_set::{CircuitIntSet, IntSet, NaiveExpSet};
+use set::int_set::{CircuitIntSet, IntSet};
 use wesolowski::Reduced;
 use CResult;
 use OptionExt;
@@ -473,10 +473,11 @@ where
     pub params: SetBenchParams<H>,
 }
 
-impl<E, H> Circuit<E> for SetBench<H, NaiveExpSet<RsaQuotientGroup>>
+impl<E, Inner, H> Circuit<E> for SetBench<H, Inner>
 where
     E: Engine,
     H: Hasher<F = E::Fr> + CircuitHasher<E = E>,
+    Inner: IntSet<G = RsaQuotientGroup>,
 {
     fn synthesize<CS: ConstraintSystem<E>>(mut self, cs: &mut CS) -> Result<(), SynthesisError> {
         if self.params.verbose {
@@ -585,7 +586,7 @@ where
         if self.params.verbose {
             println!("Constructing Set");
         }
-        let set: CircuitSet<E, H, CircuitRsaQuotientGroup<E>, NaiveExpSet<RsaQuotientGroup>> = CircuitSet::alloc(
+        let set: CircuitSet<E, H, CircuitRsaQuotientGroup<E>, Inner> = CircuitSet::alloc(
             cs.namespace(|| "set init"),
             self.inputs.as_ref().map(|is| &is.initial_state),
             (group, challenge),
@@ -633,10 +634,13 @@ mod test {
 
     use hash::hashes::Poseidon;
 
+    use set::int_set::NaiveExpSet;
+    use set::int_set_par::ParallelExpSet;
+
     use util::test_helpers::*;
 
     circuit_tests! {
-        small_rsa_1_swap: (SetBench {
+        small_rsa_1_swap_naive: (SetBench::<_, NaiveExpSet<_>>  {
             inputs: Some(SetBenchInputs::new(
                             [].to_vec(),
                             [
@@ -669,6 +673,39 @@ mod test {
                         verbose: true,
                     },
         }, true),
+        //small_rsa_1_swap_parallel: (SetBench::<_, ParallelExpSet<_>>  {
+        //    inputs: Some(SetBenchInputs::new(
+        //                    [].to_vec(),
+        //                    [
+        //                    ["0", "1", "2", "3", "4"].iter().map(|s| s.to_string()).collect(),
+        //                    ].to_vec(),
+        //                    [
+        //                    ["0", "1", "2", "3", "5"].iter().map(|s| s.to_string()).collect(),
+        //                    ].to_vec(),
+        //                    Poseidon::default(),
+        //                    128,
+        //                    32,
+        //                    RsaQuotientGroup {
+        //                        g: BigUint::from(2usize),
+        //                        m: BigUint::from_str(RSA_512).unwrap(),
+        //                    },
+        //            )),
+        //            params: SetBenchParams {
+        //                group: RsaQuotientGroup {
+        //                    g: BigUint::from(2usize),
+        //                    m: BigUint::from_str(RSA_512).unwrap(),
+        //                },
+        //                limb_width: 32,
+        //                n_bits_elem: 128,
+        //                n_bits_challenge: 128,
+        //                n_bits_base: 512,
+        //                item_size: 5,
+        //                n_inserts: 1,
+        //                n_removes: 1,
+        //                hasher: Poseidon::default(),
+        //                verbose: true,
+        //            },
+        //}, true),
         //small_rsa_5_swaps: (SetBench {
         //    inputs: Some(SetBenchInputs::new(
         //        [].to_vec(),

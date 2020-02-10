@@ -12,6 +12,7 @@ use bellman_bignat::hash::hashes::{Mimc, Pedersen, Poseidon, Sha256};
 use bellman_bignat::hash::Hasher;
 use bellman_bignat::set::merkle::{MerkleSetBench, MerkleSetBenchInputs, MerkleSetBenchParams};
 use bellman_bignat::set::rsa::{SetBench, SetBenchInputs, SetBenchParams};
+use bellman_bignat::set::int_set::NaiveExpSet;
 use docopt::Docopt;
 use num_bigint::BigUint;
 use sapling_crypto::bellman::pairing::bls12_381::Bls12;
@@ -172,7 +173,7 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
     };
 
     let n_untouched = if full { (1usize << c).saturating_sub(t) } else { 0 };
-    let circuit = SetBench {
+    let circuit = SetBench::<_, NaiveExpSet<_>> {
         inputs: Some(SetBenchInputs::from_counts(
             n_untouched,
             t,

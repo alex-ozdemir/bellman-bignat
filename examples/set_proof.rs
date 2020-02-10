@@ -13,6 +13,7 @@ use bellman_bignat::mp::bignat::nat_to_limbs;
 use bellman_bignat::set::merkle::{MerkleSetBench, MerkleSetBenchInputs, MerkleSetBenchParams};
 use bellman_bignat::set::rsa::{SetBench, SetBenchInputs, SetBenchParams};
 use bellman_bignat::set::GenSet;
+use bellman_bignat::set::int_set::NaiveExpSet;
 use docopt::Docopt;
 use num_bigint::BigUint;
 use sapling_crypto::bellman::groth16::{
@@ -204,12 +205,12 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
         verbose: args.flag_verbose,
     };
 
-    let empty_circuit = SetBench {
+    let empty_circuit = SetBench::<_, NaiveExpSet<_>> {
         inputs: None,
         params: params.clone(),
     };
 
-    let circuit = SetBench {
+    let circuit = SetBench::<_, NaiveExpSet<_>> {
         inputs: Some(SetBenchInputs::from_counts(
             n_untouched,
             args.arg_transactions,
