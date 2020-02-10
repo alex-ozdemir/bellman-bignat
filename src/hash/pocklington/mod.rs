@@ -222,13 +222,11 @@ pub mod helper {
         let plan = PocklingtonPlan::new(entropy);
         let inputs: Vec<H::F> = inputs.iter().copied().collect();
         let hash = base_hash.hash(&inputs);
-        eprintln!("        Hash: {}", hash);
         let mut entropy_source = EntropySource::new(hash, plan.entropy());
         let mut cert = attempt_pocklington_base(&plan, &mut entropy_source)?;
         for extension in &plan.extensions {
             cert = attempt_pocklington_extension::<H::F>(cert, extension, &mut entropy_source)?;
         }
-        eprintln!("        Final Cert: {:?}", cert);
         Some(cert)
     }
 
@@ -284,7 +282,6 @@ pub fn hash_to_pocklington_prime<
 
     // Hash the inputs into an entropy pool.
     let hash = base_hash.allocate_hash(cs.namespace(|| "base hash"), &input)?;
-    eprintln!("Circuit Hash: {}", hash.get_value().unwrap());
     let mut entropy_source =
         EntropySource::alloc(cs.namespace(|| "entropy source"), Some(&()), hash, &entropy)?;
 
@@ -318,7 +315,6 @@ pub fn hash_to_pocklington_prime<
             limb_width,
         )
         .add::<CS>(&base_nonce)?;
-    eprintln!("Circuit Prime: {}", prime);
 
     // Check it
     let mr_res = &prime.miller_rabin_32b(cs.namespace(|| "base check"))?;
