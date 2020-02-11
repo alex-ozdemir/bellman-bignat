@@ -59,15 +59,17 @@ impl<H: Hasher, Inner: IntSet> Set<H, Inner> {
             n_trailing_ones: 1,
         };
         use rayon::prelude::*;
-        let inner = Inner::new_with(
-            group,
-            items
-                .par_iter()
-                .map(|slice| {
-                    di::helper::di_hash::<H>(&slice, &offset, &hash_domain, limb_width, &hasher)
-                })
-                .collect::<Vec<_>>(),
-        );
+        if in_verbose_mode() {
+            println!("Hashing");
+        }
+        let hashed = items
+            .par_iter()
+            .map(|slice| {
+                di::helper::di_hash::<H>(&slice, &offset, &hash_domain, limb_width, &hasher)
+            })
+            .collect::<Vec<_>>();
+
+        let inner = Inner::new_with(group, hashed);
         Self {
             inner,
             offset: offset,
