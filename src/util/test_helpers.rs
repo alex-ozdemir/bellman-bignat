@@ -3,6 +3,8 @@ pub use sapling_crypto::bellman::pairing::bls12_381::Bls12;
 pub use sapling_crypto::bellman::pairing::ff::PrimeField;
 pub use sapling_crypto::bellman::Circuit;
 pub use sapling_crypto::circuit::test::TestConstraintSystem;
+
+
 macro_rules! circuit_tests {
     ($($name:ident: $value:expr,)*) => {
         $(

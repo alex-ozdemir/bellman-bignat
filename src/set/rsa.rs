@@ -16,6 +16,7 @@ use mp::bignat::BigNat;
 use set::int_set::{CircuitIntSet, IntSet};
 use set::{CircuitGenSet, GenSet};
 use util::gadget::Gadget;
+use util::verbose::in_verbose_mode;
 use wesolowski::Reduced;
 use CResult;
 use OptionExt;
@@ -461,15 +462,30 @@ where
             .map(|i| i.iter().map(|j| H::F::from_str(j).unwrap()).collect())
             .collect();
         let offset = di::offset(n_bits_elem);
+        if in_verbose_mode() {
+            println!("Constructing common state");
+        }
         let mut initial_state =
             Set::new_with(group, offset, hasher, n_bits_elem, limb_width, &untouched);
         // We compute digests unecessarily to force evaluation.
+        if in_verbose_mode() {
+            println!("Computing common digest");
+        }
         initial_state.digest();
+        if in_verbose_mode() {
+            println!("Adding initial items");
+        }
         let mut final_state = initial_state.clone();
         initial_state.insert_all(removed.clone());
         initial_state.digest();
+        if in_verbose_mode() {
+            println!("Adding final items");
+        }
         final_state.insert_all(inserted.clone());
         final_state.digest();
+        if in_verbose_mode() {
+            println!("Done adding final items");
+        }
         SetBenchInputs {
             initial_state,
             final_state,

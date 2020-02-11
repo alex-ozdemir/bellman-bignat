@@ -14,6 +14,7 @@ use bellman_bignat::set::merkle::{MerkleSetBench, MerkleSetBenchInputs, MerkleSe
 use bellman_bignat::set::rsa::{SetBench, SetBenchInputs, SetBenchParams};
 use bellman_bignat::set::GenSet;
 use bellman_bignat::set::int_set_par::ParallelExpSet;
+use bellman_bignat::util::verbose;
 use docopt::Docopt;
 use num_bigint::BigUint;
 use sapling_crypto::bellman::groth16::{
@@ -85,6 +86,9 @@ fn main() {
     let args: Args = Docopt::new(USAGE)
         .and_then(|d| d.deserialize())
         .unwrap_or_else(|e| e.exit());
+    if args.flag_verbose {
+        verbose::set_verbose_mode(true);
+    }
 
     let (set, report) = if args.cmd_merkle {
         (
