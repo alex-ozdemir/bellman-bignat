@@ -209,9 +209,10 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
         inputs: None,
         params: params.clone(),
     };
-
-    let circuit = SetBench::<_, ParallelExpSet<_>> {
-        inputs: Some(SetBenchInputs::from_counts(
+    if args.flag_verbose {
+        println!("  Constructing initial and final states");
+    }
+    let inputs = SetBenchInputs::from_counts(
             n_untouched,
             args.arg_transactions,
             args.arg_transactions,
@@ -223,20 +224,20 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
                 g: BigUint::from(2usize),
                 m: BigUint::from_str(RSA_2048).unwrap(),
             },
-        )),
+    );
+
+    let mut circuit = SetBench::<_, ParallelExpSet<_>> {
+        inputs: Some(inputs),
         params: params.clone(),
     };
-    let ins = circuit.inputs.as_ref().unwrap();
-    let mut initial_set = ins.initial_state.clone();
-    let mut final_set = {
-        let mut t = initial_set.clone();
-        t.swap_all(ins.to_remove.clone(), ins.to_insert.clone());
-        t
-    };
+    let inputs = circuit.inputs.as_mut().unwrap();
+    if args.flag_verbose {
+        println!("Marshalling circuit inputs");
+    }
     let inputs = vec![
         hash.hash(&nat_to_limbs(&group.g, 32, 64).unwrap().into_iter().chain(nat_to_limbs(&group.m, 32, 64).unwrap().into_iter()).collect::<Vec<E::Fr>>()),
-        hash.hash(&nat_to_limbs(&initial_set.digest(), 32, 64).unwrap()),
-        hash.hash(&nat_to_limbs(&final_set.digest(), 32, 64).unwrap()),
+        hash.hash(&nat_to_limbs(&inputs.initial_state.digest(), 32, 64).unwrap()),
+        hash.hash(&nat_to_limbs(&inputs.final_state.digest(), 32, 64).unwrap()),
     ];
 
     let init_end = Instant::now();

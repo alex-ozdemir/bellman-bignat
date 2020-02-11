@@ -34,12 +34,12 @@ pub trait Gadget: Sized + Clone {
         Ok(())
     }
 
-    fn inputize_hash<CS: ConstraintSystem<Self::E>, H: CircuitHasher<E = Self::E>>(&self, mut cs: CS, hasher: &H) -> Result<(), SynthesisError> {
+    fn inputize_hash<CS: ConstraintSystem<Self::E>, H: CircuitHasher<E = Self::E>>(&self, mut cs: CS, hasher: &H) -> Result<AllocatedNum<Self::E>, SynthesisError> {
         let nums = self.as_nums(cs.namespace(|| "to nums"))?;
         let hash = hasher.allocate_hash(cs.namespace(|| "hash"), &nums)?;
         let in_ = cs.alloc_input(|| "input", || hash.get_value().ok_or(SynthesisError::AssignmentMissing))?;
         cs.enforce(|| "eq", |lc| lc, |lc| lc, |lc| lc + in_ - hash.get_variable());
-        Ok(())
+        Ok(hash)
     }
 
     fn as_nums<CS: ConstraintSystem<Self::E>>(&self, mut cs: CS) -> Result<Vec<AllocatedNum<Self::E>>, SynthesisError> {

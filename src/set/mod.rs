@@ -40,4 +40,11 @@ pub trait CircuitGenSet : Sized {
         removed_items: Vec<MaybeHashed<Self::E>>,
         inserted_items: Vec<MaybeHashed<Self::E>>,
     ) -> CResult<Self>;
+    fn verify_swap_all<CS: ConstraintSystem<Self::E>>(
+        self,
+        cs: CS,
+        removed_items: Vec<MaybeHashed<Self::E>>,
+        inserted_items: Vec<MaybeHashed<Self::E>>,
+        result: Self,
+    ) -> CResult<()>;
 }

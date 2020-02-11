@@ -348,6 +348,21 @@ where
         }
         Ok(self)
     }
+    fn verify_swap_all<CS: ConstraintSystem<Self::E>>(
+        self,
+        mut cs: CS,
+        removed_items: Vec<MaybeHashed<Self::E>>,
+        inserted_items: Vec<MaybeHashed<Self::E>>,
+        other: Self,
+    ) -> Result<(), SynthesisError> {
+        let new = self.swap_all(cs.namespace(|| "do swap"), removed_items, inserted_items)?;
+        let eq = AllocatedNum::equals(cs.namespace(|| "equal"), &new.digest, &other.digest)?;
+        Boolean::enforce_equal(cs.namespace(|| "equal is true"),
+            &eq,
+            &Boolean::constant(true),
+        )?;
+        Ok(())
+    }
 }
 
 pub struct MerkleSetBenchInputs<H>

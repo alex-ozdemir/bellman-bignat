@@ -6,14 +6,16 @@ use sapling_crypto::circuit::num::AllocatedNum;
 
 use std::fmt::{self, Debug, Formatter};
 
-use mp::bignat::BigNat;
-use util::gadget::Gadget;
-use group::{CircuitRsaQuotientGroup, CircuitRsaGroupParams, CircuitSemiGroup, RsaQuotientGroup, SemiGroup};
-use hash::{pocklington, division_intractable as di, HashDomain};
-use hash::circuit::{MaybeHashed, CircuitHasher};
+use group::{
+    CircuitRsaGroupParams, CircuitRsaQuotientGroup, CircuitSemiGroup, RsaQuotientGroup, SemiGroup,
+};
+use hash::circuit::{CircuitHasher, MaybeHashed};
 use hash::Hasher;
-use set::{GenSet, CircuitGenSet};
+use hash::{division_intractable as di, pocklington, HashDomain};
+use mp::bignat::BigNat;
 use set::int_set::{CircuitIntSet, IntSet};
+use set::{CircuitGenSet, GenSet};
+use util::gadget::Gadget;
 use wesolowski::Reduced;
 use CResult;
 use OptionExt;
@@ -58,15 +60,12 @@ impl<H: Hasher, Inner: IntSet> Set<H, Inner> {
         use rayon::prelude::*;
         let inner = Inner::new_with(
             group,
-            items.par_iter().map(|slice| {
-                di::helper::di_hash::<H>(
-                    &slice,
-                    &offset,
-                    &hash_domain,
-                    limb_width,
-                    &hasher,
-                )
-            }).collect::<Vec<_>>(),
+            items
+                .par_iter()
+                .map(|slice| {
+                    di::helper::di_hash::<H>(&slice, &offset, &hash_domain, limb_width, &hasher)
+                })
+                .collect::<Vec<_>>(),
         );
         Self {
             inner,
@@ -262,7 +261,12 @@ where
         let value = self.value.as_ref().and_then(|v| {
             let is: Option<Vec<Vec<E::Fr>>> = items
                 .into_iter()
-                .map(|i| i.values.iter().map(|n| n.get_value()).collect::<Option<Vec<_>>>())
+                .map(|i| {
+                    i.values
+                        .iter()
+                        .map(|n| n.get_value())
+                        .collect::<Option<Vec<_>>>()
+                })
                 .collect::<Option<Vec<_>>>();
             is.map(|is| {
                 let mut v = v.clone();
@@ -307,7 +311,12 @@ where
         let value = self.value.as_ref().and_then(|v| {
             let is: Option<Vec<Vec<E::Fr>>> = items
                 .into_iter()
-                .map(|i| i.values.iter().map(|n| n.get_value()).collect::<Option<Vec<_>>>())
+                .map(|i| {
+                    i.values
+                        .iter()
+                        .map(|n| n.get_value())
+                        .collect::<Option<Vec<_>>>()
+                })
                 .collect::<Option<Vec<_>>>();
             is.map(|is| {
                 let mut v = v.clone();
@@ -344,6 +353,22 @@ where
         let without = with.remove(cs.namespace(|| "remove"), &mut removed_items)?;
         Ok(without)
     }
+    fn verify_swap_all<CS: ConstraintSystem<Self::E>>(
+        self,
+        mut cs: CS,
+        mut removed_items: Vec<MaybeHashed<Self::E>>,
+        mut inserted_items: Vec<MaybeHashed<Self::E>>,
+        other: Self,
+    ) -> CResult<()> {
+        let with = self.insert(cs.namespace(|| "insert"), &mut inserted_items)?;
+        let also_with = other.insert(cs.namespace(|| "rev insert"), &mut removed_items)?;
+        Gadget::assert_equal(
+            cs.namespace(|| "check"),
+            &with.inner.digest,
+            &also_with.inner.digest,
+        )?;
+        Ok(())
+    }
 }
 
 pub struct SetBenchInputs<H, Inner>
@@ -353,7 +378,7 @@ where
 {
     /// The initial state of the set
     pub initial_state: Set<H, Inner>,
-    pub final_digest: BigUint,
+    pub final_state: Set<H, Inner>,
     /// The items to remove from the set
     pub to_remove: Vec<Vec<H::F>>,
     /// The items to insert into the set
@@ -436,20 +461,18 @@ where
             .map(|i| i.iter().map(|j| H::F::from_str(j).unwrap()).collect())
             .collect();
         let offset = di::offset(n_bits_elem);
-        let mut initial_state = Set::new_with(
-            group,
-            offset,
-            hasher,
-            n_bits_elem,
-            limb_width,
-            &untouched,
-        );
+        let mut initial_state =
+            Set::new_with(group, offset, hasher, n_bits_elem, limb_width, &untouched);
+        // We compute digests unecessarily to force evaluation.
+        initial_state.digest();
         let mut final_state = initial_state.clone();
         initial_state.insert_all(removed.clone());
+        initial_state.digest();
         final_state.insert_all(inserted.clone());
+        final_state.digest();
         SetBenchInputs {
             initial_state,
-            final_digest: final_state.digest(),
+            final_state,
             to_remove: removed,
             to_insert: inserted,
         }
@@ -499,7 +522,10 @@ where
                         })
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                let hash = self.params.hasher.allocate_hash(cs.namespace(|| format!("hash {}", i)), &values)?;
+                let hash = self
+                    .params
+                    .hasher
+                    .allocate_hash(cs.namespace(|| format!("hash {}", i)), &values)?;
                 Ok(MaybeHashed::new(values, hash))
             })
             .collect::<Result<Vec<MaybeHashed<E>>, SynthesisError>>()?;
@@ -517,7 +543,10 @@ where
                         })
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                let hash = self.params.hasher.allocate_hash(cs.namespace(|| format!("hash {}", i)), &values)?;
+                let hash = self
+                    .params
+                    .hasher
+                    .allocate_hash(cs.namespace(|| format!("hash {}", i)), &values)?;
                 Ok(MaybeHashed::new(values, hash))
             })
             .collect::<Result<Vec<MaybeHashed<E>>, SynthesisError>>()?;
@@ -526,102 +555,145 @@ where
         let n_bits_base = self.params.n_bits_base;
         let expected_initial_digest = BigNat::alloc_from_nat(
             cs.namespace(|| "expected_initial_digest"),
-            || Ok(self.inputs.as_mut().ok_or(SynthesisError::AssignmentMissing)?.initial_state.digest()),
+            || {
+                Ok(self
+                    .inputs
+                    .as_mut()
+                    .ok_or(SynthesisError::AssignmentMissing)?
+                    .initial_state
+                    .digest())
+            },
             limb_width,
             n_bits_base / limb_width,
         )?;
         let expected_final_digest = BigNat::alloc_from_nat(
             cs.namespace(|| "expected_final_digest"),
-            || Ok(self.inputs.as_ref().grab()?.final_digest.clone()),
-            self.params.limb_width,
-            self.params.n_bits_base / self.params.limb_width,
+            || {
+                Ok(self
+                    .inputs
+                    .as_mut()
+                    .ok_or(SynthesisError::AssignmentMissing)?
+                    .final_state
+                    .digest())
+            },
+            limb_width,
+            n_bits_base / limb_width,
         )?;
 
         if self.params.verbose {
-            println!("Hashing everything");
+            println!("Constructing the challenge");
         }
-        let mut to_hash_to_challenge: Vec<AllocatedNum<E>> = Vec::new();
-        to_hash_to_challenge.extend(
-            expected_initial_digest
-                .as_limbs::<CS>()
-                .into_iter()
-                .enumerate()
-                .map(|(i, n)| {
-                    n.as_sapling_allocated_num(cs.namespace(|| format!("initial digest hash {}", i)))
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-        );
-        to_hash_to_challenge.extend(
-            expected_final_digest
-                .as_limbs::<CS>()
-                .into_iter()
-                .enumerate()
-                .map(|(i, n)| {
-                    n.as_sapling_allocated_num(cs.namespace(|| format!("final digest hash {}", i)))
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-        );
-        to_hash_to_challenge.extend(insertions.iter().map(|i| i.hash.clone().unwrap()));
-        to_hash_to_challenge.extend(removals.iter().map(|i| i.hash.clone().unwrap()));
-        let challenge = pocklington::hash_to_pocklington_prime(
-            cs.namespace(|| "chash"),
-            &to_hash_to_challenge,
-            self.params.limb_width,
-            self.params.n_bits_challenge,
-            &self.params.hasher,
-        )?;
+
+        let challenge = {
+            let mut to_hash_to_challenge: Vec<AllocatedNum<E>> = Vec::new();
+            to_hash_to_challenge.extend(
+                expected_initial_digest
+                    .as_limbs::<CS>()
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, n)| {
+                        n.as_sapling_allocated_num(
+                            cs.namespace(|| format!("initial digest hash {}", i)),
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            );
+            to_hash_to_challenge.extend(
+                expected_final_digest
+                    .as_limbs::<CS>()
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, n)| {
+                        n.as_sapling_allocated_num(
+                            cs.namespace(|| format!("final digest hash {}", i)),
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            );
+            to_hash_to_challenge.extend(insertions.iter().map(|i| i.hash.clone().unwrap()));
+            to_hash_to_challenge.extend(removals.iter().map(|i| i.hash.clone().unwrap()));
+            pocklington::hash_to_pocklington_prime(
+                cs.namespace(|| "chash"),
+                &to_hash_to_challenge,
+                limb_width,
+                self.params.n_bits_challenge,
+                &self.params.hasher,
+            )?
+        };
 
         if self.params.verbose {
             println!("Constructing Group");
         }
-        let raw_group = self
-            .inputs
-            .as_ref()
-            .map(|s| s.initial_state.group().clone());
-        let group = CircuitRsaQuotientGroup::alloc(
-            cs.namespace(|| "group"),
-            raw_group.as_ref(),
-            (),
-            &CircuitRsaGroupParams {
-                limb_width: self.params.limb_width,
-                n_limbs: self.params.n_bits_base / self.params.limb_width,
-            },
-        )?;
-        group.inputize_hash(cs.namespace(|| "group input"), &self.params.hasher)?;
+        let group = {
+            let raw_group = self
+                .inputs
+                .as_ref()
+                .map(|s| s.initial_state.group().clone());
+            let group = CircuitRsaQuotientGroup::alloc(
+                cs.namespace(|| "group"),
+                raw_group.as_ref(),
+                (),
+                &CircuitRsaGroupParams {
+                    limb_width,
+                    n_limbs: n_bits_base / limb_width,
+                },
+            )?;
+            group.inputize_hash(cs.namespace(|| "group input"), &self.params.hasher)?;
+            group
+        };
 
         if self.params.verbose {
-            println!("Constructing Set");
+            println!("Constructing Sets");
         }
-        let set: CircuitSet<E, H, CircuitRsaQuotientGroup<E>, Inner> = CircuitSet::alloc(
-            cs.namespace(|| "set init"),
-            self.inputs.as_ref().map(|is| &is.initial_state),
-            (group, challenge),
-            &CircuitSetParams {
-                hasher: self.params.hasher.clone(),
-                n_bits: self.params.n_bits_elem,
-                limb_width: self.params.limb_width,
-            },
-        )?;
-        set.inputize_hash(cs.namespace(|| "initial_state input"), &self.params.hasher)?;
-        set.inner.digest.equal(cs.namespace(|| "initial digest matches"), &expected_initial_digest)?;
+
+        let initial_set = {
+            let initial_set: CircuitSet<E, H, CircuitRsaQuotientGroup<E>, Inner> =
+                CircuitSet::alloc(
+                    cs.namespace(|| "set init"),
+                    self.inputs.as_ref().map(|is| &is.initial_state),
+                    (group.clone(), challenge.clone()),
+                    &CircuitSetParams {
+                        hasher: self.params.hasher.clone(),
+                        n_bits: self.params.n_bits_elem,
+                        limb_width,
+                    },
+                )?;
+            initial_set
+                .inputize_hash(cs.namespace(|| "initial_state input"), &self.params.hasher)?;
+            initial_set.inner.digest.equal(
+                cs.namespace(|| "initial digest matches"),
+                &expected_initial_digest,
+            )?;
+            initial_set
+        };
+
+        let final_set = {
+            let final_set: CircuitSet<E, H, CircuitRsaQuotientGroup<E>, Inner> = CircuitSet::alloc(
+                cs.namespace(|| "set init"),
+                self.inputs.as_ref().map(|is| &is.final_state),
+                (group, challenge),
+                &CircuitSetParams {
+                    hasher: self.params.hasher.clone(),
+                    n_bits: self.params.n_bits_elem,
+                    limb_width,
+                },
+            )?;
+            final_set.inputize_hash(cs.namespace(|| "final_state input"), &self.params.hasher)?;
+            final_set.inner.digest.equal(
+                cs.namespace(|| "final digest matches"),
+                &expected_final_digest,
+            )?;
+            final_set
+        };
 
         if self.params.verbose {
             println!("Swapping elements");
         }
-        let new_set = set.swap_all(
-            cs.namespace(|| "swap"),
-            removals,
-            insertions,
-        )?;
+        initial_set.verify_swap_all(cs.namespace(|| "swap"), removals, insertions, final_set)?;
 
         if self.params.verbose {
-            println!("Verifying resulting digest");
+            println!("Done with synthesis");
         }
-        new_set
-            .inner
-            .digest
-            .equal(cs.namespace(|| "check"), &expected_final_digest)?;
-        new_set.inputize_hash(cs.namespace(|| "final_state input"), &self.params.hasher)?;
         Ok(())
     }
 }
