@@ -240,6 +240,9 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
     ];
 
     let init_end = Instant::now();
+    if args.flag_verbose {
+        println!("Init time: {:?}", init_end - init_start);
+    }
 
     if args.flag_verbose {
         println!("Generating prover and verifier keys");

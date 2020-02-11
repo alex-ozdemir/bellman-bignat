@@ -57,7 +57,7 @@ where
                 s.hasher.clone(),
                 s.n_bits_elem,
                 s.limb_width,
-                vec![],
+                &vec![],
             ),
         }
     }

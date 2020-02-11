@@ -43,29 +43,30 @@ where
 }
 
 impl<H: Hasher, Inner: IntSet> Set<H, Inner> {
-    pub fn new_with<'b>(
+    pub fn new_with(
         group: Inner::G,
         offset: BigUint,
         hasher: H,
         element_bits: usize,
         limb_width: usize,
-        items: impl IntoIterator<Item = &'b [<H as Hasher>::F]>,
+        items: &Vec<Vec<<H as Hasher>::F>>,
     ) -> Self {
         let hash_domain = HashDomain {
             n_bits: element_bits,
             n_trailing_ones: 1,
         };
+        use rayon::prelude::*;
         let inner = Inner::new_with(
             group,
-            items.into_iter().map(|slice| {
+            items.par_iter().map(|slice| {
                 di::helper::di_hash::<H>(
-                    slice,
+                    &slice,
                     &offset,
                     &hash_domain,
                     limb_width,
                     &hasher,
                 )
-            }),
+            }).collect::<Vec<_>>(),
         );
         Self {
             inner,
@@ -376,7 +377,9 @@ where
         limb_width: usize,
         group: RsaQuotientGroup,
     ) -> Self {
+        use rayon::prelude::*;
         let untouched_items: Vec<Vec<String>> = (0..n_untouched)
+            .into_par_iter()
             .map(|i| {
                 (0..item_len)
                     .map(|j| format!("1{:06}{:03}", i, j))
@@ -384,6 +387,7 @@ where
             })
             .collect();
         let removed_items: Vec<Vec<String>> = (0..n_removed)
+            .into_par_iter()
             .map(|i| {
                 (0..item_len)
                     .map(|j| format!("2{:06}{:03}", i, j))
@@ -391,6 +395,7 @@ where
             })
             .collect();
         let inserted_items: Vec<Vec<String>> = (0..n_inserted)
+            .into_par_iter()
             .map(|i| {
                 (0..item_len)
                     .map(|j| format!("3{:06}{:03}", i, j))
@@ -417,16 +422,17 @@ where
         limb_width: usize,
         group: RsaQuotientGroup,
     ) -> Self {
+        use rayon::prelude::*;
         let untouched: Vec<Vec<H::F>> = untouched_items
-            .iter()
+            .par_iter()
             .map(|i| i.iter().map(|j| H::F::from_str(j).unwrap()).collect())
             .collect();
         let removed: Vec<Vec<H::F>> = removed_items
-            .iter()
+            .par_iter()
             .map(|i| i.iter().map(|j| H::F::from_str(j).unwrap()).collect())
             .collect();
         let inserted: Vec<Vec<H::F>> = inserted_items
-            .iter()
+            .par_iter()
             .map(|i| i.iter().map(|j| H::F::from_str(j).unwrap()).collect())
             .collect();
         let offset = di::offset(n_bits_elem);
@@ -436,7 +442,7 @@ where
             hasher,
             n_bits_elem,
             limb_width,
-            untouched.iter().map(|v| v.as_slice()),
+            &untouched,
         );
         let mut final_state = initial_state.clone();
         initial_state.insert_all(removed.clone());
