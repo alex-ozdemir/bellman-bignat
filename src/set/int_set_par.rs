@@ -1,5 +1,4 @@
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
-use group::{RsaGroup, RsaQuotientGroup, SemiGroup};
 use num_bigint::BigUint;
 use num_traits::Num;
 use rug::{ops::Pow, Assign, Integer};
@@ -13,6 +12,9 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use super::int_set::IntSet;
+
+use group::{RsaGroup, RsaQuotientGroup, SemiGroup};
+use util::verbose::in_verbose_mode;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 /// A comb of precomputed powers of a base, plus optional precomputed tables of combinations
@@ -351,6 +353,9 @@ where
 
         if self.digest.is_none() {
             // step 1: compute the exponent
+            if in_verbose_mode() {
+                println!("Starting product")
+            }
             let expt = {
                 let mut tmp = Vec::with_capacity(self.elements.len() + 1);
                 tmp.par_extend(
@@ -362,8 +367,16 @@ where
                 tmp.pop().unwrap()
             };
 
+            if in_verbose_mode() {
+                println!("Starting comb")
+            }
+
             // step 2: exponentiate using ParExpComb
             self.digest = Some(self.comb.exp(&expt));
+
+            if in_verbose_mode() {
+                println!("Done with comb")
+            }
         }
 
         // convert internal Integer repr to Elem repr, respecting structure of group via IntoElem
