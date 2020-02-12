@@ -5,6 +5,7 @@ extern crate test;
 extern crate bincode;
 extern crate flate2;
 extern crate fnv;
+extern crate gmp_mpfr_sys;
 extern crate num_iter;
 extern crate num_bigint;
 extern crate num_integer;
