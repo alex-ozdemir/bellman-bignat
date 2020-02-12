@@ -425,16 +425,12 @@ fn _parallel_sum(v: &mut Vec<Integer>) {
 }
 
 fn _parallel_mul(a: &mut Integer, b: &mut Integer, nproc: usize) {
-    use gmp_mpfr_sys::gmp::mpz_swap;
     use rayon::prelude::*;
+    use std::mem::swap;
 
     // make sure a is the larger of the two values --- gives smaller operands to muls below
     if b.significant_bits() > a.significant_bits() {
-        unsafe {
-            let a_ptr = a.as_raw_mut();
-            let b_ptr = b.as_raw_mut();
-            mpz_swap(a_ptr, b_ptr);
-        };
+        swap(a, b);
     }
     assert!(a.significant_bits() >= b.significant_bits());
     let bits_per_thread = (a.significant_bits() as usize + nproc - 1) / nproc;
@@ -458,13 +454,7 @@ fn _parallel_mul(a: &mut Integer, b: &mut Integer, nproc: usize) {
 
     // add up the result
     _parallel_sum(&mut tmp);
-
-    // swap a and tmp[0] ; faster than assigning
-    unsafe {
-        let a_ptr = a.as_raw_mut();
-        let t_ptr = tmp[0].as_raw_mut();
-        mpz_swap(a_ptr, t_ptr);
-    };
+    swap(a, &mut tmp[0]);
 }
 
 fn _parallel_product(v: &mut Vec<Integer>) {
