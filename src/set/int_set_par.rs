@@ -438,9 +438,10 @@ fn _parallel_mul(a: &mut Integer, b: &mut Integer, nproc: usize) {
     }
     assert!(a.significant_bits() >= b.significant_bits());
     let bits_per_thread = (a.significant_bits() as usize + nproc - 1) / nproc;
+    let output_bits = a.significant_bits() as usize + b.significant_bits() as usize;
 
     // do all the multiplications in parallel
-    let mut tmp = vec![Integer::new(); nproc];
+    let mut tmp = vec![Integer::with_capacity(output_bits); nproc];
     tmp.par_iter_mut().enumerate()
         .for_each(|(p, tmp)| {
             // slice out the bits of a we want
