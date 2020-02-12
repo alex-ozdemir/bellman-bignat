@@ -392,12 +392,16 @@ where
 }
 
 fn _parallel_product(v: &mut Vec<Integer>) {
+    let verb = in_verbose_mode();
     use rayon::prelude::*;
     if v.len() % 2 == 1 {
         v.push(Integer::from(1));
     }
 
     while v.len() > 1 {
+        if verb {
+            println!("Remaining elements in parallel product: {}", v.len());
+        }
         // invariant: length of list is always even
         assert!(v.len() % 2 == 0);
 
