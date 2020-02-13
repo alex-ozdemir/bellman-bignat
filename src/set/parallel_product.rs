@@ -169,7 +169,7 @@ pub fn parallel_product(v: &mut Vec<Integer>) {
         let (fst, snd) = v.split_at_mut(split_point);
 
         // parallelize the final big multiplication
-        if split_point < 2 {
+        if split_point < 3 {
             let n_threads_per_mul = n_threads / split_point;
             fst.par_iter_mut()
                 .zip(snd)
