@@ -75,10 +75,6 @@ fn _parallel_sum(v: &mut Vec<Integer>) {
     assert!(v.len() == 1);
 }
 
-// hack to let us share read-only pointers to mpz_t across threads
-struct ThreadWrapper(*const gmp_mpfr_sys::gmp::mpz_t);
-unsafe impl std::marker::Sync for ThreadWrapper { }
-
 fn _parallel_mul(a: &mut Integer, b: &mut Integer, nproc: usize) {
     use gmp_mpfr_sys::gmp::limb_t;
     use rayon::prelude::*;
@@ -111,36 +107,44 @@ fn _parallel_mul(a: &mut Integer, b: &mut Integer, nproc: usize) {
     let total_bits = (a.significant_bits() + b.significant_bits()) as usize;
     let part_bits = max(a_bits, b_bits);
 
-    // split a and b into pieces to be multiplied without too much copying
-    let a_mpz = ThreadWrapper(a.as_raw());
-    let b_mpz = ThreadWrapper(b.as_raw());
-    let mut parts = vec![Integer::new(); a_split + b_split];
-    parts.par_iter_mut().enumerate()
-        .for_each(|(idx, part)| {
-            part.reserve(part_bits);
-            unsafe {
-                let digits = if idx < a_split {
-                    let asize = (*a_mpz.0).size as usize;
-                    let adx = idx;
-                    &from_raw_parts((*a_mpz.0).d, asize)[(adx * a_limbs)..min(asize, (adx + 1) * a_limbs)]
-                } else {
-                    let bsize = (*b_mpz.0).size as usize;
-                    let bdx = idx - a_split;
-                    &from_raw_parts((*b_mpz.0).d, bsize)[(bdx * b_limbs)..min(bsize, (bdx + 1) * b_limbs)]
-                };
-                part.assign_digits(digits, rug::integer::Order::Lsf);
-            }
-        });
+    let mut tmp = {
+        let a_const = &*a;
+        let b_const = &*b;
+        // split a and b into pieces to be multiplied without too much copying
+        let mut parts = vec![Integer::new(); a_split + b_split];
+        parts.par_iter_mut().enumerate()
+            .for_each({
+                |(idx, part)| {
+                    part.reserve(part_bits);
+                    // Safety requires that `a_const` and `b_const` outlive `parts`.
+                    unsafe {
+                        let digits = if idx < a_split {
+                            let a_mpz = a_const.as_raw();
+                            let asize = (*a_mpz).size as usize;
+                            let adx = idx;
+                            &from_raw_parts((*a_mpz).d, asize)[(adx * a_limbs)..min(asize, (adx + 1) * a_limbs)]
+                        } else {
+                            let b_mpz = b_const.as_raw();
+                            let bsize = (*b_mpz).size as usize;
+                            let bdx = idx - a_split;
+                            &from_raw_parts((*b_mpz).d, bsize)[(bdx * b_limbs)..min(bsize, (bdx + 1) * b_limbs)]
+                        };
+                        part.assign_digits(digits, rug::integer::Order::Lsf);
+                    }
+                }
+            });
 
-    // compute all cross terms in parallel
-    let mut tmp = vec![Integer::new(); a_split * b_split];
-    tmp.par_iter_mut().enumerate().for_each(|(tdx, tval)| {
-        tval.reserve(total_bits + 32);
-        let adx = tdx % a_split;
-        let bdx = tdx / a_split;
-        tval.assign(&parts[adx] * &parts[a_split + bdx]);
-        tval.shl_assign((adx * a_bits + bdx * b_bits) as u32);
-    });
+        // compute all cross terms in parallel
+        let mut tmp = vec![Integer::new(); a_split * b_split];
+        tmp.par_iter_mut().enumerate().for_each(|(tdx, tval)| {
+            tval.reserve(total_bits + 32);
+            let adx = tdx % a_split;
+            let bdx = tdx / a_split;
+            tval.assign(&parts[adx] * &parts[a_split + bdx]);
+            tval.shl_assign((adx * a_bits + bdx * b_bits) as u32);
+        });
+        tmp
+    }; // end-of-life for parts, a_const, b_const
 
     _parallel_sum(&mut tmp);
     swap(a, &mut tmp[0]);
