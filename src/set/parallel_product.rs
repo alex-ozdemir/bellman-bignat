@@ -108,6 +108,7 @@ fn _parallel_mul(a: &mut Integer, b: &mut Integer, nproc: usize) {
     let a_split = nproc / b_split;
     let a_limbs = (a.significant_digits::<limb_t>() as usize + a_split - 1) / a_split;
     let a_bits = a_limbs * 8 * size_of::<limb_t>();
+    let total_bits = (a.significant_bits() + b.significant_bits()) as usize;
 
     // split a and b into pieces to be multiplied without too much copying
     let a_mpz = ThreadWrapper(a.as_raw());
@@ -130,54 +131,16 @@ fn _parallel_mul(a: &mut Integer, b: &mut Integer, nproc: usize) {
         });
 
     // compute all cross terms in parallel
-    let mut tmp = vec![Integer::with_capacity(a_bits + b_bits); a_split * b_split];
+    let mut tmp = vec![Integer::with_capacity(total_bits + 32); a_split * b_split];
     tmp.par_iter_mut().enumerate().for_each(|(tdx, tval)| {
         let adx = tdx % a_split;
         let bdx = tdx / a_split;
         tval.assign(&parts[adx] * &parts[a_split + bdx]);
-    });
-    drop(parts);
-
-    // sum up cross terms -- need to be careful because a and b chunks may have different sizes
-    let mut sums = vec![Integer::new(); a_split + b_split - 1];
-    sums.par_iter_mut().enumerate().for_each(|(isdx, tval)| {
-        let mut ents = Vec::new();
-        // go "backwards" so that leftmost entry has most bits --- better for later parallel add
-        let sdx = a_split + b_split - 2 - isdx;
-        tval.reserve(a_bits + b_bits + a_split + b_split + if a_bits > b_bits {
-            let amax = min(sdx, a_split);
-            let bmax = sdx - amax;
-            amax * a_bits + bmax * b_bits
-        } else {
-            let bmax = min(sdx, b_split);
-            let amax = sdx - bmax;
-            amax * a_bits + bmax * b_bits
-        });
-
-        // figure out the cross terms we need to add together and the corresponding bit offsets
-        for adx in 0..=sdx {
-            let bdx = sdx - adx;
-            if adx >= a_split || bdx >= b_split {
-                continue;
-            }
-            ents.push((adx, bdx, (adx * a_bits + bdx * b_bits) as u32));
-        }
-
-        // sort bit offsets, greatest to least --- then we can do ~Horner's method
-        ents.sort_by(|l, r| r.2.cmp(&l.2));
-        tval.assign(&tmp[ents[0].0 + ents[0].1 * a_split]);
-        ents.iter().enumerate().skip(1).for_each(|(edx, ent)| {
-            tval.shl_assign(ents[edx - 1].2 - ent.2);
-            tval.add_assign(&tmp[ent.0 + ent.1 * a_split]);
-        });
-        if let Some(ent) = ents.last() {
-            tval.shl_assign(ent.2);
-        }
+        tval.shl_assign((adx * a_bits + bdx * b_bits) as u32);
     });
 
-    // add all the intermediate sums together, negate if necessary
-    _parallel_sum(&mut sums);
-    swap(a, &mut sums[0]);
+    _parallel_sum(&mut tmp);
+    swap(a, &mut tmp[0]);
     if negate {
         a.mul_assign(-1);
     }
@@ -202,9 +165,9 @@ pub fn parallel_product(v: &mut Vec<Integer>) {
         let split_point = v.len() / 2;
         let (fst, snd) = v.split_at_mut(split_point);
 
-        // try to parallelize the individual multiplications, if possible
-        let n_threads_per_mul = n_threads / split_point;
-        if n_threads_per_mul > 1 {
+        // parallelize the final big multiplication
+        if split_point < 2 {
+            let n_threads_per_mul = n_threads / split_point;
             fst.par_iter_mut()
                 .zip(snd)
                 .for_each(|(f, s)| _parallel_mul(f, s, n_threads_per_mul));
@@ -277,7 +240,7 @@ mod tests {
 
     #[test]
     fn parith_mul_test() {
-        const NBITS: u32 = 256;
+        const NBITS: u32 = 10485760;
 
         let mut rnd = RandState::new();
         _seed_rng(&mut rnd);
