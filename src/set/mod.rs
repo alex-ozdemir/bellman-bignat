@@ -8,6 +8,7 @@ use hash::circuit::MaybeHashed;
 pub mod int_set;
 pub mod int_set_par;
 pub mod merkle;
+pub mod parallel_product;
 pub mod rsa;
 
 pub trait GenSet<F>
