@@ -33,7 +33,7 @@ fn _isqrt(n: usize) -> usize {
             res = try;
         }
         assert!(linc > 0);
-        linc = linc - 1;
+        linc -= 1;
     }
 
     assert!(res * res <= n);
@@ -109,13 +109,15 @@ fn _parallel_mul(a: &mut Integer, b: &mut Integer, nproc: usize) {
     let a_limbs = (a.significant_digits::<limb_t>() as usize + a_split - 1) / a_split;
     let a_bits = a_limbs * 8 * size_of::<limb_t>();
     let total_bits = (a.significant_bits() + b.significant_bits()) as usize;
+    let part_bits = max(a_bits, b_bits);
 
     // split a and b into pieces to be multiplied without too much copying
     let a_mpz = ThreadWrapper(a.as_raw());
     let b_mpz = ThreadWrapper(b.as_raw());
-    let mut parts = vec![Integer::with_capacity(max(a_bits, b_bits)); a_split + b_split];
+    let mut parts = vec![Integer::new(); a_split + b_split];
     parts.par_iter_mut().enumerate()
         .for_each(|(idx, part)| {
+            part.reserve(part_bits);
             unsafe {
                 let digits = if idx < a_split {
                     let asize = (*a_mpz.0).size as usize;
@@ -131,8 +133,9 @@ fn _parallel_mul(a: &mut Integer, b: &mut Integer, nproc: usize) {
         });
 
     // compute all cross terms in parallel
-    let mut tmp = vec![Integer::with_capacity(total_bits + 32); a_split * b_split];
+    let mut tmp = vec![Integer::new(); a_split * b_split];
     tmp.par_iter_mut().enumerate().for_each(|(tdx, tval)| {
+        tval.reserve(total_bits + 32);
         let adx = tdx % a_split;
         let bdx = tdx / a_split;
         tval.assign(&parts[adx] * &parts[a_split + bdx]);
