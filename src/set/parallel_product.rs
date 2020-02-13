@@ -75,12 +75,21 @@ fn _parallel_sum(v: &mut Vec<Integer>) {
     assert!(v.len() == 1);
 }
 
+// Explicit lifetimes for emphasis
+fn borrow_digits<'a>(integer: &'a Integer) -> &'a [u64] {
+    unsafe {
+        use std::slice::from_raw_parts;
+        let raw = integer.as_raw();
+        let size = (*raw).size as usize;
+        from_raw_parts((*raw).d, size)
+    }
+}
+
 fn _parallel_mul(a: &mut Integer, b: &mut Integer, nproc: usize) {
     use gmp_mpfr_sys::gmp::limb_t;
     use rayon::prelude::*;
     use std::cmp::{max, min, Ordering};
     use std::mem::{size_of, swap};
-    use std::slice::from_raw_parts;
 
     let ac0 = a.cmp0();
     let bc0 = b.cmp0();
@@ -117,20 +126,18 @@ fn _parallel_mul(a: &mut Integer, b: &mut Integer, nproc: usize) {
                 |(idx, part)| {
                     part.reserve(part_bits);
                     // Safety requires that `a_const` and `b_const` outlive `parts`.
-                    unsafe {
                         let digits = if idx < a_split {
-                            let a_mpz = a_const.as_raw();
-                            let asize = (*a_mpz).size as usize;
+                            let adigits = borrow_digits(a_const);
+                            let asize = adigits.len();
                             let adx = idx;
-                            &from_raw_parts((*a_mpz).d, asize)[(adx * a_limbs)..min(asize, (adx + 1) * a_limbs)]
+                            &adigits[(adx * a_limbs)..min(asize, (adx + 1) * a_limbs)]
                         } else {
-                            let b_mpz = b_const.as_raw();
-                            let bsize = (*b_mpz).size as usize;
+                            let bdigits = borrow_digits(b_const);
+                            let bsize = bdigits.len();
                             let bdx = idx - a_split;
-                            &from_raw_parts((*b_mpz).d, bsize)[(bdx * b_limbs)..min(bsize, (bdx + 1) * b_limbs)]
+                            &bdigits[(bdx * b_limbs)..min(bsize, (bdx + 1) * b_limbs)]
                         };
                         part.assign_digits(digits, rug::integer::Order::Lsf);
-                    }
                 }
             });
 
