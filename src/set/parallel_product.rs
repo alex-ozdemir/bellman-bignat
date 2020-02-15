@@ -107,11 +107,24 @@ fn _parallel_mul(a: &mut Integer, b: &mut Integer, nproc: usize) {
     }
     assert!(a.significant_bits() >= b.significant_bits());
 
-    let b_split = _isqrt(nproc);
-    let b_limbs = (b.significant_digits::<limb_t>() as usize + b_split - 1) / b_split;
+    // figure out how to split a and b to keep split sizes close together
+    let (b_split, b_limbs, a_split, a_limbs) = {
+        let a_sig = a.significant_digits::<limb_t>() as usize;
+        let b_sig = b.significant_digits::<limb_t>() as usize;
+        let split_sml = _isqrt(nproc);
+        let split_big = nproc / split_sml;
+
+        let a_sml = ((a_sig + split_sml - 1) / split_sml) as isize;
+        let b_sml = ((b_sig + split_sml - 1) / split_sml) as isize;
+        let a_big = ((a_sig + split_big - 1) / split_big) as isize;
+        let b_big = ((b_sig + split_big - 1) / split_big) as isize;
+        if (a_sml - b_big).abs() < (b_sml - a_big).abs() {
+            (split_big, b_big as usize, split_sml, a_sml as usize)
+        } else {
+            (split_sml, b_sml as usize, split_big, a_big as usize)
+        }
+    };
     let b_bits = b_limbs * 8 * size_of::<limb_t>();
-    let a_split = nproc / b_split;
-    let a_limbs = (a.significant_digits::<limb_t>() as usize + a_split - 1) / a_split;
     let a_bits = a_limbs * 8 * size_of::<limb_t>();
     let total_bits = (a.significant_bits() + b.significant_bits()) as usize;
     let part_bits = max(a_bits, b_bits);
