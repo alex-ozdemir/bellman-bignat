@@ -1,3 +1,4 @@
+use gmp_mpfr_sys::gmp::limb_t;
 use rug::{Assign, Integer};
 use std::ops::{AddAssign, MulAssign, ShlAssign};
 use util::verbose::in_verbose_mode;
@@ -76,7 +77,7 @@ fn _parallel_sum(v: &mut Vec<Integer>) {
 }
 
 // Explicit lifetimes for emphasis
-fn borrow_digits<'a>(integer: &'a Integer) -> &'a [u64] {
+fn borrow_digits<'a>(integer: &'a Integer) -> &'a [limb_t] {
     unsafe {
         use std::slice::from_raw_parts;
         let raw = integer.as_raw();
@@ -86,7 +87,6 @@ fn borrow_digits<'a>(integer: &'a Integer) -> &'a [u64] {
 }
 
 fn _parallel_mul(a: &mut Integer, b: &mut Integer, nproc: usize) {
-    use gmp_mpfr_sys::gmp::limb_t;
     use rayon::prelude::*;
     use std::cmp::{max, min, Ordering};
     use std::mem::{size_of, swap};
