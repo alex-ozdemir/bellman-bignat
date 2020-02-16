@@ -13,12 +13,9 @@ use bellman_bignat::set::int_set_par::ParallelExpSet;
 use bellman_bignat::set::rsa::{SetBenchInputs};
 use bellman_bignat::util::verbose;
 use docopt::Docopt;
-use num_bigint::BigUint;
 use sapling_crypto::bellman::pairing::bls12_381::Bls12;
 use sapling_crypto::bellman::pairing::Engine;
 use serde::Deserialize;
-
-use std::str::FromStr;
 
 const USAGE: &str = "
 RSA Set Initialization
@@ -64,10 +61,7 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(args: &Args
         hash.clone(),
         RSA_SIZE,
         32,
-        RsaQuotientGroup {
-            g: BigUint::from(2usize),
-            m: BigUint::from_str(RSA_2048).unwrap(),
-        },
+        RsaQuotientGroup::from_strs("2", RSA_2048),
     );
     println!("Done");
 }

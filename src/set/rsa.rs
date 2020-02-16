@@ -726,8 +726,6 @@ mod test {
 
     use super::*;
 
-    use std::str::FromStr;
-
     use hash::hashes::Poseidon;
 
     use set::int_set::NaiveExpSet;
@@ -747,16 +745,10 @@ mod test {
                             Poseidon::default(),
                             128,
                             32,
-                            RsaQuotientGroup {
-                                g: BigUint::from(2usize),
-                                m: BigUint::from_str(RSA_512).unwrap(),
-                            },
+                            RsaQuotientGroup::from_strs("2", RSA_512),
                     )),
                     params: SetBenchParams {
-                        group: RsaQuotientGroup {
-                            g: BigUint::from(2usize),
-                            m: BigUint::from_str(RSA_512).unwrap(),
-                        },
+                        group: RsaQuotientGroup::from_strs("2", RSA_512),
                         limb_width: 32,
                         n_bits_elem: 128,
                         n_bits_challenge: 128,

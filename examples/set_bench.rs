@@ -14,13 +14,11 @@ use bellman_bignat::set::merkle::{MerkleSetBench, MerkleSetBenchInputs, MerkleSe
 use bellman_bignat::set::rsa::{SetBench, SetBenchInputs, SetBenchParams};
 use bellman_bignat::set::int_set::NaiveExpSet;
 use docopt::Docopt;
-use num_bigint::BigUint;
 use sapling_crypto::bellman::pairing::bls12_381::Bls12;
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::Circuit;
 use serde::Deserialize;
 
-use std::str::FromStr;
 use std::convert::TryInto;
 
 const USAGE: &str = "
@@ -167,10 +165,7 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
     synth: Synthesizer,
     hash: H,
 ) -> usize {
-    let group = RsaQuotientGroup {
-        g: BigUint::from(2usize),
-        m: BigUint::from_str(RSA_2048).unwrap(),
-    };
+    let group = RsaQuotientGroup::from_strs("2", RSA_2048);
 
     let n_untouched = if full { (1usize << c).saturating_sub(t) } else { 0 };
     let circuit = SetBench::<_, NaiveExpSet<_>> {
@@ -182,10 +177,7 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
             hash.clone(),
             RSA_SIZE,
             32,
-            RsaQuotientGroup {
-                g: BigUint::from(2usize),
-                m: BigUint::from_str(RSA_2048).unwrap(),
-            },
+            group.clone(),
         )),
         params: SetBenchParams {
             group: group.clone(),

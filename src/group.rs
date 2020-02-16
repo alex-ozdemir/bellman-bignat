@@ -607,10 +607,7 @@ mod test {
             let ins = self.inputs.grab()?;
             let group = CircuitRsaQuotientGroup::alloc(
                 cs.namespace(|| "group"),
-                Some(&RsaQuotientGroup {
-                    g: BigUint::from_str("2").unwrap(),
-                    m: BigUint::from_str(ins.m).unwrap(),
-                }),
+                Some(&RsaQuotientGroup::from_strs("2", ins.m)),
                 (),
                 &CircuitRsaGroupParams {
                     limb_width: self.params.limb_width,
@@ -711,10 +708,7 @@ mod test {
             let ins = self.inputs.grab()?;
             let group = CircuitRsaQuotientGroup::alloc(
                 cs.namespace(|| "group"),
-                Some(&RsaQuotientGroup {
-                    g: BigUint::from_str(ins.g).unwrap(),
-                    m: BigUint::from_str(ins.m).unwrap(),
-                }),
+                Some(&RsaQuotientGroup::from_strs(ins.g, ins.m)),
                 (),
                 &CircuitRsaGroupParams {
                     limb_width: self.params.limb_width,
