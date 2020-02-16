@@ -1,3 +1,4 @@
+#![feature(duration_float)]
 extern crate bellman_bignat;
 extern crate docopt;
 extern crate num_bigint;
@@ -19,7 +20,7 @@ use docopt::Docopt;
 use num_bigint::BigUint;
 use sapling_crypto::bellman::groth16::{
     generate_random_parameters, prepare_prover, prepare_verifying_key, verify_proof,
-    ParameterSource, Proof,
+    ParameterSource, Proof, Parameters
 };
 use sapling_crypto::bellman::pairing::bls12_381::Bls12;
 use sapling_crypto::bellman::pairing::Engine;
@@ -40,12 +41,14 @@ Usage:
   set_proof --version
 
 Options:
-  -h --help      Show this screen.
-  -f --full      Run the test with an initially full accumulator
-  -v --verbose   Emit debug statements.
-  --hash HASH    The hash function to use [default: poseidon]
-                 Valid values: poseidon, mimc, pedersen, babypedersen, sha
-  --version      Show version.
+  -h --help       Show this screen.
+  -f --full       Run the test with an initially full accumulator
+  -v --verbose    Emit debug statements.
+  --oparams FILE  Dump parameters to FILE and exit
+  --iparams FILE  Read parameters from FILE
+  --hash HASH     The hash function to use [default: poseidon]
+                  Valid values: poseidon, mimc, pedersen, babypedersen, sha
+  --version       Show version.
 ";
 
 // From https://en.wikipedia.org/wiki/RSA_numbers#RSA-2048
@@ -68,6 +71,8 @@ struct Args {
     flag_hash: Hashes,
     flag_full: bool,
     flag_verbose: bool,
+    flag_oparams: Option<String>,
+    flag_iparams: Option<String>,
     cmd_rsa: bool,
     cmd_merkle: bool,
 }
@@ -254,13 +259,24 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
     }
     let param_start = Instant::now();
     let params = {
-        let p = generate_random_parameters(empty_circuit, rng);
-        if args.flag_verbose {
-            println!("Params gen is okay: {:#?}", p.is_ok());
+        if let Some(ref path) = args.flag_iparams {
+            let mut f = std::fs::File::open(path).expect("Error opening params");
+            let p = Parameters::read(&mut f, true).expect("Error parsing params");
+            p
+        } else {
+            let p = generate_random_parameters(empty_circuit, rng);
+            if args.flag_verbose {
+                println!("Params gen is okay: {:#?}", p.is_ok());
+            }
+            assert!(p.is_ok());
+            p.unwrap()
         }
-        assert!(p.is_ok());
-        p.unwrap()
     };
+    if let Some(ref path) = args.flag_oparams {
+        let mut f = std::fs::File::create(path).expect("Error opening param output file");
+        params.write(&mut f).expect("Error writing params");
+        std::process::exit(0);
+    }
     let pvk = prepare_verifying_key(&params.vk);
     let param_end = Instant::now();
 
