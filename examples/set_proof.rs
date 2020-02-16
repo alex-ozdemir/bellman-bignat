@@ -1,4 +1,3 @@
-#![feature(duration_float)]
 extern crate bellman_bignat;
 extern crate docopt;
 extern crate num_bigint;
@@ -260,8 +259,12 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
     let param_start = Instant::now();
     let params = {
         if let Some(ref path) = args.flag_iparams {
+            if args.flag_verbose {
+                println!("Loading...");
+            }
+
             let mut f = std::fs::File::open(path).expect("Error opening params");
-            let p = Parameters::read(&mut f, true).expect("Error parsing params");
+            let p = Parameters::read(&mut f, false).expect("Error parsing params");
             p
         } else {
             let p = generate_random_parameters(empty_circuit, rng);
