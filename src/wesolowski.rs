@@ -30,7 +30,7 @@ impl<E: Engine> Reduced<E> {
     }
 }
 
-/// Computes `b ^ (prod(xs) / l) % m`, cleverly.
+/// Computes `b ^ (prod(xs) / l) % m`, using gmp.
 pub fn base_to_product<'a, G: SemiGroup, I: Iterator<Item = &'a BigUint>>(
     g: &G,
     b: &G::Elem,
@@ -46,37 +46,6 @@ pub fn base_to_product<'a, G: SemiGroup, I: Iterator<Item = &'a BigUint>>(
     }
     acc /= l;
     g.power(b, &BigUint::from_integer(&acc))
-}
-
-/// Computes `b ^ (a * prod(xs) / l) % m` and `b ^ prod(x) % m`.
-pub fn base_to_product_helper<'a, G: SemiGroup, I: Iterator<Item = &'a BigUint>>(
-    g: &G,
-    a: &BigUint,
-    b: &G::Elem,
-    l: &BigUint,
-    mut xs: I,
-) -> (G::Elem, G::Elem) {
-    if let Some(x) = xs.next() {
-        let (rq, rp) = base_to_product_helper(g, &(a * x % l), b, l, xs);
-        (g.op(&g.power(&rp, &(a * x / l)), &rq), g.power(&rp, &x))
-    } else {
-        (g.power(&b, &(a / l)), b.clone())
-    }
-}
-
-/// Computes `b ^ (prod(xs) / l) % m`, naively.
-pub fn base_to_product_naive<'a, G: SemiGroup, I: Iterator<Item = &'a BigUint>>(
-    g: &G,
-    b: &G::Elem,
-    l: &BigUint,
-    xs: I,
-) -> G::Elem {
-    let mut pow = BigUint::one();
-    for x in xs {
-        pow *= x;
-    }
-    pow /= l;
-    g.power(&b, &pow)
 }
 
 /// \exists q s.t. q^l \times base^r = result
@@ -418,37 +387,6 @@ mod tests {
             g: BigUint::from(2usize),
         };
         ben.iter(|| base_to_product(&g, &b, &l, xs.iter()))
-    }
-
-    #[quickcheck]
-    fn qc_naive_and_clever_base_to_product_agree(
-        b: u8,
-        x0: u8,
-        x1: u8,
-        x2: u8,
-        l: u8,
-        m: u8,
-    ) -> TestResult {
-        if b < 1 {
-            return TestResult::discard();
-        }
-        let b = BigUint::from(b);
-        if m < 2 {
-            return TestResult::discard();
-        }
-        let m = BigUint::from(m);
-        if l < 2 {
-            return TestResult::discard();
-        }
-        let l = BigUint::from(l);
-        let xs = [BigUint::from(x0), BigUint::from(x1), BigUint::from(x2)];
-        let g = RsaGroup {
-            m,
-            g: BigUint::from(2usize),
-        };
-        let clever = base_to_product(&g, &b, &l, xs.iter());
-        let naive = base_to_product_naive(&g, &b, &l, xs.iter());
-        TestResult::from_bool(clever == naive)
     }
 
     #[quickcheck]
