@@ -95,8 +95,8 @@ pub struct SignedTx<E: JubjubEngine> {
 }
 
 pub mod circuit {
-    use sapling_crypto::bellman::pairing::ff::PrimeField;
     use sapling_crypto::bellman::pairing::ff::ScalarEngine;
+    use sapling_crypto::bellman::pairing::ff::{Field, PrimeField};
     use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
     use sapling_crypto::circuit::baby_eddsa::EddsaSignature;
     use sapling_crypto::circuit::ecc::EdwardsPoint;
@@ -108,7 +108,7 @@ pub mod circuit {
     use super::{Action, SignedTx};
     use hash::circuit::CircuitHasher;
     use rollup::sig::allocate_sig;
-    use util::convert::{f_to_usize, usize_to_f};
+    use util::convert::usize_to_f;
     use util::gadget::Gadget;
     use util::num::Num;
     use CResult;
@@ -329,16 +329,15 @@ pub mod circuit {
         ) -> CResult<Self> {
             Num::from(diff.clone()).fits_in_bits(cs.namespace(|| "rangecheck diff"), 64)?;
             let new_amt = AllocatedNum::alloc(cs.namespace(|| "new amt"), || {
-                Ok(usize_to_f(
-                    f_to_usize(self.amt.get_value().grab()?.clone())
-                        - f_to_usize(diff.get_value().grab()?.clone()),
-                ))
+                let mut f = self.amt.get_value().grab()?.clone();
+                f.sub_assign(diff.get_value().grab()?);
+                Ok(f)
             })?;
             Num::from(new_amt.clone()).fits_in_bits(cs.namespace(|| "rangecheck new amt"), 64)?;
             let new_next_tx_no = AllocatedNum::alloc(cs.namespace(|| "new next_tx_no"), || {
-                Ok(usize_to_f(
-                    f_to_usize(self.next_tx_no.get_value().grab()?.clone()) + 1,
-                ))
+                let mut f = self.next_tx_no.get_value().grab()?.clone();
+                f.add_assign(&E::Fr::one());
+                Ok(f)
             })?;
             Num::from(new_next_tx_no.clone())
                 .fits_in_bits(cs.namespace(|| "rangecheck new next_tx_no"), 64)?;
@@ -355,10 +354,9 @@ pub mod circuit {
             diff: &AllocatedNum<E>,
         ) -> CResult<Self> {
             let new_amt = AllocatedNum::alloc(cs.namespace(|| "new amt"), || {
-                Ok(usize_to_f(
-                    f_to_usize(self.amt.get_value().grab()?.clone())
-                        + f_to_usize(diff.get_value().grab()?.clone()),
-                ))
+                let mut f = self.amt.get_value().grab()?.clone();
+                f.add_assign(diff.get_value().grab()?);
+                Ok(f)
             })?;
             Num::from(new_amt.clone()).fits_in_bits(cs.namespace(|| "rangecheck new amt"), 64)?;
             Ok(Self {

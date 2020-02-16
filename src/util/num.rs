@@ -2,14 +2,13 @@ use num_bigint::BigUint;
 use num_traits::One;
 use sapling_crypto::bellman::pairing::ff::{Field, PrimeField, PrimeFieldRepr};
 use sapling_crypto::bellman::pairing::Engine;
-use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
+use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError, Variable};
 use sapling_crypto::circuit::num::AllocatedNum;
 
 use std::convert::From;
 
 use super::convert::f_to_nat;
 use super::convert::nat_to_f;
-use super::convert::usize_to_f;
 use super::bit::{Bit, Bitvector};
 
 use OptionExt;
@@ -46,10 +45,56 @@ impl<E: Engine> Num<E> {
         })
     }
 
+    pub fn fits_in_bits<CS: ConstraintSystem<E>>(
+        &self,
+        mut cs: CS,
+        n_bits: usize,
+    ) -> Result<(), SynthesisError> {
+        let mut repr = self.value.map(|v| v.into_repr());
+        let bits: Vec<Variable> = (0..n_bits)
+            .map(|i|
+                 cs.alloc(
+                     || format!("bit {}", i),
+                     || {
+                         let t = repr.grab_mut()?;
+                         let r = if t.is_odd() {
+                             E::Fr::one()
+                         } else {
+                             E::Fr::zero()
+                         };
+                         t.shr(1);
+                         Ok(r)
+                     },
+                )).collect::<Result<_,_>>()?;
+        for (i, v) in bits.iter().enumerate() {
+            cs.enforce(
+                || format!("{} is bit", i),
+                |lc| lc + v.clone(),
+                |lc| lc + CS::one() - v.clone(),
+                |lc| lc,
+            )
+        }
+        cs.enforce(
+            || "sum",
+            |lc| lc,
+            |lc| lc,
+            |mut lc| {
+                lc = lc - &self.num;
+                let mut f = E::Fr::one();
+                for v in bits {
+                    lc = lc + (f, v);
+                    f.double();
+                }
+                lc
+            },
+        );
+        Ok(())
+    }
+
     /// Compute the natural number represented by an array of limbs.
     /// The limbs are assumed to be based the `limb_width` power of 2.
     /// Low-index bits are low-order
-    pub fn fits_in_bits<CS: ConstraintSystem<E>>(
+    pub fn decompose<CS: ConstraintSystem<E>>(
         &self,
         mut cs: CS,
         n_bits: usize,
@@ -72,11 +117,12 @@ impl<E: Engine> Num<E> {
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let mut f = E::Fr::one();
         let sum_of_tail_bits = allocations
             .iter()
-            .zip(1..n_bits)
-            .fold(LinearCombination::zero(), |lc, (bit, bit_i)| {
-                lc + (usize_to_f::<E::Fr>(2).pow(&[bit_i as u64]), &bit.bit)
+            .fold(LinearCombination::zero(), |lc, bit| {
+                f.double();
+                lc + (f, &bit.bit)
             });
         let bit0_lc = LinearCombination::zero() + &self.num - &sum_of_tail_bits;
         cs.enforce(

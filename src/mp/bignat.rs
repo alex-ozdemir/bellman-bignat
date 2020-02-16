@@ -346,6 +346,22 @@ impl<E: Engine> BigNat<E> {
         Ok(rolling)
     }
 
+    pub fn assert_well_formed<CS: ConstraintSystem<E>>(
+        &self,
+        mut cs: CS,
+    ) -> Result<(), SynthesisError> {
+        // swap the option and iterator
+        let limb_values_split =
+            (0..self.limbs.len()).map(|i| self.limb_values.as_ref().map(|vs| vs[i]));
+        for (i, (limb, limb_value)) in self.limbs.iter().zip(limb_values_split).enumerate() {
+            Num::new(limb_value, limb.clone()).fits_in_bits(
+                cs.namespace(|| format!("{}", i)),
+                self.params.limb_width,
+            )?;
+        }
+        Ok(())
+    }
+
     /// Break `self` up into a bit-vector.
     pub fn decompose<CS: ConstraintSystem<E>>(
         &self,
@@ -359,7 +375,7 @@ impl<E: Engine> BigNat<E> {
             .zip(limb_values_split)
             .enumerate()
             .map(|(i, (limb, limb_value))| {
-                Num::new(limb_value, limb.clone()).fits_in_bits(
+                Num::new(limb_value, limb.clone()).decompose(
                     cs.namespace(|| format!("subdecmop {}", i)),
                     self.params.limb_width,
                 )
@@ -403,7 +419,7 @@ impl<E: Engine> BigNat<E> {
             .map(|vs| vs.last().unwrap().clone());
         let lc = self.limbs.last().unwrap().clone();
         Num::new(value, lc)
-            .fits_in_bits(cs.namespace(|| "decomp"), self.params.limb_width)?
+            .decompose(cs.namespace(|| "decomp"), self.params.limb_width)?
             .into_bits()
             .last()
             .unwrap()
@@ -659,7 +675,7 @@ impl<E: Engine> BigNat<E> {
             other.params.n_limbs,
         )?;
         // Verify that factor is in bounds
-        factor.decompose(cs.namespace(|| "rangecheck"))?;
+        factor.assert_well_formed(cs.namespace(|| "rangecheck"))?;
         self.verify_mult(cs.namespace(|| "multcheck"), &factor, &other)
     }
 
@@ -745,7 +761,7 @@ impl<E: Engine> BigNat<E> {
             prod.params.min_bits = self.params.min_bits + other.params.min_bits - 1;
         }
 
-        prod.decompose(cs.namespace(|| "rangecheck"))?;
+        prod.assert_well_formed(cs.namespace(|| "rangecheck"))?;
 
         // Verify that factor is in bounds
         self.verify_mult(cs.namespace(|| "multcheck"), &other, &prod)?;
@@ -872,7 +888,7 @@ impl<E: Engine> BigNat<E> {
             (),
             &other.params,
         )?;
-        self_pseudo_inverse.decompose(cs.namespace(|| "pseudo inverse rangecheck"))?;
+        self_pseudo_inverse.assert_well_formed(cs.namespace(|| "pseudo inverse rangecheck"))?;
         self.assert_product_mod(
             cs.namespace(|| "lower bound"),
             &self_pseudo_inverse,
@@ -906,7 +922,7 @@ impl<E: Engine> BigNat<E> {
                 limb_width,
             },
         )?;
-        gcd.decompose(cs.namespace(|| "gcd rangecheck"))?;
+        gcd.assert_well_formed(cs.namespace(|| "gcd rangecheck"))?;
         self.enforce_gcd(cs.namespace(|| "enforce"), other, &gcd)?;
         Ok(gcd)
     }
@@ -929,7 +945,7 @@ impl<E: Engine> BigNat<E> {
             self.params.limb_width,
             quotient_limbs,
         )?;
-        quotient.decompose(cs.namespace(|| "quotient rangecheck"))?;
+        quotient.assert_well_formed(cs.namespace(|| "quotient rangecheck"))?;
         let a_poly = Polynomial::from(self.clone());
         let b_poly = Polynomial::from(other.clone());
         let mod_poly = Polynomial::from(modulus.clone());
@@ -975,14 +991,14 @@ impl<E: Engine> BigNat<E> {
             self.params.limb_width,
             quotient_limbs,
         )?;
-        quotient.decompose(cs.namespace(|| "quotient rangecheck"))?;
+        quotient.assert_well_formed(cs.namespace(|| "quotient rangecheck"))?;
         let remainder = BigNat::alloc_from_nat(
             cs.namespace(|| "remainder"),
             || Ok(self.value.grab()? * other.value.grab()? % modulus.value.grab()?),
             self.params.limb_width,
             modulus.limbs.len(),
         )?;
-        remainder.decompose(cs.namespace(|| "remainder rangecheck"))?;
+        remainder.assert_well_formed(cs.namespace(|| "remainder rangecheck"))?;
         let a_poly = Polynomial::from(self.clone());
         let b_poly = Polynomial::from(other.clone());
         let mod_poly = Polynomial::from(modulus.clone());
@@ -1026,14 +1042,14 @@ impl<E: Engine> BigNat<E> {
             self.params.limb_width,
             quotient_limbs,
         )?;
-        quotient.decompose(cs.namespace(|| "quotient rangecheck"))?;
+        quotient.assert_well_formed(cs.namespace(|| "quotient rangecheck"))?;
         let remainder = BigNat::alloc_from_nat(
             cs.namespace(|| "remainder"),
             || Ok(self.value.grab()? % modulus.value.grab()?),
             self.params.limb_width,
             modulus.limbs.len(),
         )?;
-        remainder.decompose(cs.namespace(|| "remainder rangecheck"))?;
+        remainder.assert_well_formed(cs.namespace(|| "remainder rangecheck"))?;
         let mod_poly = Polynomial::from(modulus.clone());
         let q_poly = Polynomial::from(BigNat::from(quotient.clone()));
         let r_poly = Polynomial::from(BigNat::from(remainder.clone()));
@@ -1806,7 +1822,8 @@ mod tests {
             let n = Num::alloc(cs.namespace(|| "n"), || {
                 Ok(nat_to_f(&self.inputs.grab()?.n).unwrap())
             })?;
-            n.fits_in_bits(cs.namespace(|| "decomp"), self.params.n_bits)?;
+            n.fits_in_bits(cs.namespace(|| "fits"), self.params.n_bits)?;
+            n.decompose(cs.namespace(|| "explicit decomp"), self.params.n_bits)?;
             Ok(())
         }
     }
