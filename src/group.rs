@@ -2,6 +2,7 @@ use num_bigint::BigUint;
 use num_traits::One;
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
+use set::int_set_par::IntegerConversion;
 
 use std::cmp::{min, Eq, PartialEq};
 use std::fmt::{self, Debug, Display, Formatter};
@@ -74,7 +75,10 @@ impl SemiGroup for RsaGroup {
     }
 
     fn power(&self, b: &Self::Elem, e: &BigUint) -> Self::Elem {
-        b.modpow(e, &self.m)
+        let m = BigUint::to_integer(&self.m);
+        let b = BigUint::to_integer(b);
+        let e = BigUint::to_integer(e);
+        BigUint::from_integer(&b.pow_mod(&e, &m).unwrap())
     }
 }
 
@@ -120,9 +124,12 @@ impl SemiGroup for RsaQuotientGroup {
     }
 
     fn power(&self, b: &Self::Elem, e: &BigUint) -> Self::Elem {
-        let x = b.modpow(e, &self.m);
-        let y = &self.m - &x;
-        min(x, y)
+        let mut m = BigUint::to_integer(&self.m);
+        let b = BigUint::to_integer(b);
+        let e = BigUint::to_integer(e);
+        let r = b.pow_mod(&e, &m).unwrap();
+        m -= &r;
+        BigUint::from_integer(&min(r, m))
     }
 }
 
