@@ -6,6 +6,7 @@ use set::int_set_par::IntegerConversion;
 
 use std::cmp::{min, Eq, PartialEq};
 use std::fmt::{self, Debug, Display, Formatter};
+use std::str::FromStr;
 
 use mp::bignat::{BigNat, BigNatParams};
 use mp::exp::optimal_k;
@@ -35,18 +36,18 @@ pub trait SemiGroup: Clone + Eq + Debug + Display {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct RsaGroup {
     pub g: BigUint,
     pub m: BigUint,
 }
 
-impl Debug for RsaGroup {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        f.debug_struct("RsaGroup")
-            .field("g", &format_args!("{}", &self.g))
-            .field("m", &format_args!("{}", &self.m))
-            .finish()
+impl RsaGroup {
+    pub fn from_strs(g: &str, m: &str) -> Self {
+        Self {
+            g: BigUint::from_str(g).unwrap(),
+            m: BigUint::from_str(m).unwrap(),
+        }
     }
 }
 
@@ -82,18 +83,18 @@ impl SemiGroup for RsaGroup {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct RsaQuotientGroup {
     pub g: BigUint,
     pub m: BigUint,
 }
 
-impl Debug for RsaQuotientGroup {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        f.debug_struct("RsaQuotientGroup")
-            .field("g", &format_args!("{}", &self.g))
-            .field("m", &format_args!("{}", &self.m))
-            .finish()
+impl RsaQuotientGroup {
+    pub fn from_strs(g: &str, m: &str) -> Self {
+        Self {
+            g: BigUint::from_str(g).unwrap(),
+            m: BigUint::from_str(m).unwrap(),
+        }
     }
 }
 
@@ -234,7 +235,8 @@ pub struct CircuitRsaGroupParams {
     pub n_limbs: usize,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Derivative)]
+#[derivative(PartialEq(bound = ""), Eq(bound = ""))]
 pub struct CircuitRsaGroup<E: Engine> {
     pub g: BigNat<E>,
     pub m: BigNat<E>,
@@ -242,17 +244,6 @@ pub struct CircuitRsaGroup<E: Engine> {
     pub value: Option<RsaGroup>,
     pub params: CircuitRsaGroupParams,
 }
-
-impl<E: Engine> PartialEq for CircuitRsaGroup<E> {
-    fn eq(&self, other: &Self) -> bool {
-        self.g == other.g
-            && self.m == other.m
-            && self.id == other.id
-            && self.value == other.value
-            && self.params == other.params
-    }
-}
-impl<E: Engine> Eq for CircuitRsaGroup<E> {}
 
 impl<E: Engine> Gadget for CircuitRsaGroup<E> {
     type E = E;
@@ -344,7 +335,8 @@ impl<E: Engine> CircuitSemiGroup for CircuitRsaGroup<E> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Derivative)]
+#[derivative(PartialEq(bound = ""), Eq(bound = ""))]
 pub struct CircuitRsaQuotientGroup<E: Engine> {
     pub g: BigNat<E>,
     pub m: BigNat<E>,
@@ -352,20 +344,6 @@ pub struct CircuitRsaQuotientGroup<E: Engine> {
     pub value: Option<RsaQuotientGroup>,
     pub params: CircuitRsaGroupParams,
 }
-
-impl<E: Engine> PartialEq for CircuitRsaQuotientGroup<E> {
-    fn eq(&self, other: &Self) -> bool {
-        self.g == other.g
-            && self.m == other.m
-            && self.id == other.id
-            && self.value == other.value
-            && self.params == other.params
-    }
-}
-
-impl<E: Engine> CircuitRsaQuotientGroup<E> {}
-
-impl<E: Engine> Eq for CircuitRsaQuotientGroup<E> {}
 
 impl<E: Engine> Gadget for CircuitRsaQuotientGroup<E> {
     type E = E;
