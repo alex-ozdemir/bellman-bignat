@@ -341,10 +341,10 @@ pub mod tests {
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
-            let raw_group = RsaGroup {
-                g: BigUint::from_str(self.inputs.grab()?.g).unwrap(),
-                m: BigUint::from_str(self.inputs.grab()?.m).unwrap(),
-            };
+            let raw_group = RsaGroup::from_strs(
+                self.inputs.grab()?.g,
+                self.inputs.grab()?.m,
+            );
             let group = CircuitRsaGroup::alloc(
                 cs.namespace(|| "group"),
                 Some(&raw_group),

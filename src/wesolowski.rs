@@ -297,10 +297,7 @@ mod tests {
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
-            let group = self.inputs.as_ref().map(|is| RsaGroup {
-                m: BigUint::from_str(is.m).unwrap(),
-                g: BigUint::from(2usize),
-            });
+            let group = self.inputs.as_ref().map(|is| RsaGroup::from_strs("2", is.m));
             let g = <CircuitRsaGroup<E> as Gadget>::alloc(
                 cs.namespace(|| "g"),
                 group.as_ref(),
@@ -323,17 +320,13 @@ mod tests {
     #[test]
     fn base_to_product_0() {
         let b = BigUint::from(2usize);
-        let m = BigUint::from(2usize);
         let l = BigUint::from(2usize);
         let xs = [
             BigUint::from(1usize),
             BigUint::from(1usize),
             BigUint::from(1usize),
         ];
-        let g = RsaGroup {
-            m,
-            g: BigUint::from(2usize),
-        };
+        let g = RsaGroup::from_strs("2", "7");
         let clever = base_to_product(&g, &b, &l, xs.iter());
         assert_eq!(clever, BigUint::from(1usize));
     }
@@ -347,11 +340,7 @@ mod tests {
             BigUint::from(1usize),
         ];
         let l = BigUint::from(3usize);
-        let m = BigUint::from(3usize);
-        let g = RsaGroup {
-            m,
-            g: BigUint::from(2usize),
-        };
+        let g = RsaGroup::from_strs("2", "3");
         let clever = base_to_product(&g, &b, &l, xs.iter());
         assert_eq!(clever, BigUint::from(1usize));
     }
@@ -359,17 +348,13 @@ mod tests {
     #[test]
     fn base_to_product_2() {
         let b = BigUint::from(2usize);
-        let m = BigUint::from(17usize);
         let l = BigUint::from(2usize);
         let xs = [
             BigUint::from(1usize),
             BigUint::from(1usize),
             BigUint::from(1usize),
         ];
-        let g = RsaGroup {
-            m,
-            g: BigUint::from(2usize),
-        };
+        let g = RsaGroup::from_strs("2", "17");
         let clever = base_to_product(&g, &b, &l, xs.iter());
         assert_eq!(clever, BigUint::from(1usize));
     }
@@ -377,15 +362,11 @@ mod tests {
     #[bench]
     fn bench_base_to_product(ben: &mut Bencher) {
         let b = BigUint::from(2usize);
-        let m = BigUint::from_str(RSA_2048).unwrap();
         let l = BigUint::from_str("4378779693322314851078464711427904016245509035623856790738093868399234071816590832271409512479149219732517").unwrap();
         let xs = vec![
             BigUint::from_str("31937553987974094718323624043504205546834586774376973142156746177420677478688763299109194760111447891192360362820159149396249147942612451155969619775305163496407638473777556838684741069061351141275104169798848446335239243312484965159829326775977793454245590125242263267420883094097592918381012308862157981711929572365175824672174089740874967056535954189180093379786870545069569186432812295310881940305587888652601685710785451536880821959636231557861961996647312938583891145806865161362164404798306963474067144506909829836959487322752735917184127271661403524679313392947295519723541385106382901941073514681220701690463").unwrap(); 2
         ];
-        let g = RsaGroup {
-            m,
-            g: BigUint::from(2usize),
-        };
+        let g = RsaGroup::from_strs("2", RSA_2048);
         ben.iter(|| base_to_product(&g, &b, &l, xs.iter()))
     }
 

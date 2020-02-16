@@ -482,10 +482,7 @@ mod test {
             let ins = self.inputs.grab()?;
             let group = CircuitRsaGroup::alloc(
                 cs.namespace(|| "group"),
-                Some(&RsaGroup {
-                    g: BigUint::from_str(ins.g).unwrap(),
-                    m: BigUint::from_str(ins.m).unwrap(),
-                }),
+                Some(&RsaGroup::from_strs(ins.g, ins.m)),
                 (),
                 &CircuitRsaGroupParams {
                     limb_width: self.params.limb_width,
