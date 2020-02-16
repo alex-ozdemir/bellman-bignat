@@ -143,6 +143,7 @@ mod tests {
     use sapling_crypto::bellman::pairing::bn256::{Bn256, Fr};
     use sapling_crypto::bellman::Circuit;
     use sapling_crypto::circuit::test::TestConstraintSystem;
+    use crate::util::convert::usize_to_f;
 
     pub struct PolynomialMultiplier<E: Engine> {
         pub a: Vec<E::Fr>,
