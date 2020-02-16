@@ -532,7 +532,7 @@ where
         }
         let removals = (0..self.params.n_removes)
             .map(|i| {
-                let mut cs = cs.namespace(|| "init removals");
+                let mut cs = cs.namespace(|| format!("init removals {}", i));
                 let values = (0..self.params.item_size)
                     .map(|j| {
                         AllocatedNum::alloc(cs.namespace(|| format!("alloc {} {}", i, j)), || {
@@ -553,7 +553,7 @@ where
         }
         let insertions = (0..self.params.n_inserts)
             .map(|i| {
-                let mut cs = cs.namespace(|| "init insertions");
+                let mut cs = cs.namespace(|| format!("init insertions {}", i));
                 let values = (0..self.params.item_size)
                     .map(|j| {
                         AllocatedNum::alloc(cs.namespace(|| format!("alloc {} {}", i, j)), || {
@@ -687,7 +687,7 @@ where
 
         let final_set = {
             let final_set: CircuitSet<E, H, CircuitRsaQuotientGroup<E>, Inner> = CircuitSet::alloc(
-                cs.namespace(|| "set init"),
+                cs.namespace(|| "set final"),
                 self.inputs.as_ref().map(|is| &is.final_state),
                 (group, challenge),
                 &CircuitSetParams {
