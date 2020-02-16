@@ -1073,27 +1073,30 @@ impl<E: Engine> BigNat<E> {
     pub fn group_limbs(&self, limbs_per_group: usize) -> BigNat<E> {
         let n_groups = (self.limbs.len() - 1) / limbs_per_group + 1;
         let limb_values = self.limb_values.as_ref().map(|vs| {
-            let mut values: Vec<E::Fr> =
-                std::iter::repeat_with(E::Fr::zero).take(n_groups).collect();
+            let mut values: Vec<E::Fr> = vec![E::Fr::zero(); n_groups];
+            let mut shift = E::Fr::one();
+            let limb_block = (0..self.params.limb_width).fold(E::Fr::one(), |mut l, _| {l.double(); l});
             for (i, v) in vs.iter().enumerate() {
-                let mut b = E::Fr::from_str("2")
-                    .unwrap()
-                    .pow(&[((i % limbs_per_group) * self.params.limb_width) as u64]);
-                b.mul_assign(&v);
-                values[i / limbs_per_group].add_assign(&b);
+                if i % limbs_per_group == 0 {
+                    shift = E::Fr::one();
+                }
+                let mut a = shift.clone();
+                a.mul_assign(&v);
+                values[i / limbs_per_group].add_assign(&a);
+                shift.mul_assign(&limb_block);
             }
             values
         });
         let limbs = {
-            let mut limbs: Vec<LinearCombination<E>> =
-                std::iter::repeat_with(LinearCombination::zero)
-                    .take(n_groups)
-                    .collect();
+            let mut limbs: Vec<LinearCombination<E>> = vec![LinearCombination::zero(); n_groups];
+            let mut shift = E::Fr::one();
+            let limb_block = (0..self.params.limb_width).fold(E::Fr::one(), |mut l, _| {l.double(); l});
             for (i, limb) in self.limbs.iter().enumerate() {
-                let b = E::Fr::from_str("2")
-                    .unwrap()
-                    .pow(&[((i % limbs_per_group) * self.params.limb_width) as u64]);
-                limbs[i / limbs_per_group] = limbs[i / limbs_per_group].clone() + (b, limb);
+                if i % limbs_per_group == 0 {
+                    shift = E::Fr::one();
+                }
+                limbs[i / limbs_per_group] = std::mem::replace(&mut limbs[i / limbs_per_group], LinearCombination::zero()) + (shift.clone(), limb);
+                shift.mul_assign(&limb_block);
             }
             limbs
         };
