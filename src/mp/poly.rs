@@ -5,7 +5,6 @@ use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisErro
 use std::cmp::max;
 use std::fmt::{self, Debug, Formatter};
 
-use util::convert::usize_to_f;
 use OptionExt;
 
 pub struct Polynomial<E: Engine> {
@@ -66,31 +65,34 @@ impl<E: Engine> Polynomial<E> {
             coefficients,
             values,
         };
-        for x in 1..(n_product_coeffs + 1) {
+        let one = E::Fr::one();
+        let mut x = E::Fr::zero();
+        for _ in 1..(n_product_coeffs + 1) {
+            x.add_assign(&one);
             cs.enforce(
                 || format!("pointwise product @ {}", x),
                 |lc| {
-                    (0..self.coefficients.len()).fold(lc, |lc, i| {
-                        lc + (
-                            usize_to_f::<E::Fr>(x).pow(&[i as u64]),
-                            &self.coefficients[i],
-                        )
+                    let mut i = E::Fr::one();
+                    self.coefficients.iter().fold(lc, |lc, c| {
+                        let r = lc + (i, c);
+                        i.mul_assign(&x);
+                        r
                     })
                 },
                 |lc| {
-                    (0..other.coefficients.len()).fold(lc, |lc, i| {
-                        lc + (
-                            usize_to_f::<E::Fr>(x).pow(&[i as u64]),
-                            &other.coefficients[i],
-                        )
+                    let mut i = E::Fr::one();
+                    other.coefficients.iter().fold(lc, |lc, c| {
+                        let r = lc + (i, c);
+                        i.mul_assign(&x);
+                        r
                     })
                 },
                 |lc| {
-                    (0..product.coefficients.len()).fold(lc, |lc, i| {
-                        lc + (
-                            usize_to_f::<E::Fr>(x).pow(&[i as u64]),
-                            &product.coefficients[i],
-                        )
+                    let mut i = E::Fr::one();
+                    product.coefficients.iter().fold(lc, |lc, c| {
+                        let r = lc + (i, c);
+                        i.mul_assign(&x);
+                        r
                     })
                 },
             )
