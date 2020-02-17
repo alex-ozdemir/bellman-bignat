@@ -1,6 +1,4 @@
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
-use num_bigint::BigUint;
-use num_traits::Num;
 use rug::{ops::Pow, Assign, Integer};
 use serde::{Deserialize, Serialize};
 
@@ -250,16 +248,6 @@ fn _make_table(bases: &[Integer], modulus: &Integer) -> Vec<Integer> {
 pub trait IntegerConversion {
     fn to_integer(s: &Self) -> Integer;
     fn from_integer(i: &Integer) -> Self;
-}
-
-impl IntegerConversion for BigUint {
-    fn to_integer(n: &BigUint) -> Integer {
-        Integer::from_str_radix(n.to_str_radix(32).as_ref(), 32).unwrap()
-    }
-
-    fn from_integer(n: &Integer) -> BigUint {
-        BigUint::from_str_radix(n.to_string_radix(32).as_ref(), 32).unwrap()
-    }
 }
 
 impl IntegerConversion for Integer {

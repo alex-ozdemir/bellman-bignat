@@ -1,6 +1,5 @@
 extern crate bellman_bignat;
 extern crate docopt;
-extern crate num_bigint;
 extern crate rand;
 extern crate sapling_crypto;
 extern crate serde;
