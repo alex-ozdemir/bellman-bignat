@@ -94,7 +94,6 @@ where
     fn insert(&mut self, n: Integer) {
         if let Some(ref mut d) = self.digest {
             *d = self.group.power(d, &n);
-            println!("After {}, digest {}", n, d);
         }
         *self.elements.entry(n).or_insert(0) += 1;
     }
@@ -362,9 +361,6 @@ pub mod tests {
                     group.clone(),
                     &(),
                 )?;
-
-            println!("initial_set.digest {}", initial_set.digest);
-            println!("initial_digest {}", initial_digest);
 
             initial_set
                 .digest
