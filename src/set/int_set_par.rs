@@ -327,7 +327,8 @@ where
 
     fn insert(&mut self, n: Integer) {
         if let Some(ref mut d) = self.digest {
-            d.pow_mod_mut(&n, &self.comb.m).expect("Modular exponentiation failed");
+            d.pow_mod_mut(&n, &self.comb.m)
+                .expect("Modular exponentiation failed");
         }
         *self.elements.entry(n).or_insert(0) += 1;
     }
@@ -522,10 +523,7 @@ mod tests {
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
-            let raw_group = RsaGroup::from_strs(
-                self.inputs.grab()?.g,
-                self.inputs.grab()?.m,
-            );
+            let raw_group = RsaGroup::from_strs(self.inputs.grab()?.g, self.inputs.grab()?.m);
             let group = CircuitRsaGroup::alloc(
                 cs.namespace(|| "group"),
                 Some(&raw_group),
@@ -564,8 +562,8 @@ mod tests {
         }
     }
 
-    use sapling_crypto::circuit::test::TestConstraintSystem;
     use sapling_crypto::bellman::pairing::bn256::Bn256;
+    use sapling_crypto::circuit::test::TestConstraintSystem;
 
     circuit_tests! {
         removal_init_empty: (

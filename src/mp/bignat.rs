@@ -15,8 +15,8 @@ use super::poly::Polynomial;
 use util::bit::{Bit, Bitvector};
 use util::convert::{f_to_nat, nat_to_f};
 use util::gadget::Gadget;
-use util::num::Num;
 use util::lazy::LazyCell;
+use util::num::Num;
 use OptionExt;
 
 /// Compute the natural number represented by an array of limbs.
@@ -366,10 +366,8 @@ impl<E: Engine> BigNat<E> {
         let limb_values_split =
             (0..self.limbs.len()).map(|i| self.limb_values.as_ref().map(|vs| vs[i]));
         for (i, (limb, limb_value)) in self.limbs.iter().zip(limb_values_split).enumerate() {
-            Num::new(limb_value, limb.clone()).fits_in_bits(
-                cs.namespace(|| format!("{}", i)),
-                self.params.limb_width,
-            )?;
+            Num::new(limb_value, limb.clone())
+                .fits_in_bits(cs.namespace(|| format!("{}", i)), self.params.limb_width)?;
         }
         Ok(())
     }
@@ -578,9 +576,8 @@ impl<E: Engine> BigNat<E> {
         let target_base = Integer::from(1) << self.params.limb_width as u32;
         let mut accumulated_extra = Integer::from(0usize);
         let max_word = std::cmp::max(&self.params.max_word, &other.params.max_word);
-        let carry_bits =
-            (((max_word.to_f64() * 2.0).log2() - self.params.limb_width as f64).ceil()
-                + 0.1) as usize;
+        let carry_bits = (((max_word.to_f64() * 2.0).log2() - self.params.limb_width as f64).ceil()
+            + 0.1) as usize;
         let mut carry_in = Num::new(Some(E::Fr::zero()), LinearCombination::zero());
 
         for i in 0..n {
@@ -655,9 +652,8 @@ impl<E: Engine> BigNat<E> {
     ) -> Result<(), SynthesisError> {
         self.enforce_limb_width_agreement(other, "equal_when_carried_regroup")?;
         let max_word = std::cmp::max(&self.params.max_word, &other.params.max_word);
-        let carry_bits =
-            (((max_word.to_f64() * 2.0).log2() - self.params.limb_width as f64).ceil()
-                + 0.1) as usize;
+        let carry_bits = (((max_word.to_f64() * 2.0).log2() - self.params.limb_width as f64).ceil()
+            + 0.1) as usize;
         let limbs_per_group = (E::Fr::CAPACITY as usize - carry_bits) / self.params.limb_width;
         let self_grouped = self.group_limbs(limbs_per_group);
         let other_grouped = other.group_limbs(limbs_per_group);
@@ -882,10 +878,10 @@ impl<E: Engine> BigNat<E> {
                 .and_then(|a| {
                     // To compute the bezout coefficients, we do some acrobatics b/c they might be
                     // negative
-                    other.value.as_ref().map(|b| {
-                        (a.clone().gcd_cofactors(b.clone(), Integer::new()).1 + b)
-                            % b
-                    })
+                    other
+                        .value
+                        .as_ref()
+                        .map(|b| (a.clone().gcd_cofactors(b.clone(), Integer::new()).1 + b) % b)
                 })
                 .as_ref(),
             (),
@@ -944,12 +940,14 @@ impl<E: Engine> BigNat<E> {
         let quotient_limbs = self.limbs.len() + other.limbs.len();
         let quotient = BigNat::alloc_from_nat(
             cs.namespace(|| "quotient"),
-            || Ok({
-                let mut x: Integer = self.value.grab()?.clone();
-                x *= *other.value().grab()?;
-                x /= *modulus.value().grab()?;
-                x
-            }),
+            || {
+                Ok({
+                    let mut x: Integer = self.value.grab()?.clone();
+                    x *= *other.value().grab()?;
+                    x /= *modulus.value().grab()?;
+                    x
+                })
+            },
             self.params.limb_width,
             quotient_limbs,
         )?;
@@ -1000,24 +998,28 @@ impl<E: Engine> BigNat<E> {
         let quotient_limbs = quotient_bits.saturating_sub(1) / limb_width + 1;
         let quotient = BigNat::alloc_from_nat(
             cs.namespace(|| "quotient"),
-            || Ok({
-                let mut x = self.value.grab()?.clone();
-                x *= other.value.grab()?;
-                x /= modulus.value.grab()?;
-                x
-            }),
+            || {
+                Ok({
+                    let mut x = self.value.grab()?.clone();
+                    x *= other.value.grab()?;
+                    x /= modulus.value.grab()?;
+                    x
+                })
+            },
             self.params.limb_width,
             quotient_limbs,
         )?;
         quotient.assert_well_formed(cs.namespace(|| "quotient rangecheck"))?;
         let remainder = BigNat::alloc_from_nat(
             cs.namespace(|| "remainder"),
-            || Ok({
-                let mut x = self.value.grab()?.clone();
-                x *= other.value.grab()?;
-                x %= modulus.value.grab()?;
-                x
-            }),
+            || {
+                Ok({
+                    let mut x = self.value.grab()?.clone();
+                    x *= other.value.grab()?;
+                    x %= modulus.value.grab()?;
+                    x
+                })
+            },
             self.params.limb_width,
             modulus.limbs.len(),
         )?;
@@ -1105,7 +1107,10 @@ impl<E: Engine> BigNat<E> {
         let limb_values = self.limb_values.as_ref().map(|vs| {
             let mut values: Vec<E::Fr> = vec![E::Fr::zero(); n_groups];
             let mut shift = E::Fr::one();
-            let limb_block = (0..self.params.limb_width).fold(E::Fr::one(), |mut l, _| {l.double(); l});
+            let limb_block = (0..self.params.limb_width).fold(E::Fr::one(), |mut l, _| {
+                l.double();
+                l
+            });
             for (i, v) in vs.iter().enumerate() {
                 if i % limbs_per_group == 0 {
                     shift = E::Fr::one();
@@ -1120,18 +1125,24 @@ impl<E: Engine> BigNat<E> {
         let limbs = {
             let mut limbs: Vec<LinearCombination<E>> = vec![LinearCombination::zero(); n_groups];
             let mut shift = E::Fr::one();
-            let limb_block = (0..self.params.limb_width).fold(E::Fr::one(), |mut l, _| {l.double(); l});
+            let limb_block = (0..self.params.limb_width).fold(E::Fr::one(), |mut l, _| {
+                l.double();
+                l
+            });
             for (i, limb) in self.limbs.iter().enumerate() {
                 if i % limbs_per_group == 0 {
                     shift = E::Fr::one();
                 }
-                limbs[i / limbs_per_group] = std::mem::replace(&mut limbs[i / limbs_per_group], LinearCombination::zero()) + (shift.clone(), limb);
+                limbs[i / limbs_per_group] =
+                    std::mem::replace(&mut limbs[i / limbs_per_group], LinearCombination::zero())
+                        + (shift.clone(), limb);
                 shift.mul_assign(&limb_block);
             }
             limbs
         };
         let max_word = {
-            let mut x = self.params.max_word.clone() << (limbs_per_group * self.params.limb_width) as u32;
+            let mut x =
+                self.params.max_word.clone() << (limbs_per_group * self.params.limb_width) as u32;
             x -= &self.params.max_word;
             x
         };
@@ -1201,10 +1212,7 @@ impl<E: Engine> BigNat<E> {
         }
         let k = optimal_k(exp.bits.len());
         let base_powers = {
-            let mut base_powers = vec![
-                BigNat::one::<CS>(modulus.params.limb_width),
-                self.clone(),
-            ];
+            let mut base_powers = vec![BigNat::one::<CS>(modulus.params.limb_width), self.clone()];
             for i in 2..(1 << k) {
                 base_powers.push(
                     base_powers
@@ -1232,7 +1240,8 @@ impl<E: Engine> BigNat<E> {
         exp: &Self,
         modulus: &Self,
     ) -> Result<BigNat<E>, SynthesisError> {
-        let exp_bin_rev = if exp.params.max_word >= Integer::from(1) << exp.params.limb_width as u32 {
+        let exp_bin_rev = if exp.params.max_word >= Integer::from(1) << exp.params.limb_width as u32
+        {
             let exp_carried = BigNat::alloc_from_nat(
                 cs.namespace(|| "exp carried"),
                 || Ok(exp.value.grab()?.clone()),
@@ -1373,7 +1382,8 @@ impl<E: Engine> BigNat<E> {
 
     pub fn n_bits(&self) -> usize {
         assert!(self.params.n_limbs > 0);
-        self.params.limb_width * (self.params.n_limbs - 1) + self.params.max_word.significant_bits() as usize
+        self.params.limb_width * (self.params.n_limbs - 1)
+            + self.params.max_word.significant_bits() as usize
     }
 }
 
@@ -1465,8 +1475,8 @@ mod tests {
 
     use quickcheck::TestResult;
 
-    use util::convert::usize_to_f;
     use std::str::FromStr;
+    use util::convert::usize_to_f;
 
     pub struct CarrierInputs {
         pub a: Vec<usize>,

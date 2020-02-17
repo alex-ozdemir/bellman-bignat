@@ -1,4 +1,4 @@
-use fnv::{FnvHashMap,FnvHashSet};
+use fnv::{FnvHashMap, FnvHashSet};
 use sapling_crypto::bellman::pairing::ff::{PrimeField, ScalarEngine};
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{Circuit, ConstraintSystem, LinearCombination, SynthesisError};
@@ -99,14 +99,18 @@ where
     }
 
     fn update_hash(&mut self, level: usize, index: usize) {
-        self.nodes.insert((level, index), self.compute_hash(level, index));
+        self.nodes
+            .insert((level, index), self.compute_hash(level, index));
     }
 
     fn update_hashes_from_leaf_indices(&mut self, indices: impl Iterator<Item = usize>) {
         let mut indices: FnvHashSet<usize> = indices.map(|i| i / 2).collect();
         use rayon::prelude::*;
         for level in (0..self.depth).rev() {
-            let hashes_and_ixds: Vec<_> = indices.par_iter().map(|i| (self.compute_hash(level, *i), *i)).collect();
+            let hashes_and_ixds: Vec<_> = indices
+                .par_iter()
+                .map(|i| (self.compute_hash(level, *i), *i))
+                .collect();
             for (h, i) in hashes_and_ixds {
                 self.nodes.insert((level, i), h);
             }
@@ -357,7 +361,8 @@ where
     ) -> Result<(), SynthesisError> {
         let new = self.swap_all(cs.namespace(|| "do swap"), removed_items, inserted_items)?;
         let eq = AllocatedNum::equals(cs.namespace(|| "equal"), &new.digest, &other.digest)?;
-        Boolean::enforce_equal(cs.namespace(|| "equal is true"),
+        Boolean::enforce_equal(
+            cs.namespace(|| "equal is true"),
             &eq,
             &Boolean::constant(true),
         )?;

@@ -9,7 +9,7 @@ use bellman_bignat::hash::circuit::CircuitHasher;
 use bellman_bignat::hash::hashes::Poseidon;
 use bellman_bignat::hash::Hasher;
 use bellman_bignat::set::int_set_par::ParallelExpSet;
-use bellman_bignat::set::rsa::{SetBenchInputs};
+use bellman_bignat::set::rsa::SetBenchInputs;
 use bellman_bignat::util::verbose;
 use docopt::Docopt;
 use sapling_crypto::bellman::pairing::bls12_381::Bls12;

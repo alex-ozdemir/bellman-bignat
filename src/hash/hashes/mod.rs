@@ -27,14 +27,16 @@ mod sha;
 #[derivative(Clone(bound = ""))]
 pub struct Poseidon<E>
 where
-    E: PoseidonEngine<SBox = QuinticSBox<E>>
+    E: PoseidonEngine<SBox = QuinticSBox<E>>,
 {
     pub params: Arc<E::Params>,
 }
 
 impl<E: PoseidonEngine<SBox = QuinticSBox<E>>> Poseidon<E> {
     fn from_params(p: E::Params) -> Self {
-        Self { params: Arc::new(p) }
+        Self {
+            params: Arc::new(p),
+        }
     }
 }
 
@@ -98,7 +100,7 @@ impl<E: JubjubEngine> Hasher for Pedersen<E> {
             .0
     }
 }
-impl<E: JubjubEngine>  Pedersen<E> {
+impl<E: JubjubEngine> Pedersen<E> {
     fn from_params(p: E::Params) -> Self {
         Self {
             params: Arc::new(p),
@@ -276,11 +278,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use test::Bencher;
     use super::*;
-    use sapling_crypto::bellman::pairing::ff::Field;
-    use util::test_helpers::*;
     use hash::circuit::Bench;
+    use sapling_crypto::bellman::pairing::ff::Field;
+    use test::Bencher;
+    use util::test_helpers::*;
 
     fn bench_hasher_hash_n<H: Hasher>(h: H, n: usize, b: &mut Bencher) {
         let v = vec![H::F::one(); n];
@@ -334,5 +336,4 @@ mod tests {
 
         bench_bn256_mimc_2: (Bench::from_hasher(Mimc::<Bls12>::default(), 2), true),
     }
-
 }

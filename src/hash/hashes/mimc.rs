@@ -128,7 +128,7 @@ pub mod helper {
         out
     }
 
-    pub fn hash<F: PrimeField>(xs: &[F]) -> F{
+    pub fn hash<F: PrimeField>(xs: &[F]) -> F {
         xs.into_iter().fold(F::zero(), |x, y| compression(x, *y))
     }
 }
@@ -179,17 +179,16 @@ pub fn compression<E: Engine, CS: ConstraintSystem<E>>(
     x: AllocatedNum<E>,
 ) -> Result<Num<E>, SynthesisError> {
     let out = permutation(cs.namespace(|| "permutation"), x.clone())?;
-    Ok(Num::from(out).add_number_with_coeff(&acc, E::Fr::one()).add_number_with_coeff(&x, E::Fr::one()))
+    Ok(Num::from(out)
+        .add_number_with_coeff(&acc, E::Fr::one())
+        .add_number_with_coeff(&x, E::Fr::one()))
 }
 
 pub fn allocate_num<E: Engine, CS: ConstraintSystem<E>>(
     mut cs: CS,
-    n: Num<E>
+    n: Num<E>,
 ) -> Result<AllocatedNum<E>, SynthesisError> {
-    let out = AllocatedNum::alloc(
-        cs.namespace(|| "alloc"),
-        || Ok(*n.get_value().grab()?)
-    )?;
+    let out = AllocatedNum::alloc(cs.namespace(|| "alloc"), || Ok(*n.get_value().grab()?))?;
     cs.enforce(
         || "eq",
         |lc| lc,
@@ -205,7 +204,11 @@ pub fn hash<E: Engine, CS: ConstraintSystem<E>>(
 ) -> Result<AllocatedNum<E>, SynthesisError> {
     let mut aa = allocate_num(cs.namespace(|| format!("alloc 0")), Num::zero())?;
     for (i, x) in xs.into_iter().enumerate() {
-        let h = compression(cs.namespace(|| format!("hash {}", i)), aa.clone(), x.clone())?;
+        let h = compression(
+            cs.namespace(|| format!("hash {}", i)),
+            aa.clone(),
+            x.clone(),
+        )?;
         aa = allocate_num(cs.namespace(|| format!("alloc {}", i + 1)), h)?;
     }
     Ok(aa)

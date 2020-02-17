@@ -418,7 +418,9 @@ where
                 .into_iter()
                 .enumerate()
                 .map(|(i, n)| {
-                    n.as_sapling_allocated_num(cs.namespace(|| format!("initial digest hash {}", i)))
+                    n.as_sapling_allocated_num(
+                        cs.namespace(|| format!("initial digest hash {}", i)),
+                    )
                 })
                 .collect::<Result<Vec<_>, _>>()?,
         );

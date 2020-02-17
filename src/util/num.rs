@@ -6,9 +6,9 @@ use sapling_crypto::circuit::num::AllocatedNum;
 
 use std::convert::From;
 
+use super::bit::{Bit, Bitvector};
 use super::convert::f_to_nat;
 use super::convert::nat_to_f;
-use super::bit::{Bit, Bitvector};
 
 use OptionExt;
 
@@ -51,20 +51,22 @@ impl<E: Engine> Num<E> {
     ) -> Result<(), SynthesisError> {
         let mut repr = self.value.map(|v| v.into_repr());
         let bits: Vec<Variable> = (0..n_bits)
-            .map(|i|
-                 cs.alloc(
-                     || format!("bit {}", i),
-                     || {
-                         let t = repr.grab_mut()?;
-                         let r = if t.is_odd() {
-                             E::Fr::one()
-                         } else {
-                             E::Fr::zero()
-                         };
-                         t.shr(1);
-                         Ok(r)
-                     },
-                )).collect::<Result<_,_>>()?;
+            .map(|i| {
+                cs.alloc(
+                    || format!("bit {}", i),
+                    || {
+                        let t = repr.grab_mut()?;
+                        let r = if t.is_odd() {
+                            E::Fr::one()
+                        } else {
+                            E::Fr::zero()
+                        };
+                        t.shr(1);
+                        Ok(r)
+                    },
+                )
+            })
+            .collect::<Result<_, _>>()?;
         for (i, v) in bits.iter().enumerate() {
             cs.enforce(
                 || format!("{} is bit", i),
@@ -181,10 +183,7 @@ pub mod allocated_num {
             return Err(SynthesisError::Unsatisfiable);
         }
         let res = Num::alloc(cs.namespace(|| "res"), || {
-            Ok(nat_to_f(
-                &(f_to_nat(num.get_value().grab()?).keep_bits(n_bits as u32))
-            )
-            .unwrap())
+            Ok(nat_to_f(&(f_to_nat(num.get_value().grab()?).keep_bits(n_bits as u32))).unwrap())
         })?;
         cs.enforce(
             || "sum",
@@ -192,7 +191,11 @@ pub mod allocated_num {
             |lc| lc,
             |mut lc| {
                 for i in 0..n_bits {
-                    lc = lc + &bits[i].lc(CS::one(), nat_to_f(&(Integer::from(1) << i as u32)).unwrap());
+                    lc = lc
+                        + &bits[i].lc(
+                            CS::one(),
+                            nat_to_f(&(Integer::from(1) << i as u32)).unwrap(),
+                        );
                 }
                 lc = lc - &res.num;
                 lc

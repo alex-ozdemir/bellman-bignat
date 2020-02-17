@@ -34,22 +34,48 @@ pub trait Gadget: Sized + Clone {
         Ok(())
     }
 
-    fn inputize_hash<CS: ConstraintSystem<Self::E>, H: CircuitHasher<E = Self::E>>(&self, mut cs: CS, hasher: &H) -> Result<AllocatedNum<Self::E>, SynthesisError> {
+    fn inputize_hash<CS: ConstraintSystem<Self::E>, H: CircuitHasher<E = Self::E>>(
+        &self,
+        mut cs: CS,
+        hasher: &H,
+    ) -> Result<AllocatedNum<Self::E>, SynthesisError> {
         let nums = self.as_nums(cs.namespace(|| "to nums"))?;
         let hash = hasher.allocate_hash(cs.namespace(|| "hash"), &nums)?;
-        let in_ = cs.alloc_input(|| "input", || hash.get_value().ok_or(SynthesisError::AssignmentMissing))?;
-        cs.enforce(|| "eq", |lc| lc, |lc| lc, |lc| lc + in_ - hash.get_variable());
+        let in_ = cs.alloc_input(
+            || "input",
+            || hash.get_value().ok_or(SynthesisError::AssignmentMissing),
+        )?;
+        cs.enforce(
+            || "eq",
+            |lc| lc,
+            |lc| lc,
+            |lc| lc + in_ - hash.get_variable(),
+        );
         Ok(hash)
     }
 
-    fn as_nums<CS: ConstraintSystem<Self::E>>(&self, mut cs: CS) -> Result<Vec<AllocatedNum<Self::E>>, SynthesisError> {
+    fn as_nums<CS: ConstraintSystem<Self::E>>(
+        &self,
+        mut cs: CS,
+    ) -> Result<Vec<AllocatedNum<Self::E>>, SynthesisError> {
         let wires = self.wires();
         let wire_values = self.wire_values();
-        wires.into_iter().enumerate().map(|(i, w)| {
-            let n = AllocatedNum::alloc(cs.namespace(|| format!("wire {}", i)), || Ok(wire_values.grab()?[i]))?;
-            cs.enforce(|| format!("wire eq {}", i), |lc| lc, |lc| lc, |lc| lc + &w - n.get_variable());
-            Ok(n)
-        }).collect()
+        wires
+            .into_iter()
+            .enumerate()
+            .map(|(i, w)| {
+                let n = AllocatedNum::alloc(cs.namespace(|| format!("wire {}", i)), || {
+                    Ok(wire_values.grab()?[i])
+                })?;
+                cs.enforce(
+                    || format!("wire eq {}", i),
+                    |lc| lc,
+                    |lc| lc,
+                    |lc| lc + &w - n.get_variable(),
+                );
+                Ok(n)
+            })
+            .collect()
     }
 
     /// Returns `i0` if `s` is false, otherwise `i1`.

@@ -62,7 +62,8 @@ pub mod circuit {
                     .fold(lc - num.get_variable(), |acc, (i, b)| {
                         acc + &b.lc(
                             CS::one(),
-                            nat_to_f(&(Integer::from(1) << i as u32)).expect("out-of-bounds scalar"),
+                            nat_to_f(&(Integer::from(1) << i as u32))
+                                .expect("out-of-bounds scalar"),
                         )
                     })
             },

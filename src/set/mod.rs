@@ -2,8 +2,8 @@ use sapling_crypto::bellman::pairing::ff::PrimeField;
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::ConstraintSystem;
 
-use CResult;
 use hash::circuit::MaybeHashed;
+use CResult;
 
 pub mod int_set;
 pub mod int_set_par;
@@ -33,7 +33,7 @@ where
     fn digest(&mut self) -> Self::Digest;
 }
 
-pub trait CircuitGenSet : Sized {
+pub trait CircuitGenSet: Sized {
     type E: Engine;
     fn swap_all<CS: ConstraintSystem<Self::E>>(
         self,

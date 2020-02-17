@@ -140,10 +140,10 @@ impl<E: Engine> Polynomial<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::convert::usize_to_f;
     use sapling_crypto::bellman::pairing::bn256::{Bn256, Fr};
     use sapling_crypto::bellman::Circuit;
     use sapling_crypto::circuit::test::TestConstraintSystem;
-    use crate::util::convert::usize_to_f;
 
     pub struct PolynomialMultiplier<E: Engine> {
         pub a: Vec<E::Fr>,
@@ -187,10 +187,7 @@ mod tests {
         let mut cs = TestConstraintSystem::<Bn256>::new();
 
         let circuit = PolynomialMultiplier {
-            a: [1, 1, 1]
-                .iter()
-                .map(|i| usize_to_f::<Fr>(*i))
-                .collect(),
+            a: [1, 1, 1].iter().map(|i| usize_to_f::<Fr>(*i)).collect(),
             b: [1, 1].iter().map(|i| usize_to_f::<Fr>(*i)).collect(),
         };
 

@@ -1,4 +1,4 @@
-use rug::{Integer, integer::Order};
+use rug::{integer::Order, Integer};
 use sapling_crypto::bellman::pairing::ff::{PrimeField, PrimeFieldRepr};
 
 /// Convert a field element to a natural number

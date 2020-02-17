@@ -1,4 +1,3 @@
-
 /// Computes the optimal window size, k, for a windowed (Bauer) exponentiation with an n-bit
 /// exponent.
 pub fn optimal_k(n: usize) -> usize {

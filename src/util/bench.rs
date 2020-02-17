@@ -5,7 +5,7 @@ pub use sapling_crypto::bellman::{
 
 use std::io::Error;
 use std::io::Write;
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 
 pub struct ConstraintCounter {
     n_constraints: usize,

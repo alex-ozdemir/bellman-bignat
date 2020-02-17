@@ -4,9 +4,9 @@ use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
 
 use std::fmt::Debug;
 
+use group::{CircuitSemiGroup, SemiGroup};
 use mp::bignat::BigNat;
 use util::gadget::Gadget;
-use group::{CircuitSemiGroup, SemiGroup};
 
 /// A structure for a natural number which may have already been reduced modulo a challenge. Useful
 /// for lazy reduction.
@@ -100,8 +100,8 @@ mod tests {
     use OptionExt;
 
     use quickcheck::TestResult;
-    use util::test_helpers::*;
     use test::*;
+    use util::test_helpers::*;
 
     use group::{CircuitRsaGroup, CircuitRsaGroupParams, RsaGroup};
 
@@ -288,7 +288,10 @@ mod tests {
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
-            let group = self.inputs.as_ref().map(|is| RsaGroup::from_strs("2", is.m));
+            let group = self
+                .inputs
+                .as_ref()
+                .map(|is| RsaGroup::from_strs("2", is.m));
             let g = <CircuitRsaGroup<E> as Gadget>::alloc(
                 cs.namespace(|| "g"),
                 group.as_ref(),

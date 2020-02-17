@@ -9,15 +9,15 @@ use bellman_bignat::hash::circuit::CircuitHasher;
 use bellman_bignat::hash::hashes::{Mimc, Pedersen, Poseidon, Sha256};
 use bellman_bignat::hash::Hasher;
 use bellman_bignat::mp::bignat::nat_to_limbs;
+use bellman_bignat::set::int_set_par::ParallelExpSet;
 use bellman_bignat::set::merkle::{MerkleSetBench, MerkleSetBenchInputs, MerkleSetBenchParams};
 use bellman_bignat::set::rsa::{SetBench, SetBenchInputs, SetBenchParams};
 use bellman_bignat::set::GenSet;
-use bellman_bignat::set::int_set_par::ParallelExpSet;
 use bellman_bignat::util::verbose;
 use docopt::Docopt;
 use sapling_crypto::bellman::groth16::{
     generate_random_parameters, prepare_prover, prepare_verifying_key, verify_proof,
-    ParameterSource, Proof, Parameters
+    ParameterSource, Parameters, Proof,
 };
 use sapling_crypto::bellman::pairing::bls12_381::Bls12;
 use sapling_crypto::bellman::pairing::Engine;
@@ -95,44 +95,20 @@ fn main() {
         (
             "merkle",
             match args.flag_hash {
-                Hashes::Poseidon => merkle_bench::<Bls12, _>(
-                    &args,
-                    Poseidon::default(),
-                ),
-                Hashes::Mimc => merkle_bench::<Bls12, _>(
-                    &args,
-                    Mimc::default(),
-                ),
-                Hashes::Pedersen => merkle_bench::<Bls12, _>(
-                    &args,
-                    Pedersen::default(),
-                ),
-                Hashes::Sha => merkle_bench::<Bls12, _>(
-                    &args,
-                    Sha256::default(),
-                ),
+                Hashes::Poseidon => merkle_bench::<Bls12, _>(&args, Poseidon::default()),
+                Hashes::Mimc => merkle_bench::<Bls12, _>(&args, Mimc::default()),
+                Hashes::Pedersen => merkle_bench::<Bls12, _>(&args, Pedersen::default()),
+                Hashes::Sha => merkle_bench::<Bls12, _>(&args, Sha256::default()),
             },
         )
     } else if args.cmd_rsa {
         (
             "rsa",
             match args.flag_hash {
-                Hashes::Poseidon => rsa_bench::<Bls12, _>(
-                    &args,
-                    Poseidon::default(),
-                ),
-                Hashes::Mimc => rsa_bench::<Bls12, _>(
-                    &args,
-                    Mimc::default(),
-                ),
-                Hashes::Pedersen => rsa_bench::<Bls12, _>(
-                    &args,
-                    Pedersen::default(),
-                ),
-                Hashes::Sha => rsa_bench::<Bls12, _>(
-                    &args,
-                    Sha256::default(),
-                ),
+                Hashes::Poseidon => rsa_bench::<Bls12, _>(&args, Poseidon::default()),
+                Hashes::Mimc => rsa_bench::<Bls12, _>(&args, Mimc::default()),
+                Hashes::Pedersen => rsa_bench::<Bls12, _>(&args, Pedersen::default()),
+                Hashes::Sha => rsa_bench::<Bls12, _>(&args, Sha256::default()),
             },
         )
     } else {
@@ -234,7 +210,13 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
         println!("Marshalling circuit inputs");
     }
     let inputs = vec![
-        hash.hash(&nat_to_limbs(&group.g, 32, 64).unwrap().into_iter().chain(nat_to_limbs(&group.m, 32, 64).unwrap().into_iter()).collect::<Vec<E::Fr>>()),
+        hash.hash(
+            &nat_to_limbs(&group.g, 32, 64)
+                .unwrap()
+                .into_iter()
+                .chain(nat_to_limbs(&group.m, 32, 64).unwrap().into_iter())
+                .collect::<Vec<E::Fr>>(),
+        ),
         hash.hash(&nat_to_limbs(&inputs.initial_state.digest(), 32, 64).unwrap()),
         hash.hash(&nat_to_limbs(&inputs.final_state.digest(), 32, 64).unwrap()),
     ];

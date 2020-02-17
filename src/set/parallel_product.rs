@@ -134,25 +134,24 @@ fn _parallel_mul(a: &mut Integer, b: &mut Integer, nproc: usize) {
         let b_const = &*b;
         // split a and b into pieces to be multiplied without too much copying
         let mut parts = vec![Integer::new(); a_split + b_split];
-        parts.par_iter_mut().enumerate()
-            .for_each({
-                |(idx, part)| {
-                    part.reserve(part_bits);
-                    // Safety requires that `a_const` and `b_const` outlive `parts`.
-                        let digits = if idx < a_split {
-                            let adigits = borrow_digits(a_const);
-                            let asize = adigits.len();
-                            let adx = idx;
-                            &adigits[(adx * a_limbs)..min(asize, (adx + 1) * a_limbs)]
-                        } else {
-                            let bdigits = borrow_digits(b_const);
-                            let bsize = bdigits.len();
-                            let bdx = idx - a_split;
-                            &bdigits[(bdx * b_limbs)..min(bsize, (bdx + 1) * b_limbs)]
-                        };
-                        part.assign_digits(digits, rug::integer::Order::Lsf);
-                }
-            });
+        parts.par_iter_mut().enumerate().for_each({
+            |(idx, part)| {
+                part.reserve(part_bits);
+                // Safety requires that `a_const` and `b_const` outlive `parts`.
+                let digits = if idx < a_split {
+                    let adigits = borrow_digits(a_const);
+                    let asize = adigits.len();
+                    let adx = idx;
+                    &adigits[(adx * a_limbs)..min(asize, (adx + 1) * a_limbs)]
+                } else {
+                    let bdigits = borrow_digits(b_const);
+                    let bsize = bdigits.len();
+                    let bdx = idx - a_split;
+                    &bdigits[(bdx * b_limbs)..min(bsize, (bdx + 1) * b_limbs)]
+                };
+                part.assign_digits(digits, rug::integer::Order::Lsf);
+            }
+        });
 
         // compute all cross terms in parallel
         let mut tmp = vec![Integer::new(); a_split * b_split];
@@ -291,6 +290,8 @@ mod tests {
 
     #[test]
     fn isqrt_test() {
-        (0..1048576).for_each(|i| { _isqrt(i); });
+        (0..1048576).for_each(|i| {
+            _isqrt(i);
+        });
     }
 }

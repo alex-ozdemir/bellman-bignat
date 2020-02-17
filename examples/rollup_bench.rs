@@ -4,13 +4,13 @@ extern crate rand;
 extern crate sapling_crypto;
 extern crate serde;
 
-use bellman_bignat::util::bench::{ConstraintCounter, ConstraintProfiler};
-use bellman_bignat::rollup::{rsa, merkle};
 use bellman_bignat::hash::hashes::Poseidon;
+use bellman_bignat::rollup::{merkle, rsa};
+use bellman_bignat::util::bench::{ConstraintCounter, ConstraintProfiler};
 use docopt::Docopt;
-use sapling_crypto::jubjub::JubjubBls12;
 use sapling_crypto::bellman::pairing::bls12_381::Bls12;
 use sapling_crypto::bellman::Circuit;
+use sapling_crypto::jubjub::JubjubBls12;
 use serde::Deserialize;
 
 const USAGE: &str = "
@@ -85,12 +85,8 @@ fn rsa_bench(t: usize, _c: usize, profile: bool) -> usize {
 }
 
 fn merkle_bench(t: usize, c: usize, profile: bool) -> usize {
-    let circuit = merkle::RollupBench::<Bls12, _>::from_counts(
-        c,
-        t,
-        JubjubBls12::new(),
-        Poseidon::default(),
-    );
+    let circuit =
+        merkle::RollupBench::<Bls12, _>::from_counts(c, t, JubjubBls12::new(), Poseidon::default());
 
     if profile {
         let mut cs = ConstraintProfiler::new();
