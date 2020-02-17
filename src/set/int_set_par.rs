@@ -262,20 +262,30 @@ impl IntegerConversion for BigUint {
     }
 }
 
+impl IntegerConversion for Integer {
+    fn to_integer(n: &Integer) -> Integer {
+        n.clone()
+    }
+
+    fn from_integer(n: &Integer) -> Integer {
+        n.clone()
+    }
+}
+
 pub trait IntoElem: SemiGroup {
     fn into_elem(&self, e: <Self as SemiGroup>::Elem) -> <Self as SemiGroup>::Elem;
 }
 
 impl IntoElem for RsaGroup {
-    fn into_elem(&self, n: BigUint) -> BigUint {
-        &n % &self.m
+    fn into_elem(&self, n: Integer) -> Integer {
+        n % &self.m
     }
 }
 
 impl IntoElem for RsaQuotientGroup {
-    fn into_elem(&self, mut n: BigUint) -> BigUint {
-        n = &n % &self.m;
-        let y = &self.m - &n;
+    fn into_elem(&self, mut n: Integer) -> Integer {
+        n %= &self.m;
+        let y = Integer::from(&self.m - &n);
         std::cmp::min(n, y)
     }
 }
@@ -321,26 +331,24 @@ where
     //        lots of elements at once, say, more than 1/4 of the current size.
     //        In this case, you can call clear_digest() to clear the digest first.
 
-    fn new_with<I: IntoIterator<Item = BigUint>>(group: G, items: I) -> Self {
+    fn new_with<I: IntoIterator<Item = Integer>>(group: G, items: I) -> Self {
         let mut this = Self::new(group);
         this.insert_all(items);
         this
     }
 
-    fn insert(&mut self, n: BigUint) {
-        let int_n = <BigUint as IntegerConversion>::to_integer(&n);
+    fn insert(&mut self, n: Integer) {
         if let Some(ref mut d) = self.digest {
-            d.pow_mod_mut(&int_n, &self.comb.m).expect("Modular exponentiation failed");
+            d.pow_mod_mut(&n, &self.comb.m).expect("Modular exponentiation failed");
         }
-        *self.elements.entry(int_n).or_insert(0) += 1;
+        *self.elements.entry(n).or_insert(0) += 1;
     }
 
-    fn remove(&mut self, n: &BigUint) -> bool {
-        let int_n = <BigUint as IntegerConversion>::to_integer(&n);
-        if let Some(count) = self.elements.get_mut(&int_n) {
+    fn remove(&mut self, n: &Integer) -> bool {
+        if let Some(count) = self.elements.get_mut(&n) {
             *count -= 1;
             if *count == 0 {
-                self.elements.remove(&int_n);
+                self.elements.remove(&n);
             }
             self.digest = None;
             true
@@ -488,16 +496,16 @@ mod tests {
         fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
             let challenge = BigNat::alloc_from_nat(
                 cs.namespace(|| "challenge"),
-                || Ok(BigUint::from_str(self.inputs.grab()?.challenge).unwrap()),
+                || Ok(Integer::from_str(self.inputs.grab()?.challenge).unwrap()),
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
-            let initial_items_vec: Vec<BigUint> = self
+            let initial_items_vec: Vec<Integer> = self
                 .inputs
                 .grab()?
                 .initial_items
                 .iter()
-                .map(|i| BigUint::from_str(i).unwrap())
+                .map(|i| Integer::from_str(i).unwrap())
                 .collect();
             let removed_items_vec: Vec<BigNat<E>> = self
                 .inputs
@@ -508,7 +516,7 @@ mod tests {
                 .map(|(i, e)| {
                     BigNat::alloc_from_nat(
                         cs.namespace(|| format!("removed item {}", i)),
-                        || Ok(BigUint::from_str(e).unwrap()),
+                        || Ok(Integer::from_str(e).unwrap()),
                         self.params.limb_width,
                         self.params.n_limbs_e,
                     )
@@ -516,13 +524,13 @@ mod tests {
                 .collect::<Result<Vec<BigNat<E>>, SynthesisError>>()?;
             let initial_digest = BigNat::alloc_from_nat(
                 cs.namespace(|| "initial_digest"),
-                || Ok(BigUint::from_str(self.inputs.grab()?.initial_digest).unwrap()),
+                || Ok(Integer::from_str(self.inputs.grab()?.initial_digest).unwrap()),
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
             let final_digest = BigNat::alloc_from_nat(
                 cs.namespace(|| "final_digest"),
-                || Ok(BigUint::from_str(self.inputs.grab()?.final_digest).unwrap()),
+                || Ok(Integer::from_str(self.inputs.grab()?.final_digest).unwrap()),
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;

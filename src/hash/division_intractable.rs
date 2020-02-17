@@ -1,4 +1,4 @@
-use num_bigint::BigUint;
+use rug::Integer;
 use sapling_crypto::bellman::pairing::ff::PrimeField;
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
@@ -20,7 +20,7 @@ const OFFSET_512: &str = "122600903769467117341200318916567960263611610899961298
 const OFFSET_128: &str = "320302797835264872593630364493262722277";
 
 pub mod helper {
-    use num_bigint::BigUint;
+    use rug::Integer;
     use sapling_crypto::bellman::pairing::ff::PrimeField;
 
     use super::super::low_k_bits;
@@ -30,21 +30,21 @@ pub mod helper {
 
     pub fn di_hash<H: Hasher>(
         inputs: &[H::F],
-        offset: &BigUint,
+        offset: &Integer,
         domain: &HashDomain,
         limb_width: usize,
         hasher: &H,
-    ) -> BigUint {
+    ) -> Integer {
         let bits_per_hash = H::F::CAPACITY as usize;
         assert!(domain.n_bits % limb_width == 0);
         let hash = hasher.hash(inputs);
         let x = low_k_bits(&f_to_nat(&hash), bits_per_hash);
-        offset + x
+        x + offset
     }
 }
 
-pub fn offset(bit_width: usize) -> BigUint {
-    BigUint::from_str(match bit_width {
+pub fn offset(bit_width: usize) -> Integer {
+    Integer::from_str(match bit_width {
         128 => OFFSET_128,
         512 => OFFSET_512,
         2048 => OFFSET_2048,
@@ -143,7 +143,6 @@ where
 mod test {
     use super::*;
 
-    use num_bigint::BigUint;
     use sapling_crypto::bellman::pairing::ff::PrimeField;
     use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
     use sapling_crypto::circuit::num::AllocatedNum;
@@ -182,7 +181,7 @@ mod test {
                 .map(|s| E::Fr::from_str(s).unwrap())
                 .collect();
             let cv =
-                BigUint::from_str("5104102027859293093184735748236254201176269103281996090807")
+                Integer::from_str("5104102027859293093184735748236254201176269103281996090807")
                     .unwrap();
             let challenge =
                 BigNat::alloc_from_nat(cs.namespace(|| "challenge"), || Ok(cv.clone()), 32, 6)?;

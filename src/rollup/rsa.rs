@@ -1,6 +1,6 @@
 use rand::Rng;
 
-use num_bigint::BigUint;
+use rug::Integer;
 
 use sapling_crypto::bellman::{Circuit, ConstraintSystem, SynthesisError};
 use sapling_crypto::circuit::ecc::EdwardsPoint;
@@ -84,7 +84,7 @@ where
         r
     }
 
-    pub fn digest(&mut self) -> BigUint {
+    pub fn digest(&mut self) -> Integer {
         self.set.digest()
     }
 
@@ -181,7 +181,7 @@ where
     /// The initial account state
     pub accounts: Accounts<E, H>,
     /// The expected final state
-    pub final_digest: BigUint,
+    pub final_digest: Integer,
 }
 
 impl<E, H> RollupBenchInputs<E, H>

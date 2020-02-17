@@ -19,8 +19,7 @@ pub fn sha256<E: Engine>(inputs: &[E::Fr]) -> E::Fr {
 }
 
 pub mod circuit {
-    use num_bigint::BigUint;
-    use num_traits::One;
+    use rug::Integer;
     use sapling_crypto::bellman::pairing::ff::{Field, PrimeField};
     use sapling_crypto::bellman::pairing::Engine;
     use sapling_crypto::bellman::ConstraintSystem;
@@ -47,7 +46,7 @@ pub mod circuit {
                 .try_fold(E::Fr::zero(), |mut acc, (i, b)| {
                     let mut bit = usize_to_f::<E::Fr>(*b.get_value().grab()? as usize);
                     bit.mul_assign(
-                        &nat_to_f(&(BigUint::one() << i)).expect("out-of-bounds scalar"),
+                        &nat_to_f(&(Integer::from(1) << i as u32)).expect("out-of-bounds scalar"),
                     );
                     acc.add_assign(&bit);
                     Ok(acc)
@@ -63,7 +62,7 @@ pub mod circuit {
                     .fold(lc - num.get_variable(), |acc, (i, b)| {
                         acc + &b.lc(
                             CS::one(),
-                            nat_to_f(&(BigUint::one() << i)).expect("out-of-bounds scalar"),
+                            nat_to_f(&(Integer::from(1) << i as u32)).expect("out-of-bounds scalar"),
                         )
                     })
             },

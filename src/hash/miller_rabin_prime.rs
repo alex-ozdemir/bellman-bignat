@@ -11,14 +11,14 @@ use util::num::Num;
 use OptionExt;
 
 pub mod helper {
-    use num_bigint::BigUint;
+    use rug::Integer;
     use sapling_crypto::bellman::pairing::ff::Field;
 
     use super::super::integer::helper::hash_to_integer;
     use super::super::{HashDomain, Hasher};
 
     /// Returns whether `n` passes Miller-Rabin checks with the first `rounds` primes as bases
-    pub fn miller_rabin(n: &BigUint, rounds: usize) -> bool {
+    pub fn miller_rabin(n: &Integer, rounds: usize) -> bool {
         fn primes(n: usize) -> Vec<usize> {
             let mut ps = vec![2];
             let mut next = 3;
@@ -32,26 +32,27 @@ pub mod helper {
         }
         let ps = primes(rounds);
         !ps.into_iter()
-            .any(|p| !miller_rabin_round(n, &BigUint::from(p)))
+            .any(|p| !miller_rabin_round(n, &Integer::from(p)))
     }
 
     /// Returns whether `n` passes a Miller-Rabin check with base `b`.
-    fn miller_rabin_round(n: &BigUint, b: &BigUint) -> bool {
-        let n_less_one = n - 1usize;
-        let d = n - 1usize;
-        let d_bits = d.to_str_radix(2);
+    fn miller_rabin_round(n: &Integer, b: &Integer) -> bool {
+        let n_less_one = Integer::from(n - 1);
+        let mut d = Integer::from(n - 1);
+        let d_bits = d.to_string_radix(2);
         let last_one = d_bits.as_str().rfind('1').expect("Input must be >1");
         if last_one == d_bits.len() - 1 {
             return false;
         }
         let s = d_bits.len() - last_one - 1;
-        let d = d >> s;
-        let mut pow = b.modpow(&d, &n);
-        if pow == BigUint::from(1usize) || pow == n_less_one {
+        d >>= s as u32;
+        let mut pow = Integer::from(b.pow_mod_ref(&d, &n).unwrap());
+        if pow == Integer::from(1usize) || pow == n_less_one {
             return true;
         }
         for _ in 0..(s - 1) {
-            pow = &pow * &pow % n;
+            pow.square_mut();
+            pow %= n;
             if pow == n_less_one {
                 return true;
             }
@@ -59,10 +60,10 @@ pub mod helper {
         return false;
     }
 
-    pub fn miller_rabin_32b(n: &BigUint) -> bool {
-        miller_rabin_round(n, &BigUint::from(2usize))
-            && miller_rabin_round(n, &BigUint::from(7usize))
-            && miller_rabin_round(n, &BigUint::from(61usize))
+    pub fn miller_rabin_32b(n: &Integer) -> bool {
+        miller_rabin_round(n, &Integer::from(2usize))
+            && miller_rabin_round(n, &Integer::from(7usize))
+            && miller_rabin_round(n, &Integer::from(61usize))
     }
 
     /// Given hash inputs, and a target domain for the prime hash, computes:
@@ -79,7 +80,7 @@ pub mod helper {
         inputs: &[H::F],
         domain: &HashDomain,
         hasher: &H,
-    ) -> Option<(BigUint, H::F, usize)> {
+    ) -> Option<(Integer, H::F, usize)> {
         let n_bits = domain.nonce_width();
         let mut inputs: Vec<H::F> = inputs.iter().copied().collect();
         inputs.push(H::F::zero());
@@ -138,7 +139,7 @@ where
 mod test {
     use super::*;
 
-    use num_bigint::BigUint;
+    use rug::Integer;
     use sapling_crypto::bellman::pairing::ff::PrimeField;
     use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
     use sapling_crypto::circuit::num::AllocatedNum;
@@ -148,22 +149,22 @@ mod test {
 
     #[test]
     fn mr_11() {
-        assert_eq!(helper::miller_rabin(&BigUint::from(11usize), 3), true);
+        assert_eq!(helper::miller_rabin(&Integer::from(11usize), 3), true);
     }
 
     #[test]
     fn mr_12() {
-        assert_eq!(helper::miller_rabin(&BigUint::from(12usize), 3), false);
+        assert_eq!(helper::miller_rabin(&Integer::from(12usize), 3), false);
     }
 
     #[test]
     fn mr_251() {
-        assert_eq!(helper::miller_rabin(&BigUint::from(251usize), 11), true);
+        assert_eq!(helper::miller_rabin(&Integer::from(251usize), 11), true);
     }
 
     #[test]
     fn mr_15() {
-        assert_eq!(helper::miller_rabin(&BigUint::from(15usize), 3), false);
+        assert_eq!(helper::miller_rabin(&Integer::from(15usize), 3), false);
     }
 
     #[derive(Debug)]

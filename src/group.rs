@@ -1,8 +1,6 @@
-use num_bigint::BigUint;
-use num_traits::One;
+use rug::Integer;
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
-use set::int_set_par::IntegerConversion;
 
 use std::cmp::{min, Eq, PartialEq};
 use std::fmt::{self, Debug, Display, Formatter};
@@ -17,10 +15,10 @@ pub trait SemiGroup: Clone + Eq + Debug + Display {
     type Elem: Clone + Debug + Ord + Display;
     fn op(&self, a: &Self::Elem, b: &Self::Elem) -> Self::Elem;
     fn identity(&self) -> Self::Elem;
-    fn generator(&self) -> Self::Elem;
-    fn power(&self, b: &Self::Elem, e: &BigUint) -> Self::Elem {
+    fn generator(&self) -> &Self::Elem;
+    fn power(&self, b: &Self::Elem, e: &Integer) -> Self::Elem {
         let mut acc = self.identity();
-        let bits = e.to_str_radix(2);
+        let bits = e.to_string_radix(2);
         for bit in bits.bytes() {
             match bit {
                 b'0' => {
@@ -38,15 +36,15 @@ pub trait SemiGroup: Clone + Eq + Debug + Display {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct RsaGroup {
-    pub g: BigUint,
-    pub m: BigUint,
+    pub g: Integer,
+    pub m: Integer,
 }
 
 impl RsaGroup {
     pub fn from_strs(g: &str, m: &str) -> Self {
         Self {
-            g: BigUint::from_str(g).unwrap(),
-            m: BigUint::from_str(m).unwrap(),
+            g: Integer::from_str(g).unwrap(),
+            m: Integer::from_str(m).unwrap(),
         }
     }
 }
@@ -61,39 +59,39 @@ impl Display for RsaGroup {
 }
 
 impl SemiGroup for RsaGroup {
-    type Elem = BigUint;
+    type Elem = Integer;
 
-    fn op(&self, a: &BigUint, b: &BigUint) -> BigUint {
-        a * b % &self.m
+    fn op(&self, a: &Integer, b: &Integer) -> Integer {
+        let mut a = a.clone();
+        a *= b;
+        a %= &self.m;
+        a
     }
 
-    fn identity(&self) -> BigUint {
-        BigUint::one()
+    fn identity(&self) -> Integer {
+        Integer::from(1)
     }
 
-    fn generator(&self) -> BigUint {
-        self.g.clone()
+    fn generator(&self) -> &Integer {
+        &self.g
     }
 
-    fn power(&self, b: &Self::Elem, e: &BigUint) -> Self::Elem {
-        let m = BigUint::to_integer(&self.m);
-        let b = BigUint::to_integer(b);
-        let e = BigUint::to_integer(e);
-        BigUint::from_integer(&b.pow_mod(&e, &m).unwrap())
+    fn power(&self, b: &Self::Elem, e: &Integer) -> Self::Elem {
+        Integer::from(b.pow_mod_ref(&e, &self.m).unwrap())
     }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct RsaQuotientGroup {
-    pub g: BigUint,
-    pub m: BigUint,
+    pub g: Integer,
+    pub m: Integer,
 }
 
 impl RsaQuotientGroup {
     pub fn from_strs(g: &str, m: &str) -> Self {
         Self {
-            g: BigUint::from_str(g).unwrap(),
-            m: BigUint::from_str(m).unwrap(),
+            g: Integer::from_str(g).unwrap(),
+            m: Integer::from_str(m).unwrap(),
         }
     }
 }
@@ -108,29 +106,30 @@ impl Display for RsaQuotientGroup {
 }
 
 impl SemiGroup for RsaQuotientGroup {
-    type Elem = BigUint;
+    type Elem = Integer;
 
-    fn op(&self, a: &BigUint, b: &BigUint) -> BigUint {
-        let x = a * b % &self.m;
-        let y = &self.m - &x;
-        min(x, y)
+    fn op(&self, a: &Self::Elem, b: &Self::Elem) -> Self::Elem {
+        let mut a = a.clone();
+        a *= b;
+        a %= &self.m;
+        let mut ma = self.m.clone();
+        ma -= &a;
+        min(a, ma)
     }
 
-    fn identity(&self) -> BigUint {
-        BigUint::one()
+    fn identity(&self) -> Self::Elem {
+        Integer::from(1)
     }
 
-    fn generator(&self) -> BigUint {
-        self.g.clone()
+    fn generator(&self) -> &Self::Elem {
+        &self.g
     }
 
-    fn power(&self, b: &Self::Elem, e: &BigUint) -> Self::Elem {
-        let mut m = BigUint::to_integer(&self.m);
-        let b = BigUint::to_integer(b);
-        let e = BigUint::to_integer(e);
-        let r = b.pow_mod(&e, &m).unwrap();
+    fn power(&self, b: &Self::Elem, e: &Integer) -> Self::Elem {
+        let r = Integer::from(b.pow_mod_ref(e, &self.m).unwrap());
+        let mut m = self.m.clone();
         m -= &r;
-        BigUint::from_integer(&min(r, m))
+        min(r, m)
     }
 }
 
@@ -271,7 +270,7 @@ impl<E: Engine> Gadget for CircuitRsaGroup<E> {
         )?;
         m.enforce_full_bits(cs.namespace(|| "m is full"))?;
 
-        let id = BigNat::identity::<CS>(params.limb_width);
+        let id = BigNat::one::<CS>(params.limb_width);
         Ok(Self {
             g,
             m,
@@ -371,7 +370,7 @@ impl<E: Engine> Gadget for CircuitRsaQuotientGroup<E> {
         )?;
         m.enforce_full_bits(cs.namespace(|| "m is full"))?;
 
-        let id = BigNat::identity::<CS>(params.limb_width);
+        let id = BigNat::one::<CS>(params.limb_width);
         Ok(Self {
             g,
             m,
@@ -491,19 +490,19 @@ mod test {
             )?;
             let b = BigNat::alloc_from_nat(
                 cs.namespace(|| "b"),
-                || Ok(BigUint::from_str(self.inputs.grab()?.b).unwrap()),
+                || Ok(Integer::from_str(self.inputs.grab()?.b).unwrap()),
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
             let e = BigNat::alloc_from_nat(
                 cs.namespace(|| "e"),
-                || Ok(BigUint::from_str(self.inputs.grab()?.e).unwrap()),
+                || Ok(Integer::from_str(self.inputs.grab()?.e).unwrap()),
                 self.params.limb_width,
                 self.params.n_limbs_e,
             )?;
             let res = BigNat::alloc_from_nat(
                 cs.namespace(|| "res"),
-                || Ok(BigUint::from_str(self.inputs.grab()?.res).unwrap()),
+                || Ok(Integer::from_str(self.inputs.grab()?.res).unwrap()),
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
@@ -616,13 +615,13 @@ mod test {
             )?;
             let b = BigNat::alloc_from_nat(
                 cs.namespace(|| "b"),
-                || Ok(BigUint::from_str(self.inputs.grab()?.b).unwrap()),
+                || Ok(Integer::from_str(self.inputs.grab()?.b).unwrap()),
                 self.params.limb_width,
                 self.params.n_limbs,
             )?;
             let a = BigNat::alloc_from_nat(
                 cs.namespace(|| "a"),
-                || Ok(BigUint::from_str(self.inputs.grab()?.a).unwrap()),
+                || Ok(Integer::from_str(self.inputs.grab()?.a).unwrap()),
                 self.params.limb_width,
                 self.params.n_limbs,
             )?;
@@ -717,19 +716,19 @@ mod test {
             )?;
             let b = BigNat::alloc_from_nat(
                 cs.namespace(|| "b"),
-                || Ok(BigUint::from_str(self.inputs.grab()?.b).unwrap()),
+                || Ok(Integer::from_str(self.inputs.grab()?.b).unwrap()),
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
             let e = BigNat::alloc_from_nat(
                 cs.namespace(|| "e"),
-                || Ok(BigUint::from_str(self.inputs.grab()?.e).unwrap()),
+                || Ok(Integer::from_str(self.inputs.grab()?.e).unwrap()),
                 self.params.limb_width,
                 self.params.n_limbs_e,
             )?;
             let res = BigNat::alloc_from_nat(
                 cs.namespace(|| "res"),
-                || Ok(BigUint::from_str(self.inputs.grab()?.res).unwrap()),
+                || Ok(Integer::from_str(self.inputs.grab()?.res).unwrap()),
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;

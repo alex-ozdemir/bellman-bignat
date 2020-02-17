@@ -1,6 +1,4 @@
-use num_bigint::{BigUint, ToBigInt};
-use num_integer::Integer;
-use num_traits::{One, Pow, ToPrimitive};
+use rug::Integer;
 use sapling_crypto::bellman::pairing::ff::{Field, PrimeField};
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
@@ -23,27 +21,40 @@ use OptionExt;
 
 /// Compute the natural number represented by an array of limbs.
 /// The limbs are assumed to be based the `limb_width` power of 2.
-pub fn limbs_to_nat<F: PrimeField, B: Borrow<F>, I: Iterator<Item = B>>(
+pub fn limbs_to_nat<F: PrimeField, B: Borrow<F>, I: DoubleEndedIterator<Item = B>>(
     limbs: I,
     limb_width: usize,
-) -> BigUint {
-    limbs
-        .enumerate()
-        .map(|(limb_i, limb)| (f_to_nat(limb.borrow()) << (limb_i * limb_width)))
-        .sum()
+) -> Integer {
+    limbs.rev().fold(Integer::from(0), |mut acc, limb| {
+        acc <<= limb_width as u32;
+        acc += f_to_nat(limb.borrow());
+        acc
+    })
+}
+
+fn int_with_n_ones(n: usize) -> Integer {
+    let mut m = Integer::from(1);
+    m <<= n as u32;
+    m -= 1;
+    m
 }
 
 /// Compute the limbs encoding a natural number.
 /// The limbs are assumed to be based the `limb_width` power of 2.
 pub fn nat_to_limbs<'a, F: PrimeField>(
-    nat: &BigUint,
+    nat: &Integer,
     limb_width: usize,
     n_limbs: usize,
 ) -> Result<Vec<F>, SynthesisError> {
-    let mask = (BigUint::from(1usize) << limb_width) - 1usize;
-    if nat.bits() <= n_limbs * limb_width {
+    let mask = int_with_n_ones(limb_width);
+    let mut nat = nat.clone();
+    if nat.significant_bits() as usize <= n_limbs * limb_width {
         Ok((0..n_limbs)
-            .map(|limb_i| nat_to_f(&(&mask & (nat >> (limb_i * limb_width)))).unwrap())
+            .map(|_| {
+                let r = Integer::from(&nat & &mask);
+                nat >>= limb_width as u32;
+                nat_to_f(&r).unwrap()
+            })
             .collect())
     } else {
         eprintln!(
@@ -57,15 +68,17 @@ pub fn nat_to_limbs<'a, F: PrimeField>(
 #[derive(Clone, PartialEq, Eq)]
 pub struct BigNatParams {
     pub min_bits: usize,
-    pub max_word: BigUint,
+    pub max_word: Integer,
     pub limb_width: usize,
     pub n_limbs: usize,
 }
 
 impl BigNatParams {
     pub fn new(limb_width: usize, n_limbs: usize) -> Self {
+        let mut max_word = Integer::from(1) << limb_width as u32;
+        max_word -= 1;
         BigNatParams {
-            max_word: (BigUint::one() << limb_width) - 1usize,
+            max_word,
             n_limbs,
             limb_width,
             min_bits: 0,
@@ -81,7 +94,7 @@ pub struct BigNat<E: Engine> {
     /// The witness values for each limb (filled at witness-time)
     pub limb_values: Option<Vec<E::Fr>>,
     /// The value of the whole number (filled at witness-time)
-    pub value: Option<BigUint>,
+    pub value: Option<Integer>,
     /// Parameters
     pub params: BigNatParams,
 }
@@ -109,7 +122,7 @@ impl<E: Engine> BigNat<E> {
     pub fn alloc_from_limbs<CS, F>(
         mut cs: CS,
         f: F,
-        max_word: Option<BigUint>,
+        max_word: Option<Integer>,
         limb_width: usize,
         n_limbs: usize,
     ) -> Result<Self, SynthesisError>
@@ -155,8 +168,7 @@ impl<E: Engine> BigNat<E> {
             params: BigNatParams {
                 min_bits: 0,
                 n_limbs,
-                max_word: max_word
-                    .unwrap_or_else(|| Pow::pow(&BigUint::from(2usize), limb_width) - 1usize),
+                max_word: max_word.unwrap_or_else(|| int_with_n_ones(limb_width)),
                 limb_width,
             },
         })
@@ -171,7 +183,7 @@ impl<E: Engine> BigNat<E> {
         let value = limb_values
             .as_ref()
             .map(|values| limbs_to_nat::<E::Fr, _, _>(values.iter(), limb_width));
-        let max_word = (BigUint::from(1usize) << limb_width) - 1usize;
+        let max_word = int_with_n_ones(limb_width);
         Self {
             params: BigNatParams {
                 min_bits: 0,
@@ -199,7 +211,7 @@ impl<E: Engine> BigNat<E> {
     ) -> Result<Self, SynthesisError>
     where
         CS: ConstraintSystem<E>,
-        F: FnOnce() -> Result<BigUint, SynthesisError>,
+        F: FnOnce() -> Result<Integer, SynthesisError>,
     {
         let all_values_cell = LazyCell::new(|| {
             f().and_then(|v| Ok((nat_to_limbs::<E::Fr>(&v, limb_width, n_limbs)?, v)))
@@ -502,7 +514,7 @@ impl<E: Engine> BigNat<E> {
             other
                 .value
                 .as_ref()
-                .map(|ov| (sv << (other.params.limb_width * other.params.n_limbs)) + ov)
+                .map(|ov| (sv << (other.params.limb_width * other.params.n_limbs) as u32) + ov)
         });
         Ok(Self {
             params: BigNatParams {
@@ -525,7 +537,7 @@ impl<E: Engine> BigNat<E> {
                 new.limbs.pop();
                 if let Some(limb_value) = new.limb_values.as_mut().map(|lvs| lvs.pop().unwrap()) {
                     *new.value.as_mut().unwrap() -=
-                        f_to_nat(&limb_value) << (new.limbs.len() * new.params.limb_width);
+                        f_to_nat(&limb_value) << (new.limbs.len() * new.params.limb_width) as u32;
                 }
             }
             new.params.n_limbs = n_limbs;
@@ -536,7 +548,7 @@ impl<E: Engine> BigNat<E> {
         new
     }
 
-    pub fn from_poly(poly: Polynomial<E>, limb_width: usize, max_word: BigUint) -> Self {
+    pub fn from_poly(poly: Polynomial<E>, limb_width: usize, max_word: Integer) -> Self {
         Self {
             params: BigNatParams {
                 min_bits: 0,
@@ -563,11 +575,11 @@ impl<E: Engine> BigNat<E> {
 
         // We'll propegate carries over the first `n` limbs.
         let n = min(self.limbs.len(), other.limbs.len());
-        let target_base = Pow::pow(&BigUint::from(2usize), self.params.limb_width);
-        let mut accumulated_extra = BigUint::from(0usize);
+        let target_base = Integer::from(1) << self.params.limb_width as u32;
+        let mut accumulated_extra = Integer::from(0usize);
         let max_word = std::cmp::max(&self.params.max_word, &other.params.max_word);
         let carry_bits =
-            (((max_word.to_f64().unwrap() * 2.0).log2() - self.params.limb_width as f64).ceil()
+            (((max_word.to_f64() * 2.0).log2() - self.params.limb_width as f64).ceil()
                 + 0.1) as usize;
         let mut carry_in = Num::new(Some(E::Fr::zero()), LinearCombination::zero());
 
@@ -593,7 +605,7 @@ impl<E: Engine> BigNat<E> {
                         + (nat_to_f(&max_word).unwrap(), CS::one())
                         - (nat_to_f(&target_base).unwrap(), &carry.num)
                         - (
-                            nat_to_f(&(&accumulated_extra % &target_base)).unwrap(),
+                            nat_to_f(&Integer::from(&accumulated_extra % &target_base)).unwrap(),
                             CS::one(),
                         )
                 },
@@ -644,7 +656,7 @@ impl<E: Engine> BigNat<E> {
         self.enforce_limb_width_agreement(other, "equal_when_carried_regroup")?;
         let max_word = std::cmp::max(&self.params.max_word, &other.params.max_word);
         let carry_bits =
-            (((max_word.to_f64().unwrap() * 2.0).log2() - self.params.limb_width as f64).ceil()
+            (((max_word.to_f64() * 2.0).log2() - self.params.limb_width as f64).ceil()
                 + 0.1) as usize;
         let limbs_per_group = (E::Fr::CAPACITY as usize - carry_bits) / self.params.limb_width;
         let self_grouped = self.group_limbs(limbs_per_group);
@@ -664,8 +676,8 @@ impl<E: Engine> BigNat<E> {
             || {
                 let s = self.value.grab()?;
                 let o = other.value.grab()?;
-                if o.is_multiple_of(s) {
-                    Ok(o / s)
+                if o.is_divisible(s) {
+                    Ok(Integer::from(o / s))
                 } else {
                     eprintln!("Not divisible");
                     Err(SynthesisError::Unsatisfiable)
@@ -692,7 +704,7 @@ impl<E: Engine> BigNat<E> {
             *v += f_to_nat(&constant);
         }
         new.params.max_word += f_to_nat(&constant);
-        assert!(new.params.max_word <= (BigUint::one() << (E::Fr::CAPACITY as usize)));
+        assert!(new.params.max_word <= (Integer::from(1) << E::Fr::CAPACITY));
         new
     }
 
@@ -710,7 +722,7 @@ impl<E: Engine> BigNat<E> {
             *v *= f_to_nat(&constant);
         }
         new.params.max_word *= f_to_nat(&constant);
-        assert!(new.params.max_word <= (BigUint::one() << (E::Fr::CAPACITY as usize)));
+        assert!(new.params.max_word <= (Integer::from(1) << E::Fr::CAPACITY));
         new
     }
 
@@ -722,9 +734,9 @@ impl<E: Engine> BigNat<E> {
         let diff = BigNat::alloc_from_nat(
             cs.namespace(|| "diff"),
             || {
-                let s = self.value.grab()?;
-                let o = other.value.grab()?;
-                Ok(s - o)
+                let mut s = self.value.grab()?.clone();
+                s -= other.value.grab()?;
+                Ok(s)
             },
             self.params.limb_width,
             self.params.n_limbs,
@@ -732,12 +744,6 @@ impl<E: Engine> BigNat<E> {
         let sum = other.add::<CS>(&diff)?;
         self.equal_when_carried_regroup(cs.namespace(|| "eq"), &sum)?;
         Ok(diff)
-    }
-    pub fn one<CS: ConstraintSystem<E>>(
-        cs: CS,
-        limb_width: usize,
-    ) -> Result<BigNat<E>, SynthesisError> {
-        BigNat::alloc_from_nat(cs, || Ok(BigUint::one()), limb_width, 1)
     }
 
     pub fn mult<CS: ConstraintSystem<E>>(
@@ -750,9 +756,9 @@ impl<E: Engine> BigNat<E> {
         let mut prod = BigNat::alloc_from_nat(
             cs.namespace(|| "product"),
             || {
-                let s = self.value.grab()?;
-                let o = other.value.grab()?;
-                Ok(s * o)
+                let mut s = self.value.grab()?.clone();
+                s *= other.value.grab()?;
+                Ok(s)
             },
             other.params.limb_width,
             other.params.n_limbs + self.params.n_limbs,
@@ -771,7 +777,7 @@ impl<E: Engine> BigNat<E> {
     pub fn add<CS: ConstraintSystem<E>>(&self, other: &Self) -> Result<BigNat<E>, SynthesisError> {
         self.enforce_limb_width_agreement(other, "add")?;
         let n_limbs = max(self.params.n_limbs, other.params.n_limbs);
-        let max_word = &self.params.max_word + &other.params.max_word;
+        let max_word = Integer::from(&self.params.max_word + &other.params.max_word);
         let limbs: Vec<LinearCombination<E>> = (0..n_limbs)
             .map(|i| match (self.limbs.get(i), other.limbs.get(i)) {
                 (Some(a), Some(b)) => a.clone() + b,
@@ -799,7 +805,7 @@ impl<E: Engine> BigNat<E> {
         let value = self
             .value
             .as_ref()
-            .and_then(|x| other.value.as_ref().map(|y| x + y));
+            .and_then(|x| other.value.as_ref().map(|y| Integer::from(x + y)));
         Ok(Self {
             limb_values,
             value,
@@ -838,9 +844,12 @@ impl<E: Engine> BigNat<E> {
         self.enforce_limb_width_agreement(other, "verify_mult, other")?;
         self.enforce_limb_width_agreement(prod, "verify_mult, prod")?;
         // Verify that factor is in bounds
-        let max_word = BigUint::from(min(self.params.n_limbs, other.params.n_limbs))
-            * &self.params.max_word
-            * &other.params.max_word;
+        let max_word = {
+            let mut x = Integer::from(min(self.params.n_limbs, other.params.n_limbs));
+            x *= &self.params.max_word;
+            x *= &other.params.max_word;
+            x
+        };
         let poly_prod = Polynomial::from(self.clone()).alloc_product(
             cs.namespace(|| "poly product"),
             &Polynomial::from(other.clone()),
@@ -852,10 +861,10 @@ impl<E: Engine> BigNat<E> {
 
     pub fn enforce_coprime<CS: ConstraintSystem<E>>(
         &self,
-        mut cs: CS,
+        cs: CS,
         other: &Self,
     ) -> Result<(), SynthesisError> {
-        let one = Self::one(cs.namespace(|| "one"), other.params.limb_width)?;
+        let one = Self::one::<CS>(other.params.limb_width);
         self.enforce_gcd(cs, other, &one)
     }
 
@@ -874,13 +883,7 @@ impl<E: Engine> BigNat<E> {
                     // To compute the bezout coefficients, we do some acrobatics b/c they might be
                     // negative
                     other.value.as_ref().map(|b| {
-                        (a.to_bigint()
-                            .unwrap()
-                            .extended_gcd(&b.to_bigint().unwrap())
-                            .x
-                            + b.to_bigint().unwrap())
-                        .to_biguint()
-                        .unwrap()
+                        (a.clone().gcd_cofactors(b.clone(), Integer::new()).1 + b)
                             % b
                     })
                 })
@@ -912,12 +915,12 @@ impl<E: Engine> BigNat<E> {
             cs.namespace(|| "gcd"),
             self.value
                 .as_ref()
-                .and_then(|a| other.value.as_ref().map(|b| a.gcd(b)))
+                .and_then(|a| other.value.as_ref().map(|b| Integer::from(a.gcd_ref(b))))
                 .as_ref(),
             (),
             &BigNatParams {
                 min_bits: 1,
-                max_word: (BigUint::one() << limb_width) - 1usize,
+                max_word: int_with_n_ones(limb_width),
                 n_limbs,
                 limb_width,
             },
@@ -941,7 +944,12 @@ impl<E: Engine> BigNat<E> {
         let quotient_limbs = self.limbs.len() + other.limbs.len();
         let quotient = BigNat::alloc_from_nat(
             cs.namespace(|| "quotient"),
-            || Ok(self.value.grab()? * other.value.grab()? / modulus.value.grab()?),
+            || Ok({
+                let mut x: Integer = self.value.grab()?.clone();
+                x *= *other.value().grab()?;
+                x /= *modulus.value().grab()?;
+                x
+            }),
             self.params.limb_width,
             quotient_limbs,
         )?;
@@ -958,14 +966,19 @@ impl<E: Engine> BigNat<E> {
         // q * m + r
         let right = Polynomial::from(right_product).sum(&r_poly);
 
-        let left_max_word = BigUint::from(min(self.limbs.len(), other.limbs.len()))
-            * &self.params.max_word
-            * &other.params.max_word;
-        let right_max_word =
-            BigUint::from(std::cmp::min(quotient.limbs.len(), modulus.limbs.len()))
-                * &quotient.params.max_word
-                * &modulus.params.max_word
-                + &remainder.params.max_word;
+        let left_max_word = {
+            let mut x = Integer::from(min(self.limbs.len(), other.limbs.len()));
+            x *= &self.params.max_word;
+            x *= &other.params.max_word;
+            x
+        };
+        let right_max_word = {
+            let mut x = Integer::from(std::cmp::min(quotient.limbs.len(), modulus.limbs.len()));
+            x *= &quotient.params.max_word;
+            x *= &modulus.params.max_word;
+            x += &remainder.params.max_word;
+            x
+        };
 
         let left_int = BigNat::from_poly(Polynomial::from(left), limb_width, left_max_word);
         let right_int = BigNat::from_poly(Polynomial::from(right), limb_width, right_max_word);
@@ -987,14 +1000,24 @@ impl<E: Engine> BigNat<E> {
         let quotient_limbs = quotient_bits.saturating_sub(1) / limb_width + 1;
         let quotient = BigNat::alloc_from_nat(
             cs.namespace(|| "quotient"),
-            || Ok(self.value.grab()? * other.value.grab()? / modulus.value.grab()?),
+            || Ok({
+                let mut x = self.value.grab()?.clone();
+                x *= other.value.grab()?;
+                x /= modulus.value.grab()?;
+                x
+            }),
             self.params.limb_width,
             quotient_limbs,
         )?;
         quotient.assert_well_formed(cs.namespace(|| "quotient rangecheck"))?;
         let remainder = BigNat::alloc_from_nat(
             cs.namespace(|| "remainder"),
-            || Ok(self.value.grab()? * other.value.grab()? % modulus.value.grab()?),
+            || Ok({
+                let mut x = self.value.grab()?.clone();
+                x *= other.value.grab()?;
+                x %= modulus.value.grab()?;
+                x
+            }),
             self.params.limb_width,
             modulus.limbs.len(),
         )?;
@@ -1011,14 +1034,19 @@ impl<E: Engine> BigNat<E> {
         // q * m + r
         let right = Polynomial::from(right_product).sum(&r_poly);
 
-        let left_max_word = BigUint::from(std::cmp::min(self.limbs.len(), other.limbs.len()))
-            * &self.params.max_word
-            * &other.params.max_word;
-        let right_max_word =
-            BigUint::from(std::cmp::min(quotient.limbs.len(), modulus.limbs.len()))
-                * &quotient.params.max_word
-                * &modulus.params.max_word
-                + &remainder.params.max_word;
+        let left_max_word = {
+            let mut x = Integer::from(min(self.limbs.len(), other.limbs.len()));
+            x *= &self.params.max_word;
+            x *= &other.params.max_word;
+            x
+        };
+        let right_max_word = {
+            let mut x = Integer::from(std::cmp::min(quotient.limbs.len(), modulus.limbs.len()));
+            x *= &quotient.params.max_word;
+            x *= &modulus.params.max_word;
+            x += &remainder.params.max_word;
+            x
+        };
 
         let left_int = BigNat::from_poly(Polynomial::from(left), limb_width, left_max_word);
         let right_int = BigNat::from_poly(Polynomial::from(right), limb_width, right_max_word);
@@ -1038,14 +1066,14 @@ impl<E: Engine> BigNat<E> {
         let quotient_limbs = quotient_bits.saturating_sub(1) / limb_width + 1;
         let quotient = BigNat::alloc_from_nat(
             cs.namespace(|| "quotient"),
-            || Ok(self.value.grab()? / modulus.value.grab()?),
+            || Ok(Integer::from(self.value.grab()? / modulus.value.grab()?)),
             self.params.limb_width,
             quotient_limbs,
         )?;
         quotient.assert_well_formed(cs.namespace(|| "quotient rangecheck"))?;
         let remainder = BigNat::alloc_from_nat(
             cs.namespace(|| "remainder"),
-            || Ok(self.value.grab()? % modulus.value.grab()?),
+            || Ok(Integer::from(self.value.grab()? % modulus.value.grab()?)),
             self.params.limb_width,
             modulus.limbs.len(),
         )?;
@@ -1058,11 +1086,13 @@ impl<E: Engine> BigNat<E> {
         let right_product = q_poly.alloc_product(cs.namespace(|| "right_product"), &mod_poly)?;
         let right = Polynomial::from(right_product).sum(&r_poly);
 
-        let right_max_word =
-            BigUint::from(std::cmp::min(quotient.limbs.len(), modulus.limbs.len()))
-                * &quotient.params.max_word
-                * &modulus.params.max_word
-                + &remainder.params.max_word;
+        let right_max_word = {
+            let mut x = Integer::from(std::cmp::min(quotient.limbs.len(), modulus.limbs.len()));
+            x *= &quotient.params.max_word;
+            x *= &modulus.params.max_word;
+            x += &remainder.params.max_word;
+            x
+        };
 
         let right_int = BigNat::from_poly(Polynomial::from(right), limb_width, right_max_word);
         self.equal_when_carried_regroup(cs.namespace(|| "carry"), &right_int)?;
@@ -1100,10 +1130,11 @@ impl<E: Engine> BigNat<E> {
             }
             limbs
         };
-        let max_word = (0..limbs_per_group)
-            .map(|i| BigUint::from(2usize) << (i * self.params.limb_width))
-            .sum::<BigUint>()
-            * &self.params.max_word;
+        let max_word = {
+            let mut x = self.params.max_word.clone() << (limbs_per_group * self.params.limb_width) as u32;
+            x -= &self.params.max_word;
+            x
+        };
         BigNat {
             params: BigNatParams {
                 min_bits: self.params.min_bits,
@@ -1165,13 +1196,13 @@ impl<E: Engine> BigNat<E> {
                     )
                 }
             } else {
-                Ok(BigNat::identity::<CS>(modulus.params.limb_width))
+                Ok(BigNat::one::<CS>(modulus.params.limb_width))
             }
         }
         let k = optimal_k(exp.bits.len());
         let base_powers = {
             let mut base_powers = vec![
-                BigNat::identity::<CS>(modulus.params.limb_width),
+                BigNat::one::<CS>(modulus.params.limb_width),
                 self.clone(),
             ];
             for i in 2..(1 << k) {
@@ -1201,7 +1232,7 @@ impl<E: Engine> BigNat<E> {
         exp: &Self,
         modulus: &Self,
     ) -> Result<BigNat<E>, SynthesisError> {
-        let exp_bin_rev = if exp.params.max_word >= BigUint::one() << exp.params.limb_width {
+        let exp_bin_rev = if exp.params.max_word >= Integer::from(1) << exp.params.limb_width as u32 {
             let exp_carried = BigNat::alloc_from_nat(
                 cs.namespace(|| "exp carried"),
                 || Ok(exp.value.grab()?.clone()),
@@ -1240,7 +1271,7 @@ impl<E: Engine> BigNat<E> {
         let n_less_one = BigNat::recompose(&bits.clone().shr(1).shl(1), self.params.limb_width);
         let one = BigNat::alloc_from_nat(
             cs.namespace(|| "1"),
-            || Ok(BigUint::from(1usize)),
+            || Ok(Integer::from(1)),
             self.params.limb_width,
             self.limbs.len(),
         )?;
@@ -1261,8 +1292,8 @@ impl<E: Engine> BigNat<E> {
     ) -> Result<Boolean, SynthesisError> {
         let mut rolling = Boolean::Constant(true);
         for p in bases {
-            let big_p = BigUint::from(*p);
-            if big_p.bits() > self.params.limb_width * self.limbs.len() {
+            let big_p = Integer::from(*p);
+            if big_p.significant_bits() as usize > self.params.limb_width * self.limbs.len() {
                 eprintln!("miller_rabin_rounds");
                 return Err(SynthesisError::Unsatisfiable);
             }
@@ -1299,16 +1330,16 @@ impl<E: Engine> BigNat<E> {
         }
     }
 
-    pub fn identity<CS: ConstraintSystem<E>>(limb_width: usize) -> Self {
+    pub fn one<CS: ConstraintSystem<E>>(limb_width: usize) -> Self {
         BigNat {
             limb_values: Some({ vec![E::Fr::one()] }),
-            value: Some(BigUint::from(1usize)),
+            value: Some(Integer::from(1)),
             limbs: { vec![LinearCombination::zero() + CS::one()] },
             params: BigNatParams {
                 min_bits: 1,
                 n_limbs: 1,
                 limb_width: limb_width,
-                max_word: BigUint::from(1usize),
+                max_word: Integer::from(1),
             },
         }
     }
@@ -1342,13 +1373,13 @@ impl<E: Engine> BigNat<E> {
 
     pub fn n_bits(&self) -> usize {
         assert!(self.params.n_limbs > 0);
-        self.params.limb_width * (self.params.n_limbs - 1) + self.params.max_word.bits()
+        self.params.limb_width * (self.params.n_limbs - 1) + self.params.max_word.significant_bits() as usize
     }
 }
 
 impl<E: Engine> Gadget for BigNat<E> {
     type E = E;
-    type Value = BigUint;
+    type Value = Integer;
     type Params = BigNatParams;
     type Access = ();
     fn alloc<CS: ConstraintSystem<E>>(
@@ -1364,7 +1395,7 @@ impl<E: Engine> Gadget for BigNat<E> {
             params.n_limbs,
         )
     }
-    fn value(&self) -> Option<&BigUint> {
+    fn value(&self) -> Option<&Integer> {
         self.value.as_ref()
     }
     fn wire_values(&self) -> Option<Vec<E::Fr>> {
@@ -1551,7 +1582,7 @@ mod tests {
                         .map(usize_to_f)
                         .collect())
                 },
-                Some(BigUint::from(self.params.max_word)),
+                Some(Integer::from(self.params.max_word)),
                 self.params.limb_width,
                 self.params.n_limbs,
             )?;
@@ -1569,7 +1600,7 @@ mod tests {
                         .map(usize_to_f)
                         .collect())
                 },
-                Some(BigUint::from(self.params.max_word)),
+                Some(Integer::from(self.params.max_word)),
                 self.params.limb_width,
                 self.params.n_limbs,
             )?;
@@ -1581,11 +1612,11 @@ mod tests {
 
     #[derive(Debug)]
     pub struct MultModInputs {
-        pub a: BigUint,
-        pub b: BigUint,
-        pub m: BigUint,
-        pub q: BigUint,
-        pub r: BigUint,
+        pub a: Integer,
+        pub b: Integer,
+        pub m: Integer,
+        pub q: Integer,
+        pub r: Integer,
     }
 
     pub struct MultModParameters {
@@ -1653,11 +1684,11 @@ mod tests {
                 full_m: true,
             },
             inputs: Some(MultModInputs {
-                a: BigUint::from(1usize),
-                b: BigUint::from(1usize),
-                m: BigUint::from(255usize),
-                q: BigUint::from(0usize),
-                r: BigUint::from(1usize),
+                a: Integer::from(1usize),
+                b: Integer::from(1usize),
+                m: Integer::from(255usize),
+                q: Integer::from(0usize),
+                r: Integer::from(1usize),
             }),
         }, true),
         mult_mod_1_by_0: ( MultMod {
@@ -1669,11 +1700,11 @@ mod tests {
                 full_m: true,
             },
             inputs: Some(MultModInputs {
-                a: BigUint::from(1usize),
-                b: BigUint::from(0usize),
-                m: BigUint::from(255usize),
-                q: BigUint::from(0usize),
-                r: BigUint::from(0usize),
+                a: Integer::from(1usize),
+                b: Integer::from(0usize),
+                m: Integer::from(255usize),
+                q: Integer::from(0usize),
+                r: Integer::from(0usize),
             }),
         }, true),
         mult_mod_2_by_2: ( MultMod {
@@ -1685,11 +1716,11 @@ mod tests {
                 full_m: true,
             },
             inputs: Some(MultModInputs {
-                a: BigUint::from(2usize),
-                b: BigUint::from(2usize),
-                m: BigUint::from(255usize),
-                q: BigUint::from(0usize),
-                r: BigUint::from(4usize),
+                a: Integer::from(2usize),
+                b: Integer::from(2usize),
+                m: Integer::from(255usize),
+                q: Integer::from(0usize),
+                r: Integer::from(4usize),
             }),
         }, true),
         mult_mod_16_by_16: ( MultMod {
@@ -1701,11 +1732,11 @@ mod tests {
                 full_m: true,
             },
             inputs: Some(MultModInputs {
-                a: BigUint::from(16usize),
-                b: BigUint::from(16usize),
-                m: BigUint::from(255usize),
-                q: BigUint::from(1usize),
-                r: BigUint::from(1usize),
+                a: Integer::from(16usize),
+                b: Integer::from(16usize),
+                m: Integer::from(255usize),
+                q: Integer::from(1usize),
+                r: Integer::from(1usize),
             }),
         }, true),
         mult_mod_254_by_254: ( MultMod {
@@ -1717,11 +1748,11 @@ mod tests {
                 full_m: true,
             },
             inputs: Some(MultModInputs {
-                a: BigUint::from(254usize),
-                b: BigUint::from(254usize),
-                m: BigUint::from(255usize),
-                q: BigUint::from(253usize),
-                r: BigUint::from(1usize),
+                a: Integer::from(254usize),
+                b: Integer::from(254usize),
+                m: Integer::from(255usize),
+                q: Integer::from(253usize),
+                r: Integer::from(1usize),
             }),
         }, true),
         mult_mod_254_by_254_wrong: ( MultMod {
@@ -1733,11 +1764,11 @@ mod tests {
                 full_m: true,
             },
             inputs: Some(MultModInputs {
-                a: BigUint::from(254usize),
-                b: BigUint::from(254usize),
-                m: BigUint::from(255usize),
-                q: BigUint::from(253usize),
-                r: BigUint::from(0usize),
+                a: Integer::from(254usize),
+                b: Integer::from(254usize),
+                m: Integer::from(255usize),
+                q: Integer::from(253usize),
+                r: Integer::from(0usize),
             }),
         }, false),
         mult_mod_110_by_180_mod187: ( MultMod {
@@ -1749,11 +1780,11 @@ mod tests {
                 full_m: true,
             },
             inputs: Some(MultModInputs {
-                a: BigUint::from(110usize),
-                b: BigUint::from(180usize),
-                m: BigUint::from(187usize),
-                q: BigUint::from(105usize),
-                r: BigUint::from(165usize),
+                a: Integer::from(110usize),
+                b: Integer::from(180usize),
+                m: Integer::from(187usize),
+                q: Integer::from(105usize),
+                r: Integer::from(165usize),
             }),
         }, true),
         mult_mod_2w_by_6w: ( MultMod {
@@ -1765,11 +1796,11 @@ mod tests {
                 full_m: true,
             },
             inputs: Some(MultModInputs {
-                a: BigUint::from(16777215usize),
-                b: BigUint::from(180usize),
-                m: BigUint::from(255usize),
-                q: BigUint::from(11842740usize),
-                r: BigUint::from(0usize),
+                a: Integer::from(16777215usize),
+                b: Integer::from(180usize),
+                m: Integer::from(255usize),
+                q: Integer::from(11842740usize),
+                r: Integer::from(0usize),
             }),
         }, true),
         mult_mod_2w_by_6w_test_2: ( MultMod {
@@ -1781,11 +1812,11 @@ mod tests {
                 full_m: true,
             },
             inputs: Some(MultModInputs {
-                a: BigUint::from(16777210usize),
-                b: BigUint::from(180usize),
-                m: BigUint::from(255usize),
-                q: BigUint::from(11842736usize),
-                r: BigUint::from(120usize),
+                a: Integer::from(16777210usize),
+                b: Integer::from(180usize),
+                m: Integer::from(255usize),
+                q: Integer::from(11842736usize),
+                r: Integer::from(120usize),
             }),
         }, true),
         mult_mod_2048x128: ( MultMod {
@@ -1797,18 +1828,18 @@ mod tests {
                 full_m: false,
             },
             inputs: Some(MultModInputs {
-                a: BigUint::from(16777210usize),
-                b: BigUint::from(180usize),
-                m: BigUint::from(255usize),
-                q: BigUint::from(11842736usize),
-                r: BigUint::from(120usize),
+                a: Integer::from(16777210usize),
+                b: Integer::from(180usize),
+                m: Integer::from(255usize),
+                q: Integer::from(11842736usize),
+                r: Integer::from(120usize),
             }),
         }, true),
     }
 
     #[derive(Debug)]
     pub struct NumberBitDecompInputs {
-        pub n: BigUint,
+        pub n: Integer,
     }
 
     pub struct NumberBitDecompParams {
@@ -1838,7 +1869,7 @@ mod tests {
                                       n_bits: 1,
                                   },
                                   inputs: Some(NumberBitDecompInputs {
-                                      n: BigUint::from(1usize),
+                                      n: Integer::from(1usize),
                                   }),
                               },
                               true
@@ -1849,7 +1880,7 @@ mod tests {
                                       n_bits: 2,
                                   },
                                   inputs: Some(NumberBitDecompInputs {
-                                      n: BigUint::from(1usize),
+                                      n: Integer::from(1usize),
                                   }),
                               },
                               true
@@ -1860,7 +1891,7 @@ mod tests {
                                       n_bits: 2,
                                   },
                                   inputs: Some(NumberBitDecompInputs {
-                                      n: BigUint::from(5usize),
+                                      n: Integer::from(5usize),
                                   }),
                               },
                               false
@@ -1871,7 +1902,7 @@ mod tests {
                                       n_bits: 8,
                                   },
                                   inputs: Some(NumberBitDecompInputs {
-                                      n: BigUint::from(255usize),
+                                      n: Integer::from(255usize),
                                   }),
                               },
                               true
@@ -1880,7 +1911,7 @@ mod tests {
 
     #[derive(Debug)]
     pub struct BigNatBitDecompInputs {
-        pub n: BigUint,
+        pub n: Integer,
     }
 
     pub struct BigNatBitDecompParams {
@@ -1920,7 +1951,7 @@ mod tests {
 
         let circuit = BigNatBitDecomp {
             inputs: Some(BigNatBitDecompInputs {
-                n: BigUint::from(n),
+                n: Integer::from(n),
             }),
             params: BigNatBitDecompParams {
                 limb_width: limb_width as usize,
@@ -1955,25 +1986,25 @@ mod tests {
         fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
             let b = BigNat::alloc_from_nat(
                 cs.namespace(|| "b"),
-                || Ok(BigUint::from_str(self.inputs.grab()?.b).unwrap()),
+                || Ok(Integer::from_str(self.inputs.grab()?.b).unwrap()),
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
             let e = BigNat::alloc_from_nat(
                 cs.namespace(|| "e"),
-                || Ok(BigUint::from_str(self.inputs.grab()?.e).unwrap()),
+                || Ok(Integer::from_str(self.inputs.grab()?.e).unwrap()),
                 self.params.limb_width,
                 self.params.n_limbs_e,
             )?;
             let res = BigNat::alloc_from_nat(
                 cs.namespace(|| "res"),
-                || Ok(BigUint::from_str(self.inputs.grab()?.res).unwrap()),
+                || Ok(Integer::from_str(self.inputs.grab()?.res).unwrap()),
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
             let m = BigNat::alloc_from_nat(
                 cs.namespace(|| "m"),
-                || Ok(BigUint::from_str(self.inputs.grab()?.m).unwrap()),
+                || Ok(Integer::from_str(self.inputs.grab()?.m).unwrap()),
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
@@ -2138,13 +2169,13 @@ mod tests {
             use sapling_crypto::circuit::boolean::AllocatedBit;
             let b = BigNat::alloc_from_nat(
                 cs.namespace(|| "b"),
-                || Ok(BigUint::from_str(self.inputs.grab()?.b).unwrap()),
+                || Ok(Integer::from_str(self.inputs.grab()?.b).unwrap()),
                 self.params.limb_width,
                 self.params.n_limbs,
             )?;
             let n = BigNat::alloc_from_nat(
                 cs.namespace(|| "n"),
-                || Ok(BigUint::from_str(self.inputs.grab()?.n).unwrap()),
+                || Ok(Integer::from_str(self.inputs.grab()?.n).unwrap()),
                 self.params.limb_width,
                 self.params.n_limbs,
             )?;
@@ -2301,7 +2332,7 @@ mod tests {
             use sapling_crypto::circuit::boolean::AllocatedBit;
             let n = BigNat::alloc_from_nat(
                 cs.namespace(|| "n"),
-                || Ok(BigUint::from_str(self.inputs.grab()?.n).unwrap()),
+                || Ok(Integer::from_str(self.inputs.grab()?.n).unwrap()),
                 self.params.limb_width,
                 self.params.n_limbs,
             )?;
@@ -2367,19 +2398,19 @@ mod tests {
         fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
             let a = BigNat::alloc_from_nat(
                 cs.namespace(|| "a"),
-                || Ok(BigUint::from_str(self.inputs.grab()?.a).unwrap()),
+                || Ok(Integer::from_str(self.inputs.grab()?.a).unwrap()),
                 self.params.limb_width,
                 self.params.n_limbs_a,
             )?;
             let b = BigNat::alloc_from_nat(
                 cs.namespace(|| "b"),
-                || Ok(BigUint::from_str(self.inputs.grab()?.b).unwrap()),
+                || Ok(Integer::from_str(self.inputs.grab()?.b).unwrap()),
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
             let gcd = BigNat::alloc_from_nat(
                 cs.namespace(|| "res"),
-                || Ok(BigUint::from_str(self.inputs.grab()?.gcd).unwrap()),
+                || Ok(Integer::from_str(self.inputs.grab()?.gcd).unwrap()),
                 self.params.limb_width,
                 min(self.params.n_limbs_b, self.params.n_limbs_a),
             )?;
@@ -2462,7 +2493,7 @@ mod tests {
             use sapling_crypto::circuit::boolean::AllocatedBit;
             let n = BigNat::alloc_from_nat(
                 cs.namespace(|| "n"),
-                || Ok(BigUint::from_str(self.inputs.grab()?.n).unwrap()),
+                || Ok(Integer::from_str(self.inputs.grab()?.n).unwrap()),
                 32,
                 1,
             )?;

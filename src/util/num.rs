@@ -1,5 +1,4 @@
-use num_bigint::BigUint;
-use num_traits::One;
+use rug::Integer;
 use sapling_crypto::bellman::pairing::ff::{Field, PrimeField, PrimeFieldRepr};
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError, Variable};
@@ -183,7 +182,7 @@ pub mod allocated_num {
         }
         let res = Num::alloc(cs.namespace(|| "res"), || {
             Ok(nat_to_f(
-                &(f_to_nat(num.get_value().grab()?) & ((BigUint::one() << n_bits) - 1usize)),
+                &(f_to_nat(num.get_value().grab()?).keep_bits(n_bits as u32))
             )
             .unwrap())
         })?;
@@ -193,7 +192,7 @@ pub mod allocated_num {
             |lc| lc,
             |mut lc| {
                 for i in 0..n_bits {
-                    lc = lc + &bits[i].lc(CS::one(), nat_to_f(&(BigUint::one() << i)).unwrap());
+                    lc = lc + &bits[i].lc(CS::one(), nat_to_f(&(Integer::from(1) << i as u32)).unwrap());
                 }
                 lc = lc - &res.num;
                 lc

@@ -6,8 +6,7 @@ pub mod pocklington;
 
 use std::clone::Clone;
 
-use num_bigint::BigUint;
-use num_traits::One;
+use rug::Integer;
 use sapling_crypto::bellman::pairing::ff::Field;
 use sapling_crypto::bellman::pairing::ff::PrimeField;
 
@@ -27,8 +26,8 @@ impl HashDomain {
 }
 
 /// Given an integer, returns the integer with its low `k` bits.
-pub fn low_k_bits(n: &BigUint, k: usize) -> BigUint {
-    n & ((BigUint::one() << k) - 1usize)
+pub fn low_k_bits(n: &Integer, k: usize) -> Integer {
+    n.clone().keep_bits(k as u32)
 }
 
 pub trait Hasher: Clone + Send + Sync {

@@ -1,16 +1,16 @@
-use num_bigint::BigUint;
+use rug::{Integer, integer::Order};
 use sapling_crypto::bellman::pairing::ff::{PrimeField, PrimeFieldRepr};
 
 /// Convert a field element to a natural number
-pub fn f_to_nat<F: PrimeField>(f: &F) -> BigUint {
+pub fn f_to_nat<F: PrimeField>(f: &F) -> Integer {
     let mut s = Vec::new();
     f.into_repr().write_be(&mut s).unwrap();
-    BigUint::from_bytes_be(&s)
+    Integer::from_digits(f.into_repr().as_ref(), Order::Lsf)
 }
 
 /// Convert a natural number to a field element.
 /// Returns `None` if the number is too big for the field.
-pub fn nat_to_f<F: PrimeField>(n: &BigUint) -> Option<F> {
+pub fn nat_to_f<F: PrimeField>(n: &Integer) -> Option<F> {
     F::from_str(&format!("{}", n))
 }
 
@@ -31,20 +31,19 @@ pub fn f_to_usize<F: PrimeField>(n: &F) -> usize {
 #[cfg(test)]
 mod test {
     use super::*;
-    use num_bigint::BigUint;
     use sapling_crypto::bellman::pairing::bn256::Fr;
     use sapling_crypto::bellman::pairing::ff::PrimeField;
 
     #[test]
     fn test_nat_to_f() {
-        let n = BigUint::from(4usize);
+        let n = Integer::from(4usize);
         let e = Fr::from_str("4").unwrap();
         assert!(nat_to_f::<Fr>(&n).unwrap() == e);
     }
 
     #[test]
     fn test_f_to_nat() {
-        let n = BigUint::from(4usize);
+        let n = Integer::from(4usize);
         let e = Fr::from_str("4").unwrap();
         assert!(f_to_nat(&e) == n)
     }

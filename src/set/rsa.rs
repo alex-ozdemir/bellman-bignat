@@ -1,4 +1,4 @@
-use num_bigint::BigUint;
+use rug::Integer;
 use sapling_crypto::bellman::pairing::ff::{PrimeField, ScalarEngine};
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{Circuit, ConstraintSystem, LinearCombination, SynthesisError};
@@ -29,7 +29,7 @@ where
     Inner: IntSet,
 {
     pub inner: Inner,
-    pub offset: BigUint,
+    pub offset: Integer,
     pub hasher: H,
     pub hash_domain: HashDomain,
     pub limb_width: usize,
@@ -48,7 +48,7 @@ where
 impl<H: Hasher, Inner: IntSet> Set<H, Inner> {
     pub fn new_with(
         group: Inner::G,
-        offset: BigUint,
+        offset: Integer,
         hasher: H,
         element_bits: usize,
         limb_width: usize,

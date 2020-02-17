@@ -12,8 +12,7 @@ use util::num::Num;
 use OptionExt;
 
 pub mod helper {
-    use num_bigint::BigUint;
-    use num_traits::One;
+    use rug::Integer;
     use sapling_crypto::bellman::pairing::ff::Field;
     use sapling_crypto::bellman::pairing::ff::PrimeField;
 
@@ -22,7 +21,7 @@ pub mod helper {
     use super::super::Hasher;
     use util::convert::f_to_nat;
 
-    pub fn hash_to_integer<H: Hasher>(inputs: &[H::F], domain: &HashDomain, hasher: &H) -> BigUint {
+    pub fn hash_to_integer<H: Hasher>(inputs: &[H::F], domain: &HashDomain, hasher: &H) -> Integer {
         let bits_per_hash = <H::F as PrimeField>::CAPACITY as usize;
 
         let bits_from_hash = domain.n_bits - 1 - domain.n_trailing_ones;
@@ -37,13 +36,13 @@ pub mod helper {
         for i in 1..n_hashes {
             perm.add_assign(&H::F::one());
             let low_bits = low_k_bits(&f_to_nat(&perm), bits_per_hash);
-            sum_of_hashes += low_bits << (bits_per_hash * i);
+            sum_of_hashes += low_bits << (bits_per_hash * i) as u32;
         }
 
         // Now we assemble the 1024b number. Notice the ORs are all disjoint.
-        let mut acc = (BigUint::one() << domain.n_trailing_ones) - 1usize;
-        acc |= low_k_bits(&sum_of_hashes, bits_from_hash) << domain.n_trailing_ones;
-        acc |= BigUint::one() << (domain.n_bits - 1);
+        let mut acc = (Integer::from(1) << domain.n_trailing_ones as u32) - Integer::from(1usize);
+        acc |= low_k_bits(&sum_of_hashes, bits_from_hash) << domain.n_trailing_ones as u32;
+        acc |= Integer::from(1) << (domain.n_bits - 1) as u32;
         acc
     }
 }

@@ -1,4 +1,4 @@
-use num_bigint::BigUint;
+use rug::Integer;
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
 
@@ -15,27 +15,27 @@ pub trait IntSet: Sized + Clone + Eq + Debug {
 
     fn new(group: Self::G) -> Self;
 
-    fn new_with<I: IntoIterator<Item = BigUint>>(group: Self::G, items: I) -> Self;
+    fn new_with<I: IntoIterator<Item = Integer>>(group: Self::G, items: I) -> Self;
 
     /// Add `n` to the set.
-    fn insert(&mut self, n: BigUint);
+    fn insert(&mut self, n: Integer);
     /// Remove `n` from the set, returning whether `n` was present.
-    fn remove(&mut self, n: &BigUint) -> bool;
-    /// BigUinthe digest of the current elements (`g` to the product of the elements).
+    fn remove(&mut self, n: &Integer) -> bool;
+    /// Integerhe digest of the current elements (`g` to the product of the elements).
     fn digest(&mut self) -> <Self::G as SemiGroup>::Elem;
 
     /// Gets the underlying RSA group
     fn group(&self) -> &Self::G;
 
     /// Add all of the `ns` to the set. Returns whether all items were absent
-    fn insert_all<I: IntoIterator<Item = BigUint>>(&mut self, ns: I) {
+    fn insert_all<I: IntoIterator<Item = Integer>>(&mut self, ns: I) {
         for n in ns {
             self.insert(n);
         }
     }
 
     /// Remove all of the `ns` from the set. Rerturns whether all items were present.
-    fn remove_all<'a, I: IntoIterator<Item = &'a BigUint>>(&mut self, ns: I) -> bool
+    fn remove_all<'a, I: IntoIterator<Item = &'a Integer>>(&mut self, ns: I) -> bool
     where
         <Self::G as SemiGroup>::Elem: 'a,
     {
@@ -51,7 +51,7 @@ pub trait IntSet: Sized + Clone + Eq + Debug {
 #[derive(Clone, PartialEq, Eq)]
 pub struct NaiveExpSet<G: SemiGroup> {
     group: G,
-    elements: BTreeMap<BigUint, usize>,
+    elements: BTreeMap<Integer, usize>,
     digest: Option<G::Elem>,
 }
 
@@ -79,26 +79,27 @@ where
 
     fn new(group: G) -> Self {
         Self {
-            digest: Some(group.generator()),
+            digest: Some(group.generator().clone()),
             group,
             elements: BTreeMap::new(),
         }
     }
 
-    fn new_with<I: IntoIterator<Item = BigUint>>(group: G, items: I) -> Self {
+    fn new_with<I: IntoIterator<Item = Integer>>(group: G, items: I) -> Self {
         let mut this = Self::new(group);
         this.insert_all(items);
         this
     }
 
-    fn insert(&mut self, n: BigUint) {
+    fn insert(&mut self, n: Integer) {
         if let Some(ref mut d) = self.digest {
             *d = self.group.power(d, &n);
+            println!("After {}, digest {}", n, d);
         }
         *self.elements.entry(n).or_insert(0) += 1;
     }
 
-    fn remove(&mut self, n: &BigUint) -> bool {
+    fn remove(&mut self, n: &Integer) -> bool {
         if let Some(count) = self.elements.get_mut(n) {
             *count -= 1;
             if *count == 0 {
@@ -114,7 +115,7 @@ where
     fn digest(&mut self) -> G::Elem {
         if self.digest.is_none() {
             self.digest = Some(self.elements.iter().fold(
-                self.group.generator(),
+                self.group.generator().clone(),
                 |mut acc, (elem, ct)| {
                     for _ in 0..*ct {
                         acc = self.group.power(&acc, &elem)
@@ -211,7 +212,7 @@ where
                 .clone()
                 .into_iter()
                 .map(|i| i.raw.value.as_ref())
-                .collect::<Option<Vec<&BigUint>>>()
+                .collect::<Option<Vec<&Integer>>>()
                 .map(|is| {
                     assert!(set.remove_all(is));
                     set
@@ -244,7 +245,7 @@ where
             items
                 .iter()
                 .map(|i| i.raw.value.clone())
-                .collect::<Option<Vec<BigUint>>>()
+                .collect::<Option<Vec<Integer>>>()
                 .map(|is| {
                     set.insert_all(is);
                     set
@@ -303,16 +304,16 @@ pub mod tests {
         fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
             let challenge = BigNat::alloc_from_nat(
                 cs.namespace(|| "challenge"),
-                || Ok(BigUint::from_str(self.inputs.grab()?.challenge).unwrap()),
+                || Ok(Integer::from_str(self.inputs.grab()?.challenge).unwrap()),
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
-            let initial_items_vec: Vec<BigUint> = self
+            let initial_items_vec: Vec<Integer> = self
                 .inputs
                 .grab()?
                 .initial_items
                 .iter()
-                .map(|i| BigUint::from_str(i).unwrap())
+                .map(|i| Integer::from_str(i).unwrap())
                 .collect();
             let removed_items_vec: Vec<BigNat<E>> = self
                 .inputs
@@ -323,7 +324,7 @@ pub mod tests {
                 .map(|(i, e)| {
                     BigNat::alloc_from_nat(
                         cs.namespace(|| format!("removed item {}", i)),
-                        || Ok(BigUint::from_str(e).unwrap()),
+                        || Ok(Integer::from_str(e).unwrap()),
                         self.params.limb_width,
                         self.params.n_limbs_e,
                     )
@@ -331,13 +332,13 @@ pub mod tests {
                 .collect::<Result<Vec<BigNat<E>>, SynthesisError>>()?;
             let initial_digest = BigNat::alloc_from_nat(
                 cs.namespace(|| "initial_digest"),
-                || Ok(BigUint::from_str(self.inputs.grab()?.initial_digest).unwrap()),
+                || Ok(Integer::from_str(self.inputs.grab()?.initial_digest).unwrap()),
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
             let final_digest = BigNat::alloc_from_nat(
                 cs.namespace(|| "final_digest"),
-                || Ok(BigUint::from_str(self.inputs.grab()?.final_digest).unwrap()),
+                || Ok(Integer::from_str(self.inputs.grab()?.final_digest).unwrap()),
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
@@ -364,6 +365,9 @@ pub mod tests {
                     group.clone(),
                     &(),
                 )?;
+
+            println!("initial_set.digest {}", initial_set.digest);
+            println!("initial_digest {}", initial_digest);
 
             initial_set
                 .digest

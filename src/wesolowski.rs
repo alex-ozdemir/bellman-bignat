@@ -1,5 +1,4 @@
-use num_bigint::BigUint;
-use num_traits::One;
+use rug::Integer;
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, SynthesisError};
 
@@ -31,21 +30,18 @@ impl<E: Engine> Reduced<E> {
 }
 
 /// Computes `b ^ (prod(xs) / l) % m`, using gmp.
-pub fn base_to_product<'a, G: SemiGroup, I: Iterator<Item = &'a BigUint>>(
+pub fn base_to_product<'a, G: SemiGroup, I: Iterator<Item = &'a Integer>>(
     g: &G,
     b: &G::Elem,
-    l: &BigUint,
+    l: &Integer,
     xs: I,
 ) -> G::Elem {
-    use rug::Integer;
-    use set::int_set_par::IntegerConversion;
-    let l = BigUint::to_integer(l);
     let mut acc = Integer::from(1);
     for x in xs {
-        acc *= BigUint::to_integer(x);
+        acc *= x;
     }
     acc /= l;
-    g.power(b, &BigUint::from_integer(&acc))
+    g.power(b, &acc)
 }
 
 /// \exists q s.t. q^l \times base^r = result
@@ -67,19 +63,14 @@ where
                 challenge.value().and_then(|c| {
                     pf.iter()
                         .map(|pow| pow.raw.value())
-                        .collect::<Option<Vec<&BigUint>>>()
+                        .collect::<Option<Vec<&Integer>>>()
                         .map(|facs| base_to_product(g, b, c, facs.into_iter()))
                 })
             })
         })
     };
     let r = {
-        let mut acc = BigNat::alloc_from_nat(
-            cs.namespace(|| "r"),
-            || Ok(BigUint::one()),
-            challenge.params.limb_width,
-            challenge.limbs.len(),
-        )?;
+        let mut acc = BigNat::one::<CS>(challenge.params.limb_width);
         for (i, f) in pf.into_iter().enumerate() {
             acc = acc
                 .mult_mod(
@@ -258,7 +249,7 @@ mod tests {
         fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
             let b = BigNat::alloc_from_nat(
                 cs.namespace(|| "b"),
-                || Ok(BigUint::from_str(self.inputs.grab()?.b).unwrap()),
+                || Ok(Integer::from_str(self.inputs.grab()?.b).unwrap()),
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
@@ -271,22 +262,22 @@ mod tests {
                 .map(|(i, e)| {
                     Ok(Reduced::from_raw(BigNat::alloc_from_nat(
                         cs.namespace(|| format!("e {}", i)),
-                        || Ok(BigUint::from_str(e).unwrap()),
+                        || Ok(Integer::from_str(e).unwrap()),
                         self.params.limb_width,
                         self.params.n_limbs_e,
                     )?))
                 })
                 .collect::<Result<Vec<Reduced<E>>, SynthesisError>>()?;
-            let res_computation = || -> Result<BigUint, SynthesisError> {
+            let res_computation = || -> Result<Integer, SynthesisError> {
                 let ref inputs = self.inputs.grab()?;
                 inputs
                     .res
-                    .map(|r| Ok(BigUint::from_str(r).unwrap()))
+                    .map(|r| Ok(Integer::from_str(r).unwrap()))
                     .unwrap_or_else(|| {
-                        let mut acc = BigUint::from_str(inputs.b).unwrap();
-                        let m = BigUint::from_str(inputs.m).unwrap();
+                        let mut acc = Integer::from_str(inputs.b).unwrap();
+                        let m = Integer::from_str(inputs.m).unwrap();
                         for p in inputs.exps {
-                            acc = acc.modpow(&BigUint::from_str(p).unwrap(), &m);
+                            acc.pow_mod_mut(&Integer::from_str(p).unwrap(), &m).unwrap();
                         }
                         Ok(acc)
                     })
@@ -309,7 +300,7 @@ mod tests {
             )?;
             let l = BigNat::alloc_from_nat(
                 cs.namespace(|| "l"),
-                || Ok(BigUint::from_str(self.inputs.grab()?.l).unwrap()),
+                || Ok(Integer::from_str(self.inputs.grab()?.l).unwrap()),
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
@@ -319,52 +310,52 @@ mod tests {
 
     #[test]
     fn base_to_product_0() {
-        let b = BigUint::from(2usize);
-        let l = BigUint::from(2usize);
+        let b = Integer::from(2usize);
+        let l = Integer::from(2usize);
         let xs = [
-            BigUint::from(1usize),
-            BigUint::from(1usize),
-            BigUint::from(1usize),
+            Integer::from(1usize),
+            Integer::from(1usize),
+            Integer::from(1usize),
         ];
         let g = RsaGroup::from_strs("2", "7");
         let clever = base_to_product(&g, &b, &l, xs.iter());
-        assert_eq!(clever, BigUint::from(1usize));
+        assert_eq!(clever, Integer::from(1usize));
     }
 
     #[test]
     fn base_to_product_1() {
-        let b = BigUint::from(2usize);
+        let b = Integer::from(2usize);
         let xs = [
-            BigUint::from(4usize),
-            BigUint::from(3usize),
-            BigUint::from(1usize),
+            Integer::from(4usize),
+            Integer::from(3usize),
+            Integer::from(1usize),
         ];
-        let l = BigUint::from(3usize);
+        let l = Integer::from(3usize);
         let g = RsaGroup::from_strs("2", "3");
         let clever = base_to_product(&g, &b, &l, xs.iter());
-        assert_eq!(clever, BigUint::from(1usize));
+        assert_eq!(clever, Integer::from(1usize));
     }
 
     #[test]
     fn base_to_product_2() {
-        let b = BigUint::from(2usize);
-        let l = BigUint::from(2usize);
+        let b = Integer::from(2usize);
+        let l = Integer::from(2usize);
         let xs = [
-            BigUint::from(1usize),
-            BigUint::from(1usize),
-            BigUint::from(1usize),
+            Integer::from(1usize),
+            Integer::from(1usize),
+            Integer::from(1usize),
         ];
         let g = RsaGroup::from_strs("2", "17");
         let clever = base_to_product(&g, &b, &l, xs.iter());
-        assert_eq!(clever, BigUint::from(1usize));
+        assert_eq!(clever, Integer::from(1usize));
     }
 
     #[bench]
     fn bench_base_to_product(ben: &mut Bencher) {
-        let b = BigUint::from(2usize);
-        let l = BigUint::from_str("4378779693322314851078464711427904016245509035623856790738093868399234071816590832271409512479149219732517").unwrap();
+        let b = Integer::from(2usize);
+        let l = Integer::from_str("4378779693322314851078464711427904016245509035623856790738093868399234071816590832271409512479149219732517").unwrap();
         let xs = vec![
-            BigUint::from_str("31937553987974094718323624043504205546834586774376973142156746177420677478688763299109194760111447891192360362820159149396249147942612451155969619775305163496407638473777556838684741069061351141275104169798848446335239243312484965159829326775977793454245590125242263267420883094097592918381012308862157981711929572365175824672174089740874967056535954189180093379786870545069569186432812295310881940305587888652601685710785451536880821959636231557861961996647312938583891145806865161362164404798306963474067144506909829836959487322752735917184127271661403524679313392947295519723541385106382901941073514681220701690463").unwrap(); 2
+            Integer::from_str("31937553987974094718323624043504205546834586774376973142156746177420677478688763299109194760111447891192360362820159149396249147942612451155969619775305163496407638473777556838684741069061351141275104169798848446335239243312484965159829326775977793454245590125242263267420883094097592918381012308862157981711929572365175824672174089740874967056535954189180093379786870545069569186432812295310881940305587888652601685710785451536880821959636231557861961996647312938583891145806865161362164404798306963474067144506909829836959487322752735917184127271661403524679313392947295519723541385106382901941073514681220701690463").unwrap(); 2
         ];
         let g = RsaGroup::from_strs("2", RSA_2048);
         ben.iter(|| base_to_product(&g, &b, &l, xs.iter()))

@@ -16,7 +16,6 @@ use bellman_bignat::set::GenSet;
 use bellman_bignat::set::int_set_par::ParallelExpSet;
 use bellman_bignat::util::verbose;
 use docopt::Docopt;
-use num_bigint::BigUint;
 use sapling_crypto::bellman::groth16::{
     generate_random_parameters, prepare_prover, prepare_verifying_key, verify_proof,
     ParameterSource, Proof, Parameters
@@ -27,7 +26,6 @@ use sapling_crypto::bellman::{Circuit, SynthesisError};
 use serde::Deserialize;
 
 use rand::{thread_rng, Rng};
-use std::str::FromStr;
 use std::time::{Duration, Instant};
 
 const USAGE: &str = "
@@ -190,10 +188,7 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
         println!("Initializing accumulators, circuits");
     }
     let init_start = Instant::now();
-    let group = RsaQuotientGroup {
-        g: BigUint::from(2usize),
-        m: BigUint::from_str(RSA_2048).unwrap(),
-    };
+    let group = RsaQuotientGroup::from_strs("2", RSA_2048);
 
     let n_untouched = if args.flag_full {
         (1usize << args.arg_capacity).saturating_sub(args.arg_transactions)
@@ -221,17 +216,14 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
         println!("  Constructing initial and final states");
     }
     let inputs = SetBenchInputs::from_counts(
-            n_untouched,
-            args.arg_transactions,
-            args.arg_transactions,
-            ELEMENT_SIZE,
-            hash.clone(),
-            RSA_SIZE,
-            32,
-            RsaQuotientGroup {
-                g: BigUint::from(2usize),
-                m: BigUint::from_str(RSA_2048).unwrap(),
-            },
+        n_untouched,
+        args.arg_transactions,
+        args.arg_transactions,
+        ELEMENT_SIZE,
+        hash.clone(),
+        RSA_SIZE,
+        32,
+        group.clone(),
     );
 
     let mut circuit = SetBench::<_, ParallelExpSet<_>> {

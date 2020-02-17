@@ -146,8 +146,7 @@ impl<E: Engine> EntropySource<E> {
 
 pub mod helper {
     use super::NatTemplate;
-    use num_bigint::BigUint;
-    use num_traits::{One, Zero};
+    use rug::Integer;
 
     use sapling_crypto::bellman::pairing::ff::PrimeField;
 
@@ -168,11 +167,7 @@ pub mod helper {
             let mut bits = Vec::new();
             for (i, hash) in elems.into_iter().enumerate() {
                 let n = f_to_nat(&hash);
-                bits.extend(
-                    n.to_bytes_le()
-                        .into_iter()
-                        .flat_map(|byte| (0..8).map(move |i| (byte >> i) & 1 > 0)),
-                );
+                bits.extend(n.to_digits::<bool>(rug::integer::Order::Lsf));
                 let ex_len = (i + 1) * (F::CAPACITY as usize);
                 bits.truncate(ex_len);
                 bits.extend(std::iter::repeat(false).take(ex_len - bits.len()));
@@ -182,17 +177,17 @@ pub mod helper {
         pub fn get_bit(&mut self) -> bool {
             self.bits.pop().unwrap()
         }
-        pub fn get_bits_as_nat(&mut self, template: NatTemplate) -> BigUint {
-            let mut acc = BigUint::zero();
+        pub fn get_bits_as_nat(&mut self, template: NatTemplate) -> Integer {
+            let mut acc = Integer::from(0);
             for _ in 0..template.leading_ones {
-                acc = (acc << 1) + 1usize;
+                acc = (acc << 1) + 1;
             }
             for _ in 0..template.random_bits {
                 acc = (acc << 1)
                     | if self.get_bit() {
-                        BigUint::one()
+                        Integer::from(1)
                     } else {
-                        BigUint::zero()
+                        Integer::from(0)
                     }
             }
             for _ in 0..template.trailing.count {
