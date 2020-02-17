@@ -50,7 +50,8 @@ impl<E: Engine> Num<E> {
         n_bits: usize,
     ) -> Result<(), SynthesisError> {
         let mut repr = self.value.map(|v| v.into_repr());
-        let bits: Vec<Variable> = (0..n_bits)
+        // Allocate all but the last bits.
+        let bits: Vec<Variable> = (0..(n_bits - 1))
             .map(|i| {
                 cs.alloc(
                     || format!("bit {}", i),
@@ -75,19 +76,29 @@ impl<E: Engine> Num<E> {
                 |lc| lc,
             )
         }
+        // Last bit
         cs.enforce(
-            || "sum",
-            |lc| lc,
-            |lc| lc,
+            || "last bit",
             |mut lc| {
-                lc = lc - &self.num;
                 let mut f = E::Fr::one();
-                for v in bits {
-                    lc = lc + (f, v);
+                lc = lc + &self.num;
+                for v in bits.iter() {
+                    lc = lc - (f, *v);
                     f.double();
                 }
                 lc
             },
+            |mut lc| {
+                lc = lc + CS::one();
+                let mut f = E::Fr::one();
+                lc = lc - &self.num;
+                for v in bits.iter() {
+                    lc = lc + (f, *v);
+                    f.double();
+                }
+                lc
+            },
+            |lc| lc,
         );
         Ok(())
     }
