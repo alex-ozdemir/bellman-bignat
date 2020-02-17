@@ -91,33 +91,66 @@ fn _parallel_mul(a: &mut Integer, b: &mut Integer, nproc: usize) {
     use std::cmp::{max, min, Ordering};
     use std::mem::{size_of, swap};
 
+    // fast paths for 0 and +-1
     let ac0 = a.cmp0();
     let bc0 = b.cmp0();
     if ac0 == Ordering::Equal || bc0 == Ordering::Equal {
+        // a == 0 or b == 0
         a.assign(0);
         return;
     }
+    let b_sig_bits = b.significant_bits();
+    if b_sig_bits == 1 {
+        // b == 1 or b == -1
+        if bc0 == Ordering::Less {
+            // b == -1
+            a.mul_assign(-1);
+        }
+        return;
+    }
+    let a_sig_bits = a.significant_bits();
+    if a_sig_bits == 1 {
+        // a == 1 or a == -1
+        if ac0 == Ordering::Less {
+            // a == -1
+            b.mul_assign(-1);
+        }
+        swap(a, b);
+        return;
+    }
+
+    // don't bother parallelizing if either operand is too small
+    let a_sig_limbs = a.significant_digits::<limb_t>() as usize;
+    let b_sig_limbs = b.significant_digits::<limb_t>() as usize;
+    if a_sig_limbs < nproc || b_sig_limbs < nproc {
+        a.mul_assign(b as &Integer);
+        return;
+    }
+
+    // handle negative inputs
     let negate = (ac0 == Ordering::Less) ^ (bc0 == Ordering::Less);
     a.abs_mut();
     b.abs_mut();
 
-    // make sure a is the larger of the two values --- gives smaller operands to muls below
-    if b.significant_bits() > a.significant_bits() {
-        swap(a, b);
-    }
-    assert!(a.significant_bits() >= b.significant_bits());
-
     // figure out how to split a and b to keep split sizes close together
     let (b_split, b_limbs, a_split, a_limbs) = {
-        let a_sig = a.significant_digits::<limb_t>() as usize;
-        let b_sig = b.significant_digits::<limb_t>() as usize;
         let split_sml = _isqrt(nproc);
         let split_big = nproc / split_sml;
 
-        let a_sml = ((a_sig + split_sml - 1) / split_sml) as isize;
-        let b_sml = ((b_sig + split_sml - 1) / split_sml) as isize;
-        let a_big = ((a_sig + split_big - 1) / split_big) as isize;
-        let b_big = ((b_sig + split_big - 1) / split_big) as isize;
+        let a_sml = ((a_sig_limbs + split_sml - 1) / split_sml) as isize;
+        let b_sml = ((b_sig_limbs + split_sml - 1) / split_sml) as isize;
+        let a_big = ((a_sig_limbs + split_big - 1) / split_big) as isize;
+        let b_big = ((b_sig_limbs + split_big - 1) / split_big) as isize;
+
+        assert!(a_sml as usize * split_sml >= a_sig_limbs);
+        assert!(a_sml as usize * (split_sml - 1) < a_sig_limbs);
+        assert!(b_sml as usize * split_sml >= b_sig_limbs);
+        assert!(b_sml as usize * (split_sml - 1) < b_sig_limbs);
+        assert!(a_big as usize * split_big >= a_sig_limbs);
+        assert!(a_big as usize * (split_big - 1) < a_sig_limbs);
+        assert!(b_big as usize * split_big >= b_sig_limbs);
+        assert!(b_big as usize * (split_big - 1) < b_sig_limbs);
+
         if (a_sml - b_big).abs() < (b_sml - a_big).abs() {
             (split_big, b_big as usize, split_sml, a_sml as usize)
         } else {
@@ -126,12 +159,12 @@ fn _parallel_mul(a: &mut Integer, b: &mut Integer, nproc: usize) {
     };
     let b_bits = b_limbs * 8 * size_of::<limb_t>();
     let a_bits = a_limbs * 8 * size_of::<limb_t>();
-    let total_bits = (a.significant_bits() + b.significant_bits()) as usize;
+    let total_bits = (a_sig_bits + b_sig_bits) as usize;
     let part_bits = max(a_bits, b_bits);
 
     let mut tmp = {
-        let a_const = &*a;
-        let b_const = &*b;
+        let a_const = a as &Integer;
+        let b_const = b as &Integer;
         // split a and b into pieces to be multiplied without too much copying
         let mut parts = vec![Integer::new(); a_split + b_split];
         parts.par_iter_mut().enumerate().for_each({
@@ -266,6 +299,8 @@ mod tests {
 
     #[test]
     fn parith_mul_test() {
+        use std::mem::swap;
+
         const NBITS: u32 = 10485760;
 
         let mut rnd = RandState::new();
@@ -274,7 +309,35 @@ mod tests {
         for nproc in 2..14 {
             let mut a = Integer::from(Integer::random_bits(NBITS, &mut rnd));
             let mut b = Integer::from(Integer::random_bits(NBITS, &mut rnd));
-            let c = Integer::from(&a * &b);
+            let mut c = Integer::from(&a * &b);
+
+            // test a * b
+            _parallel_mul(&mut a, &mut b, nproc);
+            assert_eq!(a, c);
+
+            // test a * 1
+            b.assign(1);
+            _parallel_mul(&mut a, &mut b, nproc);
+            assert_eq!(a, c);
+
+            // test 1 * a
+            swap(&mut a, &mut b);
+            _parallel_mul(&mut a, &mut b, nproc);
+            assert_eq!(a, c);
+
+            // test c * 0
+            _parallel_mul(&mut c, &mut Integer::from(0), nproc);
+            assert_eq!(c, 0);
+
+            // test 0 * c
+            b.assign(0);
+            _parallel_mul(&mut b, &mut a, nproc);
+            assert_eq!(b, 0);
+
+            // test small inputs
+            a.assign(Integer::random_bits(32, &mut rnd));
+            b.assign(Integer::random_bits(32, &mut rnd));
+            c.assign(&a * &b);
             _parallel_mul(&mut a, &mut b, nproc);
             assert_eq!(a, c);
         }
