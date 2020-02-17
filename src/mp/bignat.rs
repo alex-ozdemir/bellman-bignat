@@ -1140,12 +1140,10 @@ impl<E: Engine> BigNat<E> {
             }
             limbs
         };
-        let max_word = {
-            let mut x =
-                self.params.max_word.clone() << (limbs_per_group * self.params.limb_width) as u32;
-            x -= &self.params.max_word;
-            x
-        };
+        let max_word = (0..limbs_per_group).fold(Integer::from(0), |mut acc, i| {
+            acc.set_bit((i * self.params.limb_width) as u32, true);
+            acc
+        }) * &self.params.max_word;
         BigNat {
             params: BigNatParams {
                 min_bits: self.params.min_bits,
