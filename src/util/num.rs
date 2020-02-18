@@ -50,24 +50,25 @@ impl<E: Engine> Num<E> {
         n_bits: usize,
     ) -> Result<(), SynthesisError> {
         let mut repr = self.value.map(|v| v.into_repr());
-        // Allocate all but the last bits.
-        let bits: Vec<Variable> = (0..(n_bits - 1))
+        // Allocate all but the first bit.
+        let bits: Vec<Variable> = (1..n_bits)
             .map(|i| {
                 cs.alloc(
                     || format!("bit {}", i),
                     || {
                         let t = repr.grab_mut()?;
+                        t.shr(1);
                         let r = if t.is_odd() {
                             E::Fr::one()
                         } else {
                             E::Fr::zero()
                         };
-                        t.shr(1);
                         Ok(r)
                     },
                 )
             })
             .collect::<Result<_, _>>()?;
+
         for (i, v) in bits.iter().enumerate() {
             cs.enforce(
                 || format!("{} is bit", i),
@@ -76,6 +77,7 @@ impl<E: Engine> Num<E> {
                 |lc| lc,
             )
         }
+
         // Last bit
         cs.enforce(
             || "last bit",
@@ -83,8 +85,8 @@ impl<E: Engine> Num<E> {
                 let mut f = E::Fr::one();
                 lc = lc + &self.num;
                 for v in bits.iter() {
-                    lc = lc - (f, *v);
                     f.double();
+                    lc = lc - (f, *v);
                 }
                 lc
             },
@@ -93,8 +95,8 @@ impl<E: Engine> Num<E> {
                 let mut f = E::Fr::one();
                 lc = lc - &self.num;
                 for v in bits.iter() {
-                    lc = lc + (f, *v);
                     f.double();
+                    lc = lc + (f, *v);
                 }
                 lc
             },
