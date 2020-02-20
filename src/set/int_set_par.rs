@@ -260,18 +260,29 @@ impl IntegerConversion for Integer {
     }
 }
 
-pub trait IntoElem: SemiGroup {
-    fn into_elem(&self, e: <Self as SemiGroup>::Elem) -> <Self as SemiGroup>::Elem;
+/// A trait for semigroups that are quotient groups, and thus have some concept of a canonical
+/// coset representative.
+///
+/// Example: in the RSA group, Z/15Z, 17 and 2 refer to the same coset/group element, but 2 is the
+/// canonical representative.
+///
+/// Example: in the RSA quotient group Z/15Z/<-1>, 2 and 13 refer to the same coset/group element,
+/// but 2 is the canonical representative.
+pub trait QuotientSemiGroup: SemiGroup {
+    /// Return the canonical representative for the coset of this element.
+    fn canonicalize(&self, e: <Self as SemiGroup>::Elem) -> <Self as SemiGroup>::Elem {
+        e
+    }
 }
 
-impl IntoElem for RsaGroup {
-    fn into_elem(&self, n: Integer) -> Integer {
+impl QuotientSemiGroup for RsaGroup {
+    fn canonicalize(&self, n: Integer) -> Integer {
         n % &self.m
     }
 }
 
-impl IntoElem for RsaQuotientGroup {
-    fn into_elem(&self, mut n: Integer) -> Integer {
+impl QuotientSemiGroup for RsaQuotientGroup {
+    fn canonicalize(&self, mut n: Integer) -> Integer {
         n %= &self.m;
         let y = Integer::from(&self.m - &n);
         std::cmp::min(n, y)
@@ -300,7 +311,7 @@ impl<G: SemiGroup> ParallelExpSet<G> {
 impl<G: SemiGroup> IntSet for ParallelExpSet<G>
 where
     G::Elem: Ord + IntegerConversion,
-    G: IntoElem,
+    G: QuotientSemiGroup,
 {
     type G = G;
 
@@ -377,9 +388,9 @@ where
             }
         }
 
-        // convert internal Integer repr to Elem repr, respecting structure of group via IntoElem
+        // convert internal Integer repr to Elem repr, respecting structure of group via QuotientSemiGroup
         self.group
-            .into_elem(<G::Elem as IntegerConversion>::from_integer(
+            .canonicalize(<G::Elem as IntegerConversion>::from_integer(
                 &self.digest.as_ref().unwrap(),
             ))
     }
