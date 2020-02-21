@@ -1,4 +1,4 @@
-use rug::Integer;
+use rug::{ops::Pow, Integer};
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
 
@@ -8,7 +8,12 @@ use std::fmt::Debug;
 use group::{CircuitSemiGroup, SemiGroup};
 use mp::bignat::BigNat;
 use util::gadget::Gadget;
+use util::verbose::in_verbose_mode;
 use wesolowski::{proof_of_exp, Reduced};
+
+pub mod exp;
+
+use self::exp::Exponentiator;
 
 pub trait IntSet: Sized + Clone + Eq + Debug {
     type G: SemiGroup;
@@ -47,31 +52,24 @@ pub trait IntSet: Sized + Clone + Eq + Debug {
     }
 }
 
-/// An `NaiveExpSet` which computes products from scratch each time.
-#[derive(Clone, PartialEq, Eq)]
-pub struct NaiveExpSet<G: SemiGroup> {
+// ** ExpSet ** //
+
+/// ExpSet uses precomputed tables to speed up rebuilding the set
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ExpSet<G: SemiGroup, E: Exponentiator<G>> {
     group: G,
+    exponentiator: E,
     elements: BTreeMap<Integer, usize>,
     digest: Option<G::Elem>,
 }
 
-impl<G: SemiGroup> std::fmt::Debug for NaiveExpSet<G>
-where
-    G::Elem: std::fmt::Display,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
-        write!(f, "NaiveExpSet ")?;
-        let mut d = f.debug_set();
-        for (e, ct) in &self.elements {
-            for _ in 0..*ct {
-                d.entry(&format_args!("{}", e));
-            }
-        }
-        d.finish()
+impl<G: SemiGroup, E: Exponentiator<G>> ExpSet<G, E> {
+    pub fn clear_digest(&mut self) {
+        self.digest = None;
     }
 }
 
-impl<G: SemiGroup> IntSet for NaiveExpSet<G>
+impl<G: SemiGroup, E: Exponentiator<G>> IntSet for ExpSet<G, E>
 where
     G::Elem: Ord,
 {
@@ -80,13 +78,21 @@ where
     fn new(group: G) -> Self {
         Self {
             digest: Some(group.generator().clone()),
-            group,
             elements: BTreeMap::new(),
+            exponentiator: E::from_group(group.clone()),
+            group,
         }
     }
 
+    // FIXME? insert_all will insert one by one. This is slow if you're inserting
+    //        lots of elements at once, say, more than 1/4 of the current size.
+    //        In this case, you can call clear_digest() to clear the digest first.
+
     fn new_with<I: IntoIterator<Item = Integer>>(group: G, items: I) -> Self {
         let mut this = Self::new(group);
+        // Clear digest to avoid incremental digest computation.
+        // (in favor of de-novo computation)
+        this.clear_digest();
         this.insert_all(items);
         this
     }
@@ -99,29 +105,37 @@ where
     }
 
     fn remove(&mut self, n: &Integer) -> bool {
-        if let Some(count) = self.elements.get_mut(n) {
+        if let Some(count) = self.elements.get_mut(&n) {
             *count -= 1;
             if *count == 0 {
-                self.elements.remove(n);
+                self.elements.remove(&n);
             }
             self.digest = None;
-            return true;
+            true
         } else {
-            return false;
+            false
         }
     }
 
     fn digest(&mut self) -> G::Elem {
+        use rayon::prelude::*;
+
         if self.digest.is_none() {
-            self.digest = Some(self.elements.iter().fold(
-                self.group.generator().clone(),
-                |mut acc, (elem, ct)| {
-                    for _ in 0..*ct {
-                        acc = self.group.power(&acc, &elem)
-                    }
-                    acc
-                },
-            ))
+            if in_verbose_mode() {
+                println!("Starting recomputation")
+            }
+            self.digest = {
+                let mut tmp = Vec::with_capacity(self.elements.len() + 1);
+                tmp.par_extend(
+                    self.elements
+                        .par_iter()
+                        .map(|(elem, ct)| Integer::from(elem.pow(*ct as u32))),
+                );
+                Some(self.exponentiator.exponentiate(tmp))
+            };
+            if in_verbose_mode() {
+                println!("Done with recomputation")
+            }
         }
         self.digest.clone().unwrap()
     }
@@ -270,10 +284,11 @@ where
 
 #[cfg(test)]
 pub mod tests {
+    use super::exp::serial::SerialExp;
     use super::*;
     use util::test_helpers::*;
 
-    use group::{CircuitRsaGroup, CircuitRsaGroupParams, RsaGroup};
+    use group::{CircuitRsaQuotientGroup, CircuitRsaGroupParams, RsaQuotientGroup};
     use OptionExt;
 
     use std::str::FromStr;
@@ -341,8 +356,9 @@ pub mod tests {
                 self.params.limb_width,
                 self.params.n_limbs_b,
             )?;
-            let raw_group = RsaGroup::from_strs(self.inputs.grab()?.g, self.inputs.grab()?.m);
-            let group = CircuitRsaGroup::alloc(
+            let raw_group =
+                RsaQuotientGroup::from_strs(self.inputs.grab()?.g, self.inputs.grab()?.m);
+            let group = CircuitRsaQuotientGroup::alloc(
                 cs.namespace(|| "group"),
                 Some(&raw_group),
                 (),
@@ -351,16 +367,21 @@ pub mod tests {
                     n_limbs: self.params.n_limbs_b,
                 },
             )?;
-            let initial_set: CircuitIntSet<E, CircuitRsaGroup<E>, NaiveExpSet<RsaGroup>> =
-                CircuitIntSet::alloc(
-                    cs.namespace(|| "initial_set"),
-                    Some(&NaiveExpSet::new_with(
-                        raw_group,
-                        initial_items_vec.into_iter(),
-                    )),
-                    group.clone(),
-                    &(),
-                )?;
+            let initial_set: CircuitIntSet<
+                E,
+                CircuitRsaQuotientGroup<E>,
+                ExpSet<RsaQuotientGroup, SerialExp<_>>,
+            > = CircuitIntSet::alloc(
+                cs.namespace(|| "initial_set"),
+                Some(&ExpSet::new_with(
+                    raw_group,
+                    initial_items_vec.into_iter(),
+                )),
+                group.clone(),
+                &(),
+            )?;
+            println!("initial_set.digest {}", initial_set.digest);
+            println!("initial_digest {}", initial_digest);
 
             initial_set
                 .digest
@@ -462,8 +483,8 @@ pub mod tests {
                                                             "3",
                                                         ],
                                                         challenge: "223",
-                                                        initial_digest: "109",
-                                                        final_digest: "98",
+                                                        initial_digest: "34",
+                                                        final_digest: "45",
                                                     }),
                                                     params: RsaRemovalParams {
                                                         limb_width: 4,
@@ -488,8 +509,8 @@ pub mod tests {
                                                                     "5",
                                                                 ],
                                                                 challenge: "223",
-                                                                initial_digest: "109",
-                                                                final_digest: "128",
+                                                                initial_digest: "34",
+                                                                final_digest: "15",
                                                             }),
                                                             params: RsaRemovalParams {
                                                                 limb_width: 4,

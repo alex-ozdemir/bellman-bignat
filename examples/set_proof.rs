@@ -9,7 +9,8 @@ use bellman_bignat::hash::circuit::CircuitHasher;
 use bellman_bignat::hash::hashes::{Mimc, Pedersen, Poseidon, Sha256};
 use bellman_bignat::hash::Hasher;
 use bellman_bignat::mp::bignat::nat_to_limbs;
-use bellman_bignat::set::int_set_par::ParallelExpSet;
+use bellman_bignat::set::int_set::ExpSet;
+use bellman_bignat::set::int_set::exp::parallel::ParExpComb;
 use bellman_bignat::set::merkle::{MerkleSetBench, MerkleSetBenchInputs, MerkleSetBenchParams};
 use bellman_bignat::set::rsa::{SetBench, SetBenchInputs, SetBenchParams};
 use bellman_bignat::set::GenSet;
@@ -183,7 +184,7 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
         verbose: args.flag_verbose,
     };
 
-    let empty_circuit = SetBench::<_, ParallelExpSet<_>> {
+    let empty_circuit = SetBench::<_, ExpSet<_, ParExpComb>> {
         inputs: None,
         params: params.clone(),
     };
@@ -201,7 +202,7 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
         group.clone(),
     );
 
-    let mut circuit = SetBench::<_, ParallelExpSet<_>> {
+    let mut circuit = SetBench::<_, ExpSet<_, ParExpComb>> {
         inputs: Some(inputs),
         params: params.clone(),
     };

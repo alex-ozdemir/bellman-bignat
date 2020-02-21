@@ -8,7 +8,8 @@ use bellman_bignat::group::RsaQuotientGroup;
 use bellman_bignat::hash::circuit::CircuitHasher;
 use bellman_bignat::hash::hashes::{Mimc, Pedersen, Poseidon, Sha256};
 use bellman_bignat::hash::Hasher;
-use bellman_bignat::set::int_set::NaiveExpSet;
+use bellman_bignat::set::int_set::ExpSet;
+use bellman_bignat::set::int_set::exp::serial::SerialExp;
 use bellman_bignat::set::merkle::{MerkleSetBench, MerkleSetBenchInputs, MerkleSetBenchParams};
 use bellman_bignat::set::rsa::{SetBench, SetBenchInputs, SetBenchParams};
 use bellman_bignat::util::bench::{ConstraintCounter, ConstraintProfiler, WitnessTimer};
@@ -171,7 +172,7 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
     } else {
         0
     };
-    let circuit = SetBench::<_, NaiveExpSet<_>> {
+    let circuit = SetBench::<_, ExpSet<_, SerialExp<_>>> {
         inputs: Some(SetBenchInputs::from_counts(
             n_untouched,
             t,

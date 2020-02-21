@@ -728,12 +728,13 @@ mod test {
 
     use hash::hashes::Poseidon;
 
-    use set::int_set::NaiveExpSet;
+    use set::int_set::ExpSet;
+    use set::int_set::exp::serial::SerialExp;
 
     use util::test_helpers::*;
 
     circuit_tests! {
-        small_rsa_1_swap_naive: (SetBench::<_, NaiveExpSet<_>>  {
+        small_rsa_1_swap_naive: (SetBench::<_, ExpSet<_, SerialExp<_>>>  {
             inputs: Some(SetBenchInputs::new(
                             [].to_vec(),
                             [

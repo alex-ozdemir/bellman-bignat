@@ -3,7 +3,7 @@ extern crate bincode;
 extern crate docopt;
 extern crate serde;
 
-use bellman_bignat::set::int_set_par::ParExpComb;
+use bellman_bignat::set::int_set::exp::parallel::ParExpComb;
 
 use serde::Deserialize;
 const USAGE: &str = "

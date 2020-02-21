@@ -8,7 +8,8 @@ use bellman_bignat::group::RsaQuotientGroup;
 use bellman_bignat::hash::circuit::CircuitHasher;
 use bellman_bignat::hash::hashes::Poseidon;
 use bellman_bignat::hash::Hasher;
-use bellman_bignat::set::int_set_par::ParallelExpSet;
+use bellman_bignat::set::int_set::ExpSet;
+use bellman_bignat::set::int_set::exp::parallel::ParExpComb;
 use bellman_bignat::set::rsa::SetBenchInputs;
 use bellman_bignat::util::verbose;
 use docopt::Docopt;
@@ -52,7 +53,7 @@ fn rsa_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(args: &Args
     let n_untouched = (1usize << args.arg_capacity).saturating_sub(args.arg_transactions);
 
     println!("Constructing initial and final states");
-    let _inputs = SetBenchInputs::<_, ParallelExpSet<RsaQuotientGroup>>::from_counts(
+    let _inputs = SetBenchInputs::<_, ExpSet<RsaQuotientGroup, ParExpComb>>::from_counts(
         n_untouched,
         args.arg_transactions,
         args.arg_transactions,

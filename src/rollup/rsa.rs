@@ -17,8 +17,9 @@ use mp::bignat::BigNat;
 use rollup::sig::allocate_point;
 use rollup::tx::circuit::{CircuitAccount, CircuitSignedTx};
 use rollup::tx::{Account, Action, SignedTx, Tx, TxAccountChanges};
-use set::int_set::NaiveExpSet;
+use set::int_set::ExpSet;
 use set::rsa::{CircuitSet, CircuitSetParams, Set};
+use set::int_set::exp::serial::SerialExp;
 use set::{CircuitGenSet, GenSet};
 use util::convert::usize_to_f;
 use util::gadget::Gadget;
@@ -39,7 +40,7 @@ where
     H: Hasher<F = E::Fr>,
 {
     map: HashMap<Vec<u8>, Account<E>>,
-    set: Set<H, NaiveExpSet<RsaQuotientGroup>>,
+    set: Set<H, ExpSet<RsaQuotientGroup, SerialExp<RsaQuotientGroup>>>,
 }
 
 impl<H, E> Accounts<E, H>
@@ -456,7 +457,7 @@ where
         )?;
         group.inputize(cs.namespace(|| "group input"))?;
 
-        let set: CircuitSet<E, H, CircuitRsaQuotientGroup<E>, NaiveExpSet<RsaQuotientGroup>> =
+        let set: CircuitSet<E, H, CircuitRsaQuotientGroup<E>, ExpSet<RsaQuotientGroup, SerialExp<RsaQuotientGroup>>> =
             CircuitSet::alloc(
                 cs.namespace(|| "set init"),
                 self.input.as_ref().map(|is| &is.accounts.set),
