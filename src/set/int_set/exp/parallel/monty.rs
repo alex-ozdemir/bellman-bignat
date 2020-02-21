@@ -6,6 +6,8 @@ use rug::Integer;
 
 use std::mem::size_of;
 
+use super::parallel_product::borrow_digits;
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct MontyConstants {
     /// The modulus
@@ -14,13 +16,15 @@ pub struct MontyConstants {
     RmodN: Integer,
     /// R^2, mod M
     R2modN: Integer,
-    pub log2_R: u32,
+    log2_R: u32,
     /// The logarithm of R, base B (the limb base).
     r: u32,
-    /// The inverse of n, modulo R
-    pub N_inv_neg: Integer,
+    /// The negated inverse of n, modulo R
+    N_inv_neg: Integer,
     /// The produce of R and N
     RN: Integer,
+    /// The negated inverse of N modulo B
+    N_inv_neg_B: limb_t,
 }
 
 impl MontyConstants {
@@ -33,6 +37,9 @@ impl MontyConstants {
         let R2modN = RmodN.clone() * &RmodN % &N;
         let N_inv_neg = (-N.clone()).invert(&R).unwrap();
         let RN = R * &N;
+        let B = Integer::from(1) << b;
+        let N_inv_neg_B = (-N.clone()).invert(&B).unwrap();
+        assert!(N_inv_neg_B.significant_bits() < b);
         Self {
             N,
             RmodN,
@@ -41,6 +48,7 @@ impl MontyConstants {
             r,
             N_inv_neg,
             RN,
+            N_inv_neg_B: borrow_digits(&N_inv_neg_B)[0].clone(),
         }
     }
 
@@ -61,6 +69,12 @@ impl MontyConstants {
             T -= &self.N;
         }
         T
+    }
+
+    /// This is an implementation of multiprecision Montgomery reduction.
+    #[allow(dead_code)]
+    fn redc_mp(&self, _T: Integer) -> Integer {
+        unimplemented!()
     }
 
     pub fn in_to(&self, i: Integer) -> MontyNum {

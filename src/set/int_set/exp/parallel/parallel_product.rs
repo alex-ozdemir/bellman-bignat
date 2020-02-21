@@ -77,7 +77,7 @@ fn _parallel_sum(v: &mut Vec<Integer>) {
 }
 
 // Explicit lifetimes for emphasis
-fn borrow_digits<'a>(integer: &'a Integer) -> &'a [limb_t] {
+pub fn borrow_digits<'a>(integer: &'a Integer) -> &'a [limb_t] {
     unsafe {
         use std::slice::from_raw_parts;
         let raw = integer.as_raw();

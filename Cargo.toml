@@ -4,6 +4,7 @@ version = "0.1.0"
 
 [dependencies]
 bincode = "1.2"
+bitintr = "0.3.0"
 derivative = "1.0.0"
 docopt = "1"
 flate2 = "1.0"

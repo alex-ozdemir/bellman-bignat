@@ -2,6 +2,7 @@
 #![feature(test)]
 
 extern crate bincode;
+extern crate bitintr;
 extern crate flate2;
 extern crate fnv;
 extern crate gmp_mpfr_sys;

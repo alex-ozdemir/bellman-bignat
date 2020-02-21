@@ -21,13 +21,47 @@ use self::monty::{MontyConstants, MontyNum};
 const RSA_2048: &str = "25195908475657893494027183240048398571429282126204032027777137836043662020707595556264018525880784406918290641249515082189298559149176184502808489120072844992687392807287776735971418347270261896375014971824691165077613379859095700097330459748808428401797429100642458691817195118746121515172654632282216869987549182422433637259085141865462043576798423387184774447920739934236584823824281198163815010674810451660377306056201619676256133844143603833904414952634432190114657544454178424020924616515723350778707749817125772467962926386356373289912154831438167899885040445364023527381951378636564391212010397122822120720357";
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct SerializedParExpComb {
+    bs: Vec<Integer>,
+    m: Integer,
+    lgsp: usize,
+    ts: Vec<Vec<MontyNum>>,
+    npt: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParExpComb {
     bs: Vec<Integer>,
     m: Integer,
     lgsp: usize,
     ts: Vec<Vec<MontyNum>>,
     npt: usize,
-    pub monty: MontyConstants,
+    monty: MontyConstants,
+}
+
+impl From<SerializedParExpComb> for ParExpComb {
+    fn from(o: SerializedParExpComb) -> ParExpComb {
+        Self {
+            monty: MontyConstants::new(o.m.clone()),
+            bs: o.bs,
+            m: o.m,
+            lgsp: o.lgsp,
+            ts: o.ts,
+            npt: o.npt,
+        }
+    }
+}
+
+impl From<ParExpComb> for SerializedParExpComb {
+    fn from(o: ParExpComb) -> SerializedParExpComb {
+        Self {
+            bs: o.bs,
+            m: o.m,
+            lgsp: o.lgsp,
+            ts: o.ts,
+            npt: o.npt,
+        }
+    }
 }
 
 /// pcb[idx] is the idx'th precomputed table
@@ -184,15 +218,17 @@ impl ParExpComb {
     /// write struct to a file
     pub fn serialize(&self, filename: &str) {
         let output = GzEncoder::new(File::create(filename).unwrap(), Compression::default());
-        bincode::serialize_into(output, self).unwrap();
+        let cp = SerializedParExpComb::from(self.clone());
+        bincode::serialize_into(output, &cp).unwrap();
     }
 
     /// read struct from file
     pub fn deserialize(filename: &str) -> Self {
         let input = GzDecoder::new(File::open(filename).unwrap());
-        let ret: Self = bincode::deserialize_from(input).unwrap();
-        ret._check();
-        ret
+        let ret: SerializedParExpComb = bincode::deserialize_from(input).unwrap();
+        let rett = ParExpComb::from(ret);
+        rett._check();
+        rett
     }
 
     // ** accessors and misc ** //
