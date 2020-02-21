@@ -1,6 +1,7 @@
 extern crate bellman_bignat;
 extern crate bincode;
 extern crate serde;
+extern crate rug;
 
 use std::path::PathBuf;
 

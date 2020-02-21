@@ -1,5 +1,5 @@
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
-use rug::{Assign, Integer};
+use rug::Integer;
 use serde::{Deserialize, Serialize};
 
 use std::cmp::min;
@@ -7,7 +7,7 @@ use std::convert::From;
 use std::fmt::Debug;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::ops::{Index, MulAssign, RemAssign};
+use std::ops::Index;
 use std::path::PathBuf;
 
 use super::Exponentiator;
@@ -25,14 +25,14 @@ pub struct ParExpComb {
     bs: Vec<Integer>,
     m: Integer,
     lgsp: usize,
-    ts: Vec<Vec<Integer>>,
+    ts: Vec<Vec<MontyNum>>,
     npt: usize,
-    monty: MontyConstants,
+    pub monty: MontyConstants,
 }
 
 /// pcb[idx] is the idx'th precomputed table
 impl Index<usize> for ParExpComb {
-    type Output = Vec<Integer>;
+    type Output = Vec<MontyNum>;
 
     fn index(&self, idx: usize) -> &Self::Output {
         &self.ts[idx]
@@ -59,6 +59,7 @@ impl Exponentiator<RsaQuotientGroup> for ParExpComb {
     fn exponentiate(&mut self, mut powers: Vec<Integer>) -> Integer {
         parallel_product::parallel_product(&mut powers);
         let exponent = powers.pop().unwrap();
+        println!("Start multiexp");
         let x = self.exp(&exponent);
         let y = Integer::from(&self.m - &x);
         min(x, y)
@@ -114,8 +115,8 @@ impl ParExpComb {
             // closure would capture borrow of self, which breaks because self is borrowed already.
             // instead, borrow the piece of self we need outside, then move the borrow inside
             // http://smallcultfollowing.com/babysteps/blog/2018/04/24/rust-pattern-precise-closure-capture-clauses/
-            let modulus = &self.m;
-            move |x| _make_table(x, modulus)
+            let monty = &self.monty;
+            move |x| _make_table(x, monty)
         }));
     }
 
@@ -147,12 +148,13 @@ impl ParExpComb {
         let tables_per_chunk = (n_tables + n_threads - 1) / n_threads;
 
         // parallel multiexponentiation
-        let modulus = &self.m;
-        self.ts[0..n_tables]
+        let monty = &self.monty;
+        let one = monty.in_to(Integer::from(1));
+        let monty_answer = self.ts[0..n_tables]
             .par_chunks(tables_per_chunk)
             .enumerate()
             .map(|(chunk_idx, ts)| {
-                let mut acc = Integer::from(1);
+                let mut acc = one.clone();
                 let chunk_offset = chunk_idx * tables_per_chunk * bits_per_table;
                 for bdx in (0..bits_per_expt).rev() {
                     for (tdx, tsent) in ts.iter().enumerate() {
@@ -163,24 +165,19 @@ impl ParExpComb {
                             let bit = expt.get_bit(bitnum as u32) as u32;
                             val |= bit << edx;
                         }
-                        acc.mul_assign(&tsent[val as usize]);
-                        acc.rem_assign(modulus);
+                        acc = monty.mult(acc, &tsent[val as usize]);
                     }
                     if bdx != 0 {
-                        acc.square_mut();
-                        acc.rem_assign(modulus);
+                        acc = monty.square(acc);
                     }
                 }
                 acc
             })
             .reduce(
-                || Integer::from(1),
-                |mut acc, next| {
-                    acc.mul_assign(&next);
-                    acc.rem_assign(modulus);
-                    acc
-                },
-            )
+                || one.clone(),
+                |acc, next| monty.mult(acc, &next)
+            );
+        monty.out_of(monty_answer)
     }
 
     // ** serialization ** //
@@ -221,7 +218,7 @@ impl ParExpComb {
     }
 
     /// return iterator over tables
-    pub fn iter(&self) -> std::slice::Iter<Vec<Integer>> {
+    pub fn iter(&self) -> std::slice::Iter<Vec<MontyNum>> {
         self.ts.iter()
     }
 
@@ -243,35 +240,38 @@ impl ParExpComb {
 }
 
 // make a table from a set of bases
-fn _make_table(bases: &[Integer], modulus: &Integer) -> Vec<Integer> {
-    let mut ret = vec![Integer::new(); 1 << bases.len()];
+fn _make_table(bases: &[Integer], monty: &MontyConstants) -> Vec<MontyNum> {
+    let mut ret = vec![monty.in_to(Integer::from(1)); 1 << bases.len()];
     // base case: 0 and 1
-    ret[0].assign(1);
-    ret[1].assign(&bases[0]);
+    // ret[0] = monty.in_to(Integer::from(1))
+    ret[1] = monty.in_to(bases[0].clone());
 
     // compute powerset of bases
     // for each element in bases
     for (bnum, base) in bases.iter().enumerate().skip(1) {
+        let monty_base = monty.in_to(base.clone());
         let base_idx = 1 << bnum;
         // multiply bases[bnum] by the first base_idx elms of ret
         let (src, dst) = ret.split_at_mut(base_idx);
         for idx in 0..base_idx {
-            dst[idx].assign(&src[idx] * base);
-            dst[idx].rem_assign(modulus);
+            dst[idx] = monty.mult(src[idx].clone(), &monty_base);
         }
     }
 
     ret
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
+    use std::ops::{MulAssign,RemAssign};
     use rug::rand::RandState;
 
     #[test]
     fn precomp_table() {
         const NELMS: usize = 8;
         let group = RsaQuotientGroup::from_strs("2", RSA_2048);
+        let monty = MontyConstants::new(group.m.clone());
 
         let mut pc = ParExpComb::from_group(group);
         pc.make_tables(NELMS);
@@ -292,7 +292,7 @@ mod tests {
                     accum.rem_assign(modulus);
                 }
             }
-            assert_eq!(&accum, &pc[0][idx]);
+            assert_eq!(&monty.in_to(accum), &pc[0][idx]);
         }
     }
 
@@ -312,7 +312,7 @@ mod tests {
 
     #[test]
     fn precomp_exp_test() {
-        const LOG_EXPSIZE: usize = 22;
+        const LOG_EXPSIZE: usize = 1;
 
         let pc = {
             let group = RsaQuotientGroup::from_strs("2", RSA_2048);
