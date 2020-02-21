@@ -3,6 +3,7 @@ use rug::{Assign, Integer};
 use serde::{Deserialize, Serialize};
 
 use std::cmp::min;
+use std::convert::From;
 use std::fmt::Debug;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -13,17 +14,20 @@ use super::Exponentiator;
 use group::RsaQuotientGroup;
 
 pub mod parallel_product;
+mod monty;
+
+use self::monty::{MontyConstants, MontyNum};
 
 const RSA_2048: &str = "25195908475657893494027183240048398571429282126204032027777137836043662020707595556264018525880784406918290641249515082189298559149176184502808489120072844992687392807287776735971418347270261896375014971824691165077613379859095700097330459748808428401797429100642458691817195118746121515172654632282216869987549182422433637259085141865462043576798423387184774447920739934236584823824281198163815010674810451660377306056201619676256133844143603833904414952634432190114657544454178424020924616515723350778707749817125772467962926386356373289912154831438167899885040445364023527381951378636564391212010397122822120720357";
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-/// A comb of precomputed powers of a base, plus optional precomputed tables of combinations
 pub struct ParExpComb {
     bs: Vec<Integer>,
     m: Integer,
     lgsp: usize,
     ts: Vec<Vec<Integer>>,
     npt: usize,
+    monty: MontyConstants,
 }
 
 /// pcb[idx] is the idx'th precomputed table
@@ -79,6 +83,7 @@ impl ParExpComb {
                 .lines()
                 .map(|x| Integer::from_str_radix(x.unwrap().as_ref(), 16).unwrap())
                 .collect(),
+            monty: MontyConstants::new(modulus.clone()),
             m: modulus,
             lgsp: log_spacing,
             ts: Vec::new(),
