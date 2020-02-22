@@ -74,6 +74,7 @@ impl MontyConstants {
     }
 
     /// This is an implementation of multiprecision Montgomery reduction.
+    #[allow(dead_code)]
     pub fn redc_mp(&self, mut Ti: Integer) -> Integer {
         let Np = self.N_inv_neg_B;
         let N = borrow_digits(&self.N);
