@@ -82,7 +82,7 @@ fn borrow_digits<'a>(integer: &'a Integer) -> &'a [limb_t] {
         use std::slice::from_raw_parts;
         let raw = integer.as_raw();
         let size = (*raw).size as usize;
-        from_raw_parts((*raw).d, size)
+        from_raw_parts((*raw).d.as_ptr(), size)
     }
 }
 
