@@ -8,11 +8,11 @@ derivative = "1.0.0"
 docopt = "1"
 flate2 = "1.0"
 fnv = "1.0.6"
-gmp-mpfr-sys = { version = "1.2", default-features = false }
+gmp-mpfr-sys = { version = "~1.2", default-features = false }
 hex = "0.3.2"
 rand = "0.4"
 rayon = "1.3"
-rug = { version = "1.7", default-features = false, features = ["integer", "serde", "rand"] }
+rug = { version = "~1.7", default-features = false, features = ["integer", "serde", "rand"] }
 sapling-crypto = { package = "sapling-crypto_ce", git = "https://github.com/alex-ozdemir/sapling-crypto", branch = "bls12-poseidon" }
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.8.0"
