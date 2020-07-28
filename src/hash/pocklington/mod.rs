@@ -242,9 +242,8 @@ pub mod helper {
 
         #[test]
         fn prime_trials_64b() {
-            let t = prime_trials(64, (2.0f64).powi(64));
-            assert!(t >= 1000);
-            assert!(t <= 1100);
+            let t = prime_trials(64, (2.0f64).powi(-64));
+            assert!(t == 1992);
         }
     }
 }
