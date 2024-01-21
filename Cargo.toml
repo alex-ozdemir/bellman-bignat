@@ -16,7 +16,6 @@ rug = { version = "1.10", default-features = false, features = ["integer", "serd
 sapling-crypto = { package = "sapling-crypto_ce", git = "https://github.com/alex-ozdemir/sapling-crypto", branch = "bls12-poseidon" }
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.8.0"
-time = "0.1"
 
 [dev-dependencies]
 quickcheck = "0.8"
