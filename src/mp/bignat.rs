@@ -1339,7 +1339,7 @@ impl<E: Engine> BigNat<E> {
 
     pub fn one<CS: ConstraintSystem<E>>(limb_width: usize) -> Self {
         BigNat {
-            limb_values: Some({ vec![E::Fr::one()] }),
+            limb_values: Some(vec![E::Fr::one()]),
             value: Some(Integer::from(1)),
             limbs: { vec![LinearCombination::zero() + CS::one()] },
             params: BigNatParams {
@@ -1398,7 +1398,7 @@ impl<E: Engine> Gadget for BigNat<E> {
     ) -> Result<Self, SynthesisError> {
         BigNat::alloc_from_nat(
             cs,
-            || Ok(value.grab()?.clone().clone()),
+            || Ok((*value.grab()?).clone()),
             params.limb_width,
             params.n_limbs,
         )
