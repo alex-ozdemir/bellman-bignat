@@ -327,8 +327,12 @@ fn merkle_bench<E: Engine, H: Hasher<F = E::Fr> + CircuitHasher<E = E>>(
     let ins = circuit.inputs.as_ref().unwrap();
     let mut initial_set = ins.initial_state.clone();
     let mut final_set = {
+        let tt = std::time::Instant::now();
         let mut t = initial_set.clone();
         t.swap_all(ins.to_remove.clone(), ins.to_insert.clone());
+        if verbose::in_verbose_mode() {
+            println!("Digest update time: {}s", tt.elapsed().as_secs_f64());
+        }
         t
     };
     let inputs: Vec<E::Fr> = vec![initial_set.digest(), final_set.digest()];

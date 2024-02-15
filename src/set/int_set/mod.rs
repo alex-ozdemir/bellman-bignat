@@ -136,7 +136,7 @@ where
             };
             if in_verbose_mode() {
                 println!("Done with recomputation");
-                println!("Digest time: {}s", t.elapsed().as_secs_f64());
+                println!("Digest update time: {}s", t.elapsed().as_secs_f64());
             }
         }
         self.digest.clone().unwrap()
