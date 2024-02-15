@@ -122,8 +122,9 @@ where
 
         if self.digest.is_none() {
             if in_verbose_mode() {
-                println!("Starting recomputation")
+                println!("Starting recomputation");
             }
+            let t = std::time::Instant::now();
             self.digest = {
                 let mut tmp = Vec::with_capacity(self.elements.len() + 1);
                 tmp.par_extend(
@@ -134,7 +135,8 @@ where
                 Some(self.exponentiator.exponentiate(tmp))
             };
             if in_verbose_mode() {
-                println!("Done with recomputation")
+                println!("Done with recomputation");
+                println!("Digest time: {}s", t.elapsed().as_secs_f64());
             }
         }
         self.digest.clone().unwrap()
