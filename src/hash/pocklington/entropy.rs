@@ -8,8 +8,6 @@ use mp::bignat::BigNat;
 use util::bit::{Bit, Bitvector};
 use util::gadget::Gadget;
 
-use std::default::Default;
-
 #[derive(Debug)]
 pub struct NatTemplate {
     pub random_bits: usize,

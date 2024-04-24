@@ -11,7 +11,6 @@ use sapling_crypto::poseidon::{
     QuinticSBox,
 };
 
-use std::default::Default;
 use std::marker::PhantomData;
 use std::sync::Arc;
 

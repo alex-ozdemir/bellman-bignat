@@ -4,8 +4,6 @@ use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError, Variable};
 use sapling_crypto::circuit::num::AllocatedNum;
 
-use std::convert::From;
-
 use super::bit::{Bit, Bitvector};
 use super::convert::f_to_nat;
 use super::convert::nat_to_f;

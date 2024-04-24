@@ -6,7 +6,6 @@ use sapling_crypto::circuit::boolean::Boolean;
 
 use std::borrow::Borrow;
 use std::cmp::{max, min, Ordering};
-use std::convert::From;
 use std::fmt::{self, Debug, Display, Formatter};
 use std::rc::Rc;
 

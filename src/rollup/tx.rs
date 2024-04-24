@@ -102,7 +102,6 @@ pub mod circuit {
     use sapling_crypto::circuit::ecc::EdwardsPoint;
     use sapling_crypto::circuit::num::AllocatedNum;
     use sapling_crypto::jubjub::JubjubEngine;
-    use std::clone::Clone;
     use std::sync::Arc;
 
     use super::{Action, SignedTx};
