@@ -14,7 +14,7 @@ use sapling_crypto::bellman::groth16::{
     create_random_proof, generate_random_parameters, prepare_verifying_key, verify_proof,
 };
 use sapling_crypto::bellman::pairing::bls12_381::Bls12;
-use sapling_crypto::bellman::pairing::ff::Field;
+use sapling_crypto::bellman::pairing::ff::PrimeField;
 use sapling_crypto::bellman::pairing::ff::ScalarEngine;
 use sapling_crypto::bellman::pairing::Engine;
 use sapling_crypto::bellman::{Circuit, ConstraintSystem};
@@ -61,6 +61,7 @@ where
             self.params.limb_width,
             self.params.n_limbs,
         )?;
+        modulus.inputize(cs.namespace(|| "pub mod"))?;
         modulus.params.min_bits = self.params.min_bits;
         let base = BigNat::alloc_from_nat(
             cs.namespace(|| "modulus"),
@@ -125,7 +126,21 @@ fn main() {
     let proof = create_random_proof(ckt.clone(), &params, rng).unwrap();
     println!("prove: {}ns", t.elapsed().as_nanos());
     let pvk = prepare_verifying_key(&params.vk);
+    let mod_bits: Vec<bool> = (0..size)
+        .map(|i| ckt.modulus.as_ref().unwrap().get_bit(i as u32))
+        .collect();
+    let digits: Vec<usize> = (0..ckt.params.n_limbs)
+        .map(|i| {
+            (0..args.flag_limb_width)
+                .map(|j| mod_bits[args.flag_limb_width * i + j])
+                .rev()
+                .fold(0usize, |acc, bit| (acc << 1) + bit as usize)
+        })
+        .collect();
+    let inputs: Vec<<Bls12 as ScalarEngine>::Fr> =
+        digits.into_iter().map(|d| <Bls12 as ScalarEngine>::Fr::from_str(&format!("{}", d)).unwrap()).collect();
+    // for (i, l) in self.limbs.iter().enumerate() {
     let t = std::time::Instant::now();
-    assert!(verify_proof(&pvk, &proof, &[]).unwrap());
+    assert!(verify_proof(&pvk, &proof, &inputs).unwrap());
     println!("verify: {}ns", t.elapsed().as_nanos());
 }
