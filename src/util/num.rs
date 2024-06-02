@@ -8,7 +8,22 @@ use super::bit::{Bit, Bitvector};
 use super::convert::f_to_nat;
 use super::convert::nat_to_f;
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use OptionExt;
+
+static RANGE_CHECK_COST: AtomicU64 = AtomicU64::new(0);
+
+/// Set the range-check cost counter to zero.
+/// Future range-checks will add to it.
+pub fn reset_range_check_cost() {
+    RANGE_CHECK_COST.store(0, Ordering::SeqCst);
+}
+
+/// Read the range-check cost counter.
+pub fn read_range_check_cost()-> u64 {
+    RANGE_CHECK_COST.load(Ordering::SeqCst)
+}
 
 pub struct Num<E: Engine> {
     pub num: LinearCombination<E>,
@@ -75,6 +90,8 @@ impl<E: Engine> Num<E> {
                 |lc| lc,
             )
         }
+
+        RANGE_CHECK_COST.fetch_add(bits.len() as u64, Ordering::SeqCst);
 
         // Last bit
         cs.enforce(
